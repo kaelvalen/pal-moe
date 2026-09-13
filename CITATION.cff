@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "PAL-MoE: Prototype-Anchored Lifelong Mixture of Experts"
+authors:
+  - family-names: "Valen"
+    given-names: "Kael"
+    email: "yintsukuyomi@proton.me"
+version: 0.1.0
+date-released: 2026-09-13
+url: "https://github.com/kaelvalen/pal-moe"
+repository-code: "https://github.com/kaelvalen/pal-moe"
+keywords:
+  - continual-learning
+  - mixture-of-experts
+  - lifelong-learning
+  - catastrophic-forgetting
+  - pytorch
+license: MIT

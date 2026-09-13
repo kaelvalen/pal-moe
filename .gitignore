@@ -1,0 +1,89 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions
+*.dylib
+*.dll
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Unit test / coverage reports
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Datasets and Raw Data
+data/
+*.idx1-ubyte
+*.idx3-ubyte
+*.tar
+*.tar.gz
+*.gz
+*.zip
+
+# Deep Learning Models, Checkpoints & Weights
+checkpoints/
+weights/
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.onnx
+
+# Experiment Tracking & Logs
+logs/
+*.log
+runs/
+wandb/
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# IDEs, Editors & OS Files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Typing & Linters cache
+.mypy_cache/
+.ruff_cache/
