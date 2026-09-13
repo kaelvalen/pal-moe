@@ -132,10 +132,15 @@ class DynamicMoE(nn.Module):
         self.router.add_expert(parent_id=parent_id, prototype_feat=prototype_feat)
         return new_id
 
-    def prune_expert(self, prune_idx: int) -> None:
-        """Prunes the expert at prune_idx and updates router."""
+    def prune_expert(self, prune_idx: int, prototype_memory: Optional[Any] = None) -> None:
+        """
+        Prunes the expert at prune_idx, updates router, and synchronizes prototype memory.
+        """
         assert 0 <= prune_idx < len(self.experts)
         assert len(self.experts) > 1, "Cannot prune only remaining expert"
+
+        if prototype_memory is not None:
+            prototype_memory.sync_on_prune(prune_idx)
 
         del self.experts[prune_idx]
         self.router.prune_expert(prune_idx)
@@ -144,9 +149,12 @@ class DynamicMoE(nn.Module):
         for i, expert in enumerate(self.experts):
             expert.expert_id = i
 
-    def merge_experts(self, idx1: int, idx2: int) -> int:
+    def merge_experts(
+        self, idx1: int, idx2: int, prototype_memory: Optional[Any] = None
+    ) -> int:
         """
-        Merges expert idx2 into idx1 via parameter averaging and updates router.
+        Merges expert idx2 into idx1 via parameter averaging, updates router,
+        and synchronizes historical prototype distributions.
         """
         assert 0 <= idx1 < len(self.experts) and 0 <= idx2 < len(self.experts) and idx1 != idx2
         e1, e2 = self.experts[idx1], self.experts[idx2]
@@ -159,8 +167,13 @@ class DynamicMoE(nn.Module):
                 p1.data.add_(p2.data).mul_(0.5)
             e1.usage_count.add_(e2.usage_count)
 
-        self.prune_expert(idx2)
+        if prototype_memory is not None:
+            prototype_memory.sync_on_merge(idx1, idx2)
+
+        # Pruning router and list without duplicate prototype sync
+        self.prune_expert(idx2, prototype_memory=None)
         return idx1
+
 
 
 # PAL-MoE alias
