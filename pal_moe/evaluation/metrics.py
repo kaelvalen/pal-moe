@@ -127,37 +127,34 @@ class ContinualEvaluator:
             return 0.0
 
         model.eval()
-        kl_divs = []
+        P = len(prototype_memory.prototypes)
         curr_num_experts = model.num_experts
+        vp_mat = torch.stack([p.v_p for p in prototype_memory.prototypes], dim=0).to(device)
 
         with torch.no_grad():
-            for proto in prototype_memory.prototypes:
-                vp = proto.v_p.to(device).unsqueeze(0)
+            g_curr = model.router.get_full_distribution(vp_mat)  # [P, curr_num_experts]
+
+            rp_targets = torch.zeros(P, curr_num_experts, device=device)
+            for p_idx, proto in enumerate(prototype_memory.prototypes):
                 rp_old = proto.r_p.to(device)
                 n_old = rp_old.size(0)
-
-                g_curr = model.router.get_full_distribution(vp).squeeze(0)
-
-                # Pad old distribution if needed
                 if curr_num_experts > n_old:
                     pad_size = curr_num_experts - n_old
                     eps = 1e-5 / curr_num_experts
-                    rp_target = torch.zeros(curr_num_experts, device=device)
-                    rp_target[:n_old] = rp_old * (1.0 - eps * pad_size)
-                    rp_target[n_old:] = eps
+                    rp_targets[p_idx, :n_old] = rp_old * (1.0 - eps * pad_size)
+                    rp_targets[p_idx, n_old:] = eps
                 else:
                     rp_target = rp_old[:curr_num_experts]
-                    rp_target = rp_target / (rp_target.sum() + 1e-9)
+                    rp_targets[p_idx] = rp_target / (rp_target.sum() + 1e-9)
 
-                kl = F.kl_div(
-                    torch.log(g_curr + 1e-9).unsqueeze(0),
-                    rp_target.unsqueeze(0),
-                    reduction="batchmean",
-                    log_target=False,
-                ).item()
-                kl_divs.append(max(0.0, kl))
+            kl_divs = F.kl_div(
+                torch.log(g_curr + 1e-9),
+                rp_targets,
+                reduction="none",
+                log_target=False,
+            ).sum(dim=-1)
 
-        return float(np.mean(kl_divs)) if kl_divs else 0.0
+            return float(torch.clamp(kl_divs, min=0.0).mean().item())
 
     @staticmethod
     def compute_expert_specialization_and_utilization(

@@ -54,7 +54,7 @@ class MLPExpert(nn.Module):
 
     def forward(self, h: torch.Tensor, track_usage: bool = True) -> torch.Tensor:
         if self.training and track_usage:
-            self.usage_count += h.size(0)
+            self.usage_count += int(h.size(0))
 
         base_out = self.fc2(self.dropout(self.act1(self.fc1(h))))
         adapter_out = self.adapter_up(self.adapter_act(self.adapter_down(h)))

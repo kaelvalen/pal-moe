@@ -74,15 +74,22 @@ class ContinualTrainer:
         # Step 1: For tasks > 0, check quantitative trigger early on new task data
         if enable_expansion and task_id > 0:
             trigger_eval = None
+            eval_x_list, eval_y_list = [], []
             for x_sample, y_sample in train_loader:
-                x_sample, y_sample = x_sample.to(self.device), y_sample.to(self.device)
+                eval_x_list.append(x_sample)
+                eval_y_list.append(y_sample)
+                if sum(t.size(0) for t in eval_x_list) >= 256:
+                    break
+
+            if eval_x_list:
+                x_eval = torch.cat(eval_x_list, dim=0).to(self.device)
+                y_eval = torch.cat(eval_y_list, dim=0).to(self.device)
                 trigger_eval = self.trigger.evaluate(
                     model=self.model,
-                    x=x_sample,
-                    y=y_sample,
+                    x=x_eval,
+                    y=y_eval,
                     prototype_memory=self.prototype_memory,
                 )
-                break
 
             if trigger_eval is not None and trigger_eval.should_trigger:
                 history["trigger_events"] += 1
@@ -122,7 +129,7 @@ class ContinualTrainer:
                 if gate_result.passed:
                     history["experts_added"] += 1
                     with torch.no_grad():
-                        h_proto = self.model.get_routing_features(x_sample).mean(dim=0)
+                        h_proto = self.model.get_routing_features(x_eval).mean(dim=0)
                     new_id = self.model.add_expert(
                         new_expert=candidate,
                         parent_id=parent_idx,
@@ -181,9 +188,10 @@ class ContinualTrainer:
                 history["loss_router_stab"].append(l_router_stab.item())
                 history["loss_expert_stab"].append(l_expert_stab.item())
 
-        # Step 6: Register task prototypes into memory with labels and raw exemplars
+        # Step 6: Register task prototypes into memory with labels and raw exemplars across batches
         self.model.eval()
         with torch.no_grad():
+            registered_count = 0
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
                 h = self.model.get_routing_features(x)
@@ -197,7 +205,9 @@ class ContinualTrainer:
                     labels=y,
                     raw_inputs=x,
                 )
-                break  # Register a representative batch
+                registered_count += x.size(0)
+                if registered_count >= 256:
+                    break
 
         # Step 7: Representation refresh if encoder is active/EMA to avoid drift
         if self.model.use_ema_encoder and self.model.ema_encoder is not None:
@@ -212,9 +222,10 @@ class TestTimeAdapter:
     """
     Mode B: Unlabeled Test-Time Adaptation (TTT).
     During inference on an unlabeled test stream:
-    - Shared encoder is FROZEN.
+    - Shared encoder is FROZEN during adaptation.
     - Only the router and selected expert are updated.
     - Loss = Entropy Minimization + Prediction Consistency + Self-Supervised.
+    - Preserves encoder gradients and model state upon completion.
     """
     __test__ = False
 
@@ -235,41 +246,52 @@ class TestTimeAdapter:
     def adapt_and_predict(self, x: torch.Tensor) -> torch.Tensor:
         """
         Performs test-time adaptation on unlabeled batch x and returns predictions.
+        Guarantees that encoder requires_grad and training mode are restored.
         """
-        # Ensure encoder is frozen
-        self.model.encoder.eval()
-        for p in self.model.encoder.parameters():
-            p.requires_grad = False
+        orig_encoder_grads = [p.requires_grad for p in self.model.encoder.parameters()]
+        orig_mode = self.model.training
 
-        # Make router and experts adaptable
-        trainable_params = list(self.model.router.parameters())
-        for exp in self.model.experts:
-            trainable_params.extend(list(exp.parameters()))
+        try:
+            # Ensure encoder is frozen during test-time adaptation
+            self.model.encoder.eval()
+            for p in self.model.encoder.parameters():
+                p.requires_grad = False
 
-        optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
+            # Make router and experts adaptable
+            trainable_params = list(self.model.router.parameters())
+            for exp in self.model.experts:
+                trainable_params.extend(list(exp.parameters()))
 
-        for _ in range(self.steps):
-            optimizer.zero_grad()
+            optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
 
-            # 1. Forward original
-            logits_clean = self.model(x)
-            probs_clean = F.softmax(logits_clean, dim=-1)
+            for _ in range(self.steps):
+                optimizer.zero_grad()
 
-            # 2. Entropy minimization loss: pushes confident predictions
-            loss_entropy = -(probs_clean * torch.log(probs_clean + 1e-9)).sum(dim=-1).mean()
+                # 1. Forward original
+                logits_clean = self.model(x)
+                probs_clean = F.softmax(logits_clean, dim=-1)
 
-            # 3. Consistency loss under slight input perturbation
-            x_perturbed = x + torch.randn_like(x) * self.noise_std
-            logits_noisy = self.model(x_perturbed)
-            probs_noisy = F.softmax(logits_noisy, dim=-1)
-            loss_consistency = F.mse_loss(probs_clean, probs_noisy)
+                # 2. Entropy minimization loss: pushes confident predictions
+                loss_entropy = -(probs_clean * torch.log(probs_clean + 1e-9)).sum(dim=-1).mean()
 
-            loss_ttt = loss_entropy + self.consistency_weight * loss_consistency
-            loss_ttt.backward()
-            optimizer.step()
+                # 3. Consistency loss under slight input perturbation
+                x_perturbed = x + torch.randn_like(x) * self.noise_std
+                logits_noisy = self.model(x_perturbed)
+                probs_noisy = F.softmax(logits_noisy, dim=-1)
+                loss_consistency = F.mse_loss(probs_clean, probs_noisy)
 
-        # Final prediction after adaptation
-        self.model.eval()
-        with torch.no_grad():
-            final_logits = self.model(x)
-        return final_logits
+                loss_ttt = loss_entropy + self.consistency_weight * loss_consistency
+                loss_ttt.backward()
+                optimizer.step()
+
+            # Final prediction after adaptation
+            self.model.eval()
+            with torch.no_grad():
+                final_logits = self.model(x)
+            return final_logits
+
+        finally:
+            # Restore original encoder requires_grad flags and training mode
+            for p, req in zip(self.model.encoder.parameters(), orig_encoder_grads):
+                p.requires_grad = req
+            self.model.train(orig_mode)

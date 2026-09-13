@@ -271,4 +271,75 @@ def test_refresh_representations_with_raw_inputs():
     mem.refresh_representations(enc)
     # Output should now be 2 * 4 = 8.0
     assert torch.allclose(mem.prototypes[0].v_p, torch.tensor([8.0, 8.0, 8.0, 8.0]))
+    assert mem.prototypes[0].x_p is not None
+    assert torch.allclose(mem.prototypes[0].x_p, torch.tensor([[8.0, 8.0, 8.0, 8.0]]))
+
+
+def test_router_top1_gradient_flow():
+    router = DynamicRouter(input_dim=16, num_experts=4, top_k=1)
+    h = torch.randn(8, 16, requires_grad=True)
+    weights, topk_idx, logits = router(h)
+
+    # In top-1 routing, router logits must receive non-zero gradients
+    expert_outputs = torch.randn(8, 4, 3)
+    out = (weights.unsqueeze(-1) * expert_outputs).sum(dim=1)
+    loss = out.sum()
+    loss.backward()
+
+    assert router.gate.weight.grad is not None
+    assert router.gate.weight.grad.abs().sum().item() > 0.0
+
+
+def test_validation_gate_rejection_on_drift():
+    parent = MLPExpert(input_dim=8, hidden_dim=8, num_classes=3, expert_id=0)
+    builder = ExpertBuilder(min_acc_threshold=0.3, max_proto_drop=0.01, max_proto_acc_drop=0.01)
+    child = builder.create_candidate_from_parent(parent, new_expert_id=1, creation_task=1)
+
+    # Intentionally perturb child weights to cause drift
+    with torch.no_grad():
+        child.fc1.weight.add_(torch.randn_like(child.fc1.weight) * 2.0)
+
+    enc = nn.Identity()
+    mem = PrototypeMemory(feature_dim=8)
+    feat = torch.randn(8)
+    r = torch.tensor([1.0])
+    o = torch.randn(1, 3)
+    mem.update_or_create_prototype(feat, r, o, task_id=0)
+
+    dummy_x = torch.randn(10, 8)
+    dummy_y = torch.randint(0, 3, (10,))
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(dummy_x, dummy_y), batch_size=5
+    )
+
+    res = builder.validate_candidate(
+        candidate_expert=child,
+        parent_expert=parent,
+        encoder=enc,
+        val_loader=loader,
+        prototype_memory=mem,
+    )
+    # Drifted candidate must fail the gate
+    assert not res.passed
+    assert res.rejection_reason is not None
+
+
+def test_test_time_adapter_restores_encoder_grad_state():
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    for p in enc.parameters():
+        p.requires_grad = True
+
+    router = DynamicRouter(input_dim=8, num_experts=2, top_k=1)
+    experts = [MLPExpert(8, 8, 3, i) for i in range(2)]
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+    moe.train()
+
+    adapter = TestTimeAdapter(moe, steps=1, lr=1e-3)
+    x = torch.randn(4, 16)
+    _ = adapter.adapt_and_predict(x)
+
+    # Encoder requires_grad and training mode must be fully preserved
+    assert all(p.requires_grad for p in enc.parameters())
+    assert moe.training
+
 
