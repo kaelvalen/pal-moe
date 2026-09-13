@@ -100,6 +100,21 @@ class ContinualEvaluator:
         bwts = [float(self.R[T, i] - self.R[i, i]) for i in range(T)]
         return float(np.mean(bwts))
 
+    def compute_forward_transfer(self, random_baseline_acc: float = 0.10) -> float:
+        """
+        FWT = (1 / (T - 1)) * sum_{i=1}^{T-1} (R_{i-1, i} - random_baseline_i)
+        Measures zero-shot transfer onto future tasks prior to training on them.
+        """
+        if self.num_tasks <= 1:
+            return 0.0
+        T = self.num_tasks
+        fwts = []
+        for i in range(1, T):
+            pre_acc = float(self.R[i - 1, i])
+            fwts.append(pre_acc - random_baseline_acc)
+        return float(np.mean(fwts)) if fwts else 0.0
+
+
     @staticmethod
     def compute_router_stability(
         model: DynamicMoE, prototype_memory: PrototypeMemory, device: torch.device
