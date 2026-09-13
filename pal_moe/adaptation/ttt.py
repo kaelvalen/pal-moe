@@ -128,9 +128,11 @@ class ContinualTrainer:
                         parent_id=parent_idx,
                         prototype_feat=h_proto,
                     )
-                    # Enforce capacity control if exceeded
+                    # Enforce capacity control if exceeded (with prototype memory synchronization)
                     self.builder.enforce_capacity_control(
-                        self.model, max_experts=self.max_experts
+                        self.model,
+                        prototype_memory=self.prototype_memory,
+                        max_experts=self.max_experts,
                     )
                     # Refresh optimizer parameters to include new expert and expanded router
                     trainable_params = [p for p in self.model.parameters() if p.requires_grad]
@@ -179,11 +181,11 @@ class ContinualTrainer:
                 history["loss_router_stab"].append(l_router_stab.item())
                 history["loss_expert_stab"].append(l_expert_stab.item())
 
-        # Step 6: Register task prototypes into memory
+        # Step 6: Register task prototypes into memory with labels and raw exemplars
         self.model.eval()
         with torch.no_grad():
-            for x, _ in train_loader:
-                x = x.to(self.device)
+            for x, y in train_loader:
+                x, y = x.to(self.device), y.to(self.device)
                 h = self.model.get_routing_features(x)
                 g_dist = self.model.router.get_full_distribution(h)
                 all_expert_outs = self.model.get_all_expert_outputs(h)
@@ -192,8 +194,16 @@ class ContinualTrainer:
                     routing_dists=g_dist,
                     all_expert_outs=all_expert_outs,
                     task_id=task_id,
+                    labels=y,
+                    raw_inputs=x,
                 )
                 break  # Register a representative batch
+
+        # Step 7: Representation refresh if encoder is active/EMA to avoid drift
+        if self.model.use_ema_encoder and self.model.ema_encoder is not None:
+            self.prototype_memory.refresh_representations(self.model.ema_encoder)
+        elif any(p.requires_grad for p in self.model.encoder.parameters()):
+            self.prototype_memory.refresh_representations(self.model.encoder)
 
         return history
 

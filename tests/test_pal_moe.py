@@ -185,3 +185,90 @@ def test_metrics_computation():
     assert abs(forgetting - 0.07) < 1e-4
     # BWT = ((0.80 - 0.90) + (0.88 - 0.92)) / 2 = -0.07
     assert abs(bwt - (-0.07)) < 1e-4
+
+
+def test_prototype_sync_on_merge_and_prune():
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=3, top_k=1)
+    experts = [MLPExpert(8, 8, 4, i) for i in range(3)]
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+
+    mem = PrototypeMemory(feature_dim=8)
+    # Register dummy prototype with 3 experts
+    v = torch.randn(8)
+    r = torch.tensor([0.6, 0.3, 0.1])
+    o = torch.randn(3, 4)
+    mem.update_or_create_prototype(v, r, o, task_id=0)
+
+    # Merge expert 1 into expert 0
+    moe.merge_experts(0, 1, prototype_memory=mem)
+
+    assert moe.num_experts == 2
+    assert len(mem.prototypes) == 1
+    p = mem.prototypes[0]
+    assert p.r_p.size(0) == 2
+    assert p.o_p.size(0) == 2
+    # Probability of 0 should now combine 0.6 and 0.3 = 0.9
+    assert abs(p.r_p[0].item() - 0.9) < 1e-4
+    assert abs(p.r_p.sum().item() - 1.0) < 1e-4
+
+    # Compute stability loss to verify no dimension mismatch
+    l_r, l_e = mem.compute_stability_losses(moe)
+    assert not torch.isnan(l_r) and not torch.isnan(l_e)
+
+
+def test_validation_gate_with_acc_proto():
+    parent = MLPExpert(input_dim=8, hidden_dim=8, num_classes=3, expert_id=0)
+    builder = ExpertBuilder(min_acc_threshold=0.3, max_proto_drop=1.0, max_proto_acc_drop=0.01)
+    child = builder.create_candidate_from_parent(parent, new_expert_id=1, creation_task=1)
+
+    enc = nn.Identity()
+    mem = PrototypeMemory(feature_dim=8)
+
+    # Register labeled prototype exemplars
+    feat = torch.randn(8)
+    r = torch.tensor([1.0])
+    o = torch.randn(1, 3)
+    lbl = torch.tensor(0)
+    mem.update_or_create_prototype(feat, r, o, task_id=0, label=lbl)
+
+    dummy_x = torch.randn(10, 8)
+    dummy_y = torch.randint(0, 3, (10,))
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(dummy_x, dummy_y), batch_size=5
+    )
+
+    res = builder.validate_candidate(
+        candidate_expert=child,
+        parent_expert=parent,
+        encoder=enc,
+        val_loader=loader,
+        prototype_memory=mem,
+    )
+    assert res.proto_acc_parent is not None
+    assert res.proto_acc_cand is not None
+    assert res.proto_acc_parent == res.proto_acc_cand  # Exact match due to Net2Net init
+
+
+def test_refresh_representations_with_raw_inputs():
+    enc = nn.Linear(4, 4, bias=False)
+    with torch.no_grad():
+        enc.weight.fill_(1.0)
+
+    mem = PrototypeMemory(feature_dim=4)
+    raw_x = torch.tensor([1.0, 1.0, 1.0, 1.0])
+    feat = enc(raw_x)
+    r = torch.tensor([1.0])
+    o = torch.randn(1, 2)
+    mem.update_or_create_prototype(feat, r, o, task_id=0, raw_input=raw_x)
+
+    assert torch.allclose(mem.prototypes[0].v_p, torch.tensor([4.0, 4.0, 4.0, 4.0]))
+
+    # Change encoder weights
+    with torch.no_grad():
+        enc.weight.fill_(2.0)
+
+    mem.refresh_representations(enc)
+    # Output should now be 2 * 4 = 8.0
+    assert torch.allclose(mem.prototypes[0].v_p, torch.tensor([8.0, 8.0, 8.0, 8.0]))
+
