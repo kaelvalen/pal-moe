@@ -43,12 +43,14 @@ class PrototypeMemory:
         ema_alpha: float = 0.9,
         max_prototypes: int = 50,
         exemplars_per_proto: int = 5,
+        store_raw: bool = False,
     ):
         self.feature_dim = feature_dim
         self.distance_threshold = distance_threshold
         self.ema_alpha = ema_alpha
         self.max_prototypes = max_prototypes
         self.exemplars_per_proto = exemplars_per_proto
+        self.store_raw = store_raw
 
         self.prototypes: List[Prototype] = []
 
@@ -136,7 +138,11 @@ class PrototypeMemory:
         routing_detached = routing_dist.detach().cpu()
         expert_detached = expert_outputs.detach().cpu()
         y_detached = label.detach().cpu().view(1) if label is not None else None
-        raw_detached = raw_input.detach().cpu().unsqueeze(0) if raw_input is not None else None
+        raw_detached = (
+            raw_input.detach().cpu().unsqueeze(0)
+            if (self.store_raw and raw_input is not None)
+            else None
+        )
 
         if self.is_empty():
             new_proto = Prototype(
@@ -368,3 +374,25 @@ class PrototypeMemory:
                     proto.v_p = new_feats.mean(dim=0).cpu()
                 elif proto.x_p is not None and proto.x_p.size(0) > 0:
                     proto.v_p = proto.x_p.mean(dim=0)
+
+    def estimate_memory_footprint(self) -> Dict[str, Any]:
+        """
+        Estimates total parameter/element counts stored across all prototypes.
+        """
+        total_floats = 0
+        for p in self.prototypes:
+            total_floats += p.v_p.numel()
+            total_floats += p.r_p.numel()
+            total_floats += p.o_p.numel()
+            if p.x_p is not None:
+                total_floats += p.x_p.numel()
+            if p.y_p is not None:
+                total_floats += p.y_p.numel()
+            if p.raw_x is not None:
+                total_floats += p.raw_x.numel()
+        return {
+            "num_prototypes": len(self.prototypes),
+            "total_elements": total_floats,
+            "size_kb": (total_floats * 4) / 1024,
+        }
+

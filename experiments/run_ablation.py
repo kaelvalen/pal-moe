@@ -84,6 +84,7 @@ def run_single_config(
         distance_threshold=0.5,
         ema_alpha=0.9,
         max_prototypes=60,
+        store_raw=adapt_encoder,
     )
     trigger = QuantitativeTrigger(
         alpha=1.0, beta=0.4, gamma=0.6, delta=0.5, threshold_tau=0.5
@@ -91,8 +92,10 @@ def run_single_config(
     builder = ExpertBuilder(
         min_acc_threshold=0.0 if not use_validation_gate else 0.60,
         max_proto_drop=999.0 if not use_validation_gate else 2.0,
+        max_proto_acc_drop=999.0 if not use_validation_gate else 0.05,
         max_ece=999.0 if not use_validation_gate else 0.35,
         distill_lambda=0.5,
+        enable_gate=use_validation_gate,
     )
 
     trainer = ContinualTrainer(
@@ -103,6 +106,7 @@ def run_single_config(
         lambda_r=lambda_r,
         lambda_e=lambda_e,
         lr=1e-3,
+        encoder_lr=1e-4 if adapt_encoder else None,
         max_experts=6,
         device=device,
     )
@@ -114,14 +118,19 @@ def run_single_config(
 
     evaluator = ContinualEvaluator(num_tasks=len(tasks), device=device)
 
+    total_experts_added = 0
+    total_gate_rejections = 0
+
     for t_idx, task in enumerate(tasks):
-        trainer.train_task(
+        hist = trainer.train_task(
             task_id=t_idx,
             train_loader=task.train_loader,
             val_loader=task.val_loader,
             epochs=epochs,
             enable_expansion=True,
         )
+        total_experts_added += hist.get("experts_added", 0)
+        total_gate_rejections += hist.get("gate_rejections", 0)
         accs = evaluator.evaluate_all_seen_tasks(moe_model, t_idx, tasks)
 
     avg_acc = evaluator.compute_average_accuracy()
@@ -129,7 +138,7 @@ def run_single_config(
     bwt = evaluator.compute_backward_transfer()
     router_kl = ContinualEvaluator.compute_router_stability(moe_model, prototype_mem, device)
 
-    print(f"  Result -> Acc: {avg_acc:.2%}, Forgetting: {forgetting:.2%}, Router KL: {router_kl:.4f}, Experts: {moe_model.num_experts}")
+    print(f"  Result -> Acc: {avg_acc:.2%}, Forgetting: {forgetting:.2%}, Router KL: {router_kl:.4f}, Experts: {moe_model.num_experts}, Rejections: {total_gate_rejections}")
 
     return {
         "name": config_name,
@@ -138,6 +147,8 @@ def run_single_config(
         "bwt": bwt,
         "router_stability_kl": router_kl,
         "final_experts": moe_model.num_experts,
+        "experts_added": total_experts_added,
+        "gate_rejections": total_gate_rejections,
         "acc_matrix": evaluator.R.tolist(),
     }
 
@@ -185,9 +196,10 @@ def run_all_ablations(epochs: int = 3, device_str: str = "auto", output_dir: str
             f"{res['bwt']:.2%}",
             f"{res['router_stability_kl']:.4f}",
             str(res['final_experts']),
+            str(res['gate_rejections']),
         ])
 
-    headers = ["Ablation Configuration", "Avg Acc (↑)", "Forgetting (↓)", "BWT (↑)", "Router KL (↓)", "Experts"]
+    headers = ["Ablation Configuration", "Avg Acc (↑)", "Forgetting (↓)", "BWT (↑)", "Router KL (↓)", "Experts", "Rejections"]
     print("\n" + "=" * 80)
     print("ABLATION STUDY RESULTS (Split-MNIST, 5 Tasks)")
     print("=" * 80)

@@ -140,7 +140,7 @@ class ContinualEvaluator:
                 n_old = rp_old.size(0)
                 if curr_num_experts > n_old:
                     pad_size = curr_num_experts - n_old
-                    eps = 1e-5 / curr_num_experts
+                    eps = 1e-4 / curr_num_experts
                     rp_targets[p_idx, :n_old] = rp_old * (1.0 - eps * pad_size)
                     rp_targets[p_idx, n_old:] = eps
                 else:

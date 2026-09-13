@@ -32,6 +32,7 @@ class ContinualTrainer:
         lambda_r: float = 1.0,
         lambda_e: float = 1.0,
         lr: float = 1e-3,
+        encoder_lr: Optional[float] = None,
         max_experts: int = 8,
         device: torch.device = torch.device("cpu"),
     ):
@@ -42,12 +43,27 @@ class ContinualTrainer:
         self.lambda_r = lambda_r
         self.lambda_e = lambda_e
         self.lr = lr
+        self.encoder_lr = encoder_lr
         self.max_experts = max_experts
         self.device = device
 
-        self.optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.lr, weight_decay=1e-5
-        )
+        self.optimizer = self._build_optimizer()
+
+    def _build_optimizer(self) -> torch.optim.Optimizer:
+        encoder_params = [p for p in self.model.encoder.parameters() if p.requires_grad]
+        other_params = [
+            p for n, p in self.model.named_parameters()
+            if not n.startswith("encoder.") and p.requires_grad
+        ]
+        param_groups = []
+        if encoder_params:
+            enc_lr = self.encoder_lr if self.encoder_lr is not None else self.lr
+            param_groups.append({"params": encoder_params, "lr": enc_lr})
+        if other_params:
+            param_groups.append({"params": other_params, "lr": self.lr})
+        if not param_groups:
+            param_groups = [{"params": [torch.nn.Parameter(torch.zeros(1))], "lr": self.lr}]
+        return torch.optim.Adam(param_groups, weight_decay=1e-5)
 
     def train_task(
         self,
@@ -142,10 +158,7 @@ class ContinualTrainer:
                         max_experts=self.max_experts,
                     )
                     # Refresh optimizer parameters to include new expert and expanded router
-                    trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-                    self.optimizer = torch.optim.Adam(
-                        trainable_params, lr=self.lr, weight_decay=1e-5
-                    )
+                    self.optimizer = self._build_optimizer()
                 else:
                     history["gate_rejections"] += 1
 

@@ -171,10 +171,41 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     }
 
     # -------------------------------------------------------------
-    # 4. Baseline: Experience Replay (Buffer=250)
+    # 4. Baseline: Experience Replay (Budgeted P=360, theoretical raw memory)
     # -------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("Running Baseline 4: Experience Replay (Buffer=250)")
+    print("Running Baseline 4: Experience Replay (Budgeted P=360)")
+    print("=" * 60)
+    set_seed(42)
+    replay_net_360 = nn.Sequential(
+        copy.deepcopy(base_encoder),
+        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0),
+    ).to(device)
+    replay_trainer_360 = ReplayTrainer(replay_net_360, buffer_size=360, lr=1e-3, device=device)
+    evaluator_replay_360 = ContinualEvaluator(num_tasks=num_tasks, device=device)
+
+    for t_idx, task in enumerate(tasks):
+        print(f"  Training Task {t_idx} (classes {task.classes})...")
+        replay_trainer_360.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
+        accs = evaluator_replay_360.evaluate_all_seen_tasks(replay_net_360, t_idx, tasks)
+        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
+
+    results["Replay (P=360)"] = {
+        "acc": evaluator_replay_360.compute_average_accuracy(),
+        "forgetting": evaluator_replay_360.compute_forgetting(),
+        "bwt": evaluator_replay_360.compute_backward_transfer(),
+        "router_stability_kl": float("nan"),
+        "specialization_mi": float("nan"),
+        "utilization": float("nan"),
+        "final_experts": 1,
+        "acc_matrix": evaluator_replay_360.R.tolist(),
+    }
+
+    # -------------------------------------------------------------
+    # 5. Baseline: Experience Replay (Buffer=250)
+    # -------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("Running Baseline 5: Experience Replay (Buffer=250)")
     print("=" * 60)
     set_seed(42)
     replay_net = nn.Sequential(
@@ -202,10 +233,10 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     }
 
     # -------------------------------------------------------------
-    # 4. Baseline: Standard MoE Fine-tuning (Fixed 4 Experts)
+    # 6. Baseline: Standard MoE Fine-tuning (Fixed 4 Experts)
     # -------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("Running Baseline 4: Standard MoE Fine-tuning (Fixed 4 Experts, No Stability)")
+    print("Running Baseline 6: Standard MoE Fine-tuning (Fixed 4 Experts, Balanced)")
     print("=" * 60)
     set_seed(42)
     std_encoder = copy.deepcopy(base_encoder)
@@ -225,8 +256,18 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
             for x, y in task.train_loader:
                 x, y = x.to(device), y.to(device)
                 opt_std.zero_grad()
+                feats = std_moe.encoder(x)
                 logits = std_moe(x)
-                loss = nn.functional.cross_entropy(logits, y)
+                loss_ce = nn.functional.cross_entropy(logits, y)
+
+                # Switch Transformer auxiliary load-balancing loss: L_balance = N * sum_{i=1}^N f_i * P_i
+                dense_probs = std_moe.router.get_full_distribution(feats)
+                _, topk_idx, _ = std_moe.router(feats)
+                f_i = torch.bincount(topk_idx.flatten(), minlength=4).float() / x.size(0)
+                P_i = dense_probs.mean(dim=0)
+                loss_balance = 4.0 * torch.sum(f_i * P_i)
+
+                loss = loss_ce + 0.1 * loss_balance
                 loss.backward()
                 opt_std.step()
 
@@ -273,6 +314,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
         distance_threshold=0.5,
         ema_alpha=0.9,
         max_prototypes=60,
+        store_raw=False,
     )
     trigger = QuantitativeTrigger(
         alpha=1.0,
@@ -318,6 +360,8 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     mi_dyn, util_dyn = ContinualEvaluator.compute_expert_specialization_and_utilization(
         moe_model, tasks, device
     )
+    footprint = prototype_mem.estimate_memory_footprint()
+    print(f"  Prototype Memory Footprint: {footprint['num_prototypes']} prototypes, {footprint['total_elements']} floats ({footprint['size_kb']:.1f} KB)")
 
     results["PAL-MoE (Ours)"] = {
         "acc": evaluator_dynamic.compute_average_accuracy(),
@@ -327,6 +371,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
         "specialization_mi": mi_dyn,
         "utilization": util_dyn,
         "final_experts": moe_model.num_experts,
+        "prototype_elements": footprint["total_elements"],
         "acc_matrix": evaluator_dynamic.R.tolist(),
     }
 

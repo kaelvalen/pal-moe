@@ -49,12 +49,14 @@ class ExpertBuilder:
         max_proto_acc_drop: float = 0.05,
         max_ece: float = 0.25,
         distill_lambda: float = 1.0,
+        enable_gate: bool = True,
     ):
         self.min_acc_threshold = min_acc_threshold
         self.max_proto_drop = max_proto_drop
         self.max_proto_acc_drop = max_proto_acc_drop
         self.max_ece = max_ece
         self.distill_lambda = distill_lambda
+        self.enable_gate = enable_gate
 
     def create_candidate_from_parent(
         self,
@@ -243,6 +245,19 @@ class ExpertBuilder:
                         proto_acc_cand = (cand_preds == y_proto).float().mean().item()
 
         # Gate decisions
+        if not self.enable_gate:
+            return ValidationGateResult(
+                passed=True,
+                new_task_acc=new_task_acc,
+                old_proto_loss_diff=proto_loss_diff,
+                ece=ece,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                proto_acc_parent=proto_acc_parent,
+                proto_acc_cand=proto_acc_cand,
+                rejection_reason=None,
+            )
+
         rejection_reason = None
         passed = True
 
