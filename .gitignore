@@ -87,3 +87,8 @@ Thumbs.db
 # Typing & Linters cache
 .mypy_cache/
 .ruff_cache/
+
+# Repository text dumps
+repo_dump.txt
+*.dump.txt
+
