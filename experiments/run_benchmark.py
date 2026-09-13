@@ -9,6 +9,10 @@ Compares:
 """
 
 import os
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import copy
 import json
 import time
@@ -40,6 +44,8 @@ def set_seed(seed: int = 42):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir: str = "./results"):
@@ -62,7 +68,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     print("Step 0: Pretraining Task-Agnostic Shared Encoder (Unsupervised)")
     print("=" * 60)
     set_seed(42)
-    mnist_train = datasets.MNIST("./data", train=True, download=False, transform=transforms.ToTensor())
+    mnist_train = datasets.MNIST("./data", train=True, download=True, transform=transforms.ToTensor())
     unlabeled_loader = torch.utils.data.DataLoader(mnist_train, batch_size=256, shuffle=True)
     base_encoder = SharedEncoder(input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp").to(device)
     base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
@@ -134,10 +140,41 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     }
 
     # -------------------------------------------------------------
-    # 3. Baseline: Experience Replay
+    # 3. Baseline: Experience Replay (Budgeted P=60, matching prototype memory)
     # -------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("Running Baseline 3: Experience Replay")
+    print("Running Baseline 3: Experience Replay (Budgeted P=60)")
+    print("=" * 60)
+    set_seed(42)
+    replay_net_budget = nn.Sequential(
+        copy.deepcopy(base_encoder),
+        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0),
+    ).to(device)
+    replay_trainer_budget = ReplayTrainer(replay_net_budget, buffer_size=60, lr=1e-3, device=device)
+    evaluator_replay_budget = ContinualEvaluator(num_tasks=num_tasks, device=device)
+
+    for t_idx, task in enumerate(tasks):
+        print(f"  Training Task {t_idx} (classes {task.classes})...")
+        replay_trainer_budget.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
+        accs = evaluator_replay_budget.evaluate_all_seen_tasks(replay_net_budget, t_idx, tasks)
+        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
+
+    results["Replay (P=60)"] = {
+        "acc": evaluator_replay_budget.compute_average_accuracy(),
+        "forgetting": evaluator_replay_budget.compute_forgetting(),
+        "bwt": evaluator_replay_budget.compute_backward_transfer(),
+        "router_stability_kl": float("nan"),
+        "specialization_mi": float("nan"),
+        "utilization": float("nan"),
+        "final_experts": 1,
+        "acc_matrix": evaluator_replay_budget.R.tolist(),
+    }
+
+    # -------------------------------------------------------------
+    # 4. Baseline: Experience Replay (Buffer=250)
+    # -------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("Running Baseline 4: Experience Replay (Buffer=250)")
     print("=" * 60)
     set_seed(42)
     replay_net = nn.Sequential(
@@ -153,7 +190,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
         accs = evaluator_replay.evaluate_all_seen_tasks(replay_net, t_idx, tasks)
         print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
 
-    results["Experience Replay"] = {
+    results["Experience Replay (Buffer=250)"] = {
         "acc": evaluator_replay.compute_average_accuracy(),
         "forgetting": evaluator_replay.compute_forgetting(),
         "bwt": evaluator_replay.compute_backward_transfer(),
@@ -255,7 +292,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
         prototype_memory=prototype_mem,
         trigger=trigger,
         builder=builder,
-        lambda_r=2.5,
+        lambda_r=0.5,
         lambda_e=2.5,
         lr=1e-3,
         max_experts=6,

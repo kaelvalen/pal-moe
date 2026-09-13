@@ -11,6 +11,10 @@ Systematically verifies the necessity of each component in Section 10:
 """
 
 import os
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import copy
 import json
 import argparse
@@ -36,17 +40,20 @@ def set_seed(seed: int = 42):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def run_single_config(
     tasks,
     base_encoder: SharedEncoder,
     config_name: str,
-    lambda_r: float = 2.5,
+    lambda_r: float = 0.5,
     lambda_e: float = 2.5,
     use_function_preserving: bool = True,
     use_validation_gate: bool = True,
     use_ema_encoder: bool = False,
+    adapt_encoder: bool = False,
     top_k: int = 1,
     epochs: int = 3,
     device: torch.device = torch.device("cpu"),
@@ -55,6 +62,11 @@ def run_single_config(
     set_seed(42)
 
     encoder = copy.deepcopy(base_encoder)
+    if adapt_encoder:
+        encoder.unfreeze()
+    else:
+        encoder.freeze()
+
     router = DynamicRouter(input_dim=128, num_experts=1, top_k=top_k, temperature=1.0).to(device)
     initial_experts = [
         MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0).to(device)
@@ -143,20 +155,21 @@ def run_all_ablations(epochs: int = 3, device_str: str = "auto", output_dir: str
     # Pretrain shared encoder
     print("Pretraining shared base encoder...")
     set_seed(42)
-    mnist_train = datasets.MNIST("./data", train=True, download=False, transform=transforms.ToTensor())
+    mnist_train = datasets.MNIST("./data", train=True, download=True, transform=transforms.ToTensor())
     unlabeled_loader = torch.utils.data.DataLoader(mnist_train, batch_size=256, shuffle=True)
     base_encoder = SharedEncoder(input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp").to(device)
     base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
     base_encoder.freeze()
 
     configs = [
-        ("Full Proposed PAL-MoE", dict(lambda_r=2.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
+        ("Full Proposed PAL-MoE", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
         ("No Stability Loss (lr=0, le=0)", dict(lambda_r=0.0, lambda_e=0.0, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
-        ("No Expert Anchor (lr=2.5, le=0)", dict(lambda_r=2.5, lambda_e=0.0, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
-        ("Random Expert Init (No Function-Preserving)", dict(lambda_r=2.5, lambda_e=2.5, use_function_preserving=False, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
-        ("No Validation Gate", dict(lambda_r=2.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=False, use_ema_encoder=False, top_k=1)),
-        ("Top-2 Routing", dict(lambda_r=2.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=2)),
-        ("EMA Encoder", dict(lambda_r=2.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=True, top_k=1)),
+        ("No Expert Anchor (lr=0.5, le=0)", dict(lambda_r=0.5, lambda_e=0.0, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
+        ("Random Expert Init (No Function-Preserving)", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=False, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
+        ("No Validation Gate", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=False, use_ema_encoder=False, top_k=1)),
+        ("Top-2 Routing", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=2)),
+        ("Online Encoder (No EMA)", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, adapt_encoder=True, top_k=1)),
+        ("EMA Encoder (Adaptive)", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=True, adapt_encoder=True, top_k=1)),
     ]
 
     all_results = {}
