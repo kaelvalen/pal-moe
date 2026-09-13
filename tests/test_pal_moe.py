@@ -255,7 +255,7 @@ def test_refresh_representations_with_raw_inputs():
     with torch.no_grad():
         enc.weight.fill_(1.0)
 
-    mem = PrototypeMemory(feature_dim=4)
+    mem = PrototypeMemory(feature_dim=4, store_raw=True)
     raw_x = torch.tensor([1.0, 1.0, 1.0, 1.0])
     feat = enc(raw_x)
     r = torch.tensor([1.0])
@@ -341,5 +341,90 @@ def test_test_time_adapter_restores_encoder_grad_state():
     # Encoder requires_grad and training mode must be fully preserved
     assert all(p.requires_grad for p in enc.parameters())
     assert moe.training
+
+
+def test_prototype_memory_store_raw_and_footprint():
+    # Test store_raw=False (default)
+    mem_compact = PrototypeMemory(feature_dim=16, store_raw=False)
+    feat = torch.randn(16)
+    r = torch.tensor([1.0, 0.0])
+    o = torch.randn(2, 5)
+    raw = torch.randn(28 * 28)
+    mem_compact.update_or_create_prototype(feat, r, o, task_id=0, raw_input=raw)
+
+    assert len(mem_compact) == 1
+    assert mem_compact.prototypes[0].raw_x is None
+    fp_compact = mem_compact.estimate_memory_footprint()
+    assert fp_compact["num_prototypes"] == 1
+    assert fp_compact["total_elements"] < 100
+
+    # Test store_raw=True
+    mem_full = PrototypeMemory(feature_dim=16, store_raw=True)
+    mem_full.update_or_create_prototype(feat, r, o, task_id=0, raw_input=raw)
+
+    assert len(mem_full) == 1
+    assert mem_full.prototypes[0].raw_x is not None
+    assert mem_full.prototypes[0].raw_x.shape == (1, 784)
+    fp_full = mem_full.estimate_memory_footprint()
+    assert fp_full["total_elements"] > 784
+
+
+def test_validation_gate_enable_flag():
+    parent = MLPExpert(input_dim=8, hidden_dim=8, num_classes=3, expert_id=0)
+    builder_disabled = ExpertBuilder(enable_gate=False)
+    child = builder_disabled.create_candidate_from_parent(parent, new_expert_id=1, creation_task=1)
+
+    # Intentionally ruin child weights
+    with torch.no_grad():
+        child.fc1.weight.fill_(999.0)
+
+    enc = nn.Identity()
+    mem = PrototypeMemory(feature_dim=8)
+    dummy_x = torch.randn(10, 8)
+    dummy_y = torch.randint(0, 3, (10,))
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(dummy_x, dummy_y), batch_size=5
+    )
+
+    res = builder_disabled.validate_candidate(
+        candidate_expert=child,
+        parent_expert=parent,
+        encoder=enc,
+        val_loader=loader,
+        prototype_memory=mem,
+    )
+    # When gate is disabled, it must pass unconditionally
+    assert res.passed
+    assert res.rejection_reason is None
+
+
+def test_capacity_control_through_expert_builder():
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=5, top_k=1)
+    experts = [MLPExpert(8, 8, 3, i) for i in range(5)]
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+
+    mem = PrototypeMemory(feature_dim=8)
+    feat = torch.randn(8)
+    r = torch.softmax(torch.randn(5), dim=-1)
+    o = torch.randn(5, 3)
+    mem.update_or_create_prototype(feat, r, o, task_id=0)
+
+    # Simulate usage so expert 4 is unused, others used
+    experts[0].activation_count = 10
+    experts[1].activation_count = 10
+    experts[2].activation_count = 10
+    experts[3].activation_count = 10
+    experts[4].activation_count = 0
+
+    builder = ExpertBuilder()
+    builder.enforce_capacity_control(moe, prototype_memory=mem, max_experts=4)
+
+    assert moe.num_experts == 4
+    assert len(moe.experts) == 4
+    assert moe.router.num_experts == 4
+    assert mem.prototypes[0].r_p.shape[0] == 4
+    assert mem.prototypes[0].o_p.shape[0] == 4
+
 
 

@@ -24,7 +24,7 @@ def plot_benchmark_results(results_file="results/benchmark_results.json", output
     width = 0.35
 
     plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
-    fig, ax = plt.subplots(figsize=(10, 5.5), dpi=300)
+    fig, ax = plt.subplots(figsize=(12, 6), dpi=300)
 
     rects1 = ax.bar(x - width / 2, accs, width, label="Average Accuracy (%)", color="#2b5c8f")
     rects2 = ax.bar(x + width / 2, forgetting, width, label="Catastrophic Forgetting (%)", color="#d95f02")
@@ -32,7 +32,7 @@ def plot_benchmark_results(results_file="results/benchmark_results.json", output
     ax.set_ylabel("Percentage (%)", fontsize=12)
     ax.set_title("Continual Learning Benchmark on Split-MNIST (5 Tasks)", fontsize=14, fontweight="bold")
     ax.set_xticks(x)
-    ax.set_xticklabels(methods, rotation=15, ha="right", fontsize=10)
+    ax.set_xticklabels(methods, rotation=20, ha="right", fontsize=9)
     ax.legend(fontsize=11)
     ax.set_ylim(0, 105)
 

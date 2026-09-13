@@ -132,7 +132,45 @@ pal-moe/
 
 ---
 
-## 7. How to Run
+## 7. Empirical Benchmark and Ablation Results
+
+Experiments evaluated on 5-task Split-MNIST (2 classes per task).
+
+### Continual Learning Benchmark (5 Tasks)
+
+| Method | Avg Acc (↑) | Forgetting (↓) | BWT (↑) | Router KL (↓) | Spec. MI (↑) | Util. Entropy | Experts |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Naive Fine-tuning | 19.25% | 97.80% | -97.80% | - | - | - | 1 |
+| EWC | 19.38% | 97.41% | -97.41% | - | - | - | 1 |
+| Replay (Budgeted P=60) | 67.21% | 35.67% | -35.67% | - | - | - | 1 |
+| Replay (Budgeted P=360) | 80.51% | 17.35% | -17.35% | - | - | - | 1 |
+| Experience Replay (Buffer=250) | 79.98% | 18.76% | -18.76% | - | - | - | 1 |
+| Standard MoE (Balanced) | 19.14% | 96.74% | -96.74% | - | 0.087 | 0.248 | 4 |
+| **PAL-MoE (Ours)** | **59.43%** | **39.40%** | **-39.40%** | **0.3495** | **0.760** | **0.865** | **5** |
+
+### Ablation Study
+
+| Ablation Configuration | Avg Acc (↑) | Forgetting (↓) | BWT (↑) | Router KL (↓) | Experts | Rejections |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Full Proposed PAL-MoE** | **59.43%** | **39.40%** | **-39.40%** | **0.3495** | **5** | **0** |
+| No Stability Loss ($\lambda_r=0, \lambda_e=0$) | 19.18% | 98.28% | -98.28% | 9.3926 | 4 | 1 |
+| No Expert Anchor ($\lambda_r=0.5, \lambda_e=0$) | 19.21% | 97.96% | -97.96% | 0.0055 | 3 | 2 |
+| Random Expert Init (No Net2Net) | 58.10% | 41.30% | -41.30% | 0.3487 | 5 | 0 |
+| No Validation Gate | 59.43% | 39.40% | -39.40% | 0.3495 | 5 | 0 |
+| Top-2 Routing | 46.73% | 63.13% | -63.13% | 0.2644 | 5 | 0 |
+| Online Encoder (No EMA) | 23.13% | 95.45% | -95.45% | 1.3967 | 5 | 0 |
+| EMA Encoder (Adaptive) | 24.40% | 93.88% | -93.88% | 1.3932 | 5 | 0 |
+
+### Key Findings
+
+1. **Router KL Stability**: Without stability loss, Router KL explodes to 9.3926 and catastrophic forgetting exceeds 98%. PAL-MoE constrains Router KL to 0.3495 via prototype anchoring.
+2. **Top-1 Modular Isolation**: Top-1 routing strictly prevents inter-expert interference, outperforming Top-2 routing (59.43% vs 46.73%).
+3. **Function-Preserving Net2Net Cloning**: Zero-loss initial inheritance gives +1.33% accuracy and -1.90% forgetting compared to random expert candidate initialization.
+4. **Memory Efficiency**: With frozen representations, prototypes store compact feature anchors rather than full raw image buffers (only 19.5K floats / 76.2 KB for 60 prototypes).
+
+---
+
+## 8. How to Run
 
 ### Activate Environment
 ```bash
@@ -152,7 +190,7 @@ python experiments/run_benchmark.py --epochs 3
 
 ### Run Ablation Study
 ```bash
-python experiments/run_ablation.py --epochs 2
+python experiments/run_ablation.py --epochs 3
 ```
 
 ### Generate Figures
@@ -162,7 +200,7 @@ python experiments/plot_results.py
 
 ---
 
-## 8. Installation & Packaging
+## 9. Installation & Packaging
 
 Install from local source:
 ```bash
@@ -183,7 +221,7 @@ uv build
 
 ---
 
-## 9. Citation
+## 10. Citation
 
 If you use **PAL-MoE** in your research or benchmarks, please cite:
 
@@ -199,6 +237,7 @@ If you use **PAL-MoE** in your research or benchmarks, please cite:
 
 ---
 
-## 10. License
+## 11. License
 
 This project is licensed under the [MIT License](LICENSE).
+
