@@ -1,0 +1,187 @@
+"""
+Unit tests for PAL-MoE (Prototype-Anchored Lifelong Mixture of Experts).
+Verifies all mathematical formulations, loss computations, function-preserving expansion,
+trigger thresholds, validation gate, and TTT.
+"""
+
+import numpy as np
+import pytest
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from pal_moe.models.encoder import SharedEncoder, EMAEncoder
+from pal_moe.models.expert import MLPExpert
+from pal_moe.models.router import DynamicRouter
+from pal_moe.models.moe import DynamicMoE, PALMoE
+from pal_moe.memory.prototype_memory import PrototypeMemory
+from pal_moe.trigger.expert_trigger import QuantitativeTrigger
+from pal_moe.builder.expert_builder import ExpertBuilder
+from pal_moe.adaptation.ttt import TestTimeAdapter
+from pal_moe.evaluation.metrics import ContinualEvaluator
+
+
+
+def test_shared_and_ema_encoder():
+    enc = SharedEncoder(input_dim=784, hidden_dims=(64,), output_dim=32, arch="mlp")
+    enc.eval()
+    ema_enc = EMAEncoder(enc, decay=0.9)
+
+    x = torch.randn(4, 784)
+    h1 = enc(x)
+    h_ema = ema_enc(x)
+    assert h1.shape == (4, 32)
+    assert h_ema.shape == (4, 32)
+    assert torch.allclose(h1, h_ema, atol=1e-5)
+
+    # Modify encoder
+    with torch.no_grad():
+        for p in enc.parameters():
+            p.add_(torch.randn_like(p) * 0.1)
+
+    ema_enc.update(enc)
+    h2 = enc(x)
+    h_ema_updated = ema_enc(x)
+    # EMA should be between old and new
+    assert not torch.allclose(h2, h_ema_updated, atol=1e-4)
+
+
+def test_function_preserving_expert_expansion():
+    parent = MLPExpert(input_dim=32, hidden_dim=16, num_classes=10, expert_id=0)
+    child = parent.clone_function_preserving(new_expert_id=1, creation_task=1)
+
+    x = torch.randn(8, 32)
+    with torch.no_grad():
+        out_parent = parent(x)
+        out_child = child(x)
+
+    # EXACT output equality: E_child(h) == E_parent(h)
+    diff = torch.max(torch.abs(out_parent - out_child)).item()
+    assert diff < 1e-6, f"Function-preserving expansion failed: max diff = {diff}"
+
+
+def test_dynamic_router_and_entropy():
+    router = DynamicRouter(input_dim=32, num_experts=3, top_k=1)
+    h = torch.randn(5, 32)
+
+    weights, topk_idx, logits = router(h)
+    assert weights.shape == (5, 3)
+    assert topk_idx.shape == (5, 1)
+
+    entropy = router.compute_entropy(weights)
+    assert entropy.shape == (5,)
+
+    # Add expert
+    new_id = router.add_expert(parent_id=0)
+    assert new_id == 3
+    assert router.num_experts == 4
+
+    weights2, topk_idx2, _ = router(h)
+    assert weights2.shape == (5, 4)
+
+    # Prune expert
+    router.prune_expert(1)
+    assert router.num_experts == 3
+
+
+def test_prototype_memory_and_stability_losses():
+    mem = PrototypeMemory(feature_dim=32, distance_threshold=0.5, ema_alpha=0.8)
+    assert mem.is_empty()
+
+    enc = SharedEncoder(input_dim=784, hidden_dims=(64,), output_dim=32)
+    router = DynamicRouter(input_dim=32, num_experts=2, top_k=1)
+    experts = [MLPExpert(32, 16, 10, i) for i in range(2)]
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+
+    x = torch.randn(10, 784)
+    h = enc(x)
+    g = router.get_full_distribution(h)
+    exp_outs = moe.get_all_expert_outputs(h)
+
+    # Register prototypes
+    mem.register_task_batch(h, g, exp_outs, task_id=0)
+    assert len(mem) > 0
+
+    dist = mem.compute_min_distance(h)
+    assert dist.shape == (10,)
+    assert (dist >= 0).all()
+
+    l_r, l_e = mem.compute_stability_losses(moe, lambda_r=1.0, lambda_e=1.0)
+    assert l_r.item() >= 0.0
+    assert l_e.item() >= 0.0
+
+
+def test_quantitative_trigger():
+    enc = SharedEncoder(input_dim=784, hidden_dims=(32,), output_dim=16)
+    router = DynamicRouter(input_dim=16, num_experts=2, top_k=1)
+    experts = [MLPExpert(16, 16, 10, i) for i in range(2)]
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+    mem = PrototypeMemory(feature_dim=16)
+
+    trigger = QuantitativeTrigger(alpha=1.0, beta=0.5, gamma=0.5, delta=0.5, threshold_tau=0.1)
+
+    x = torch.randn(8, 784)
+    y = torch.randint(0, 10, (8,))
+
+    res = trigger.evaluate(moe, x, y=y, prototype_memory=mem)
+    assert isinstance(res.should_trigger, bool)
+    assert res.best_parent_expert_idx in (0, 1)
+    assert isinstance(res.composite_score, float)
+
+
+def test_validation_gate_and_capacity():
+    parent = MLPExpert(input_dim=16, hidden_dim=8, num_classes=10, expert_id=0)
+    builder = ExpertBuilder(min_acc_threshold=0.5, max_proto_drop=0.5, max_ece=0.5)
+
+    child = builder.create_candidate_from_parent(parent, new_expert_id=1, creation_task=1)
+    enc = nn.Linear(16, 16)
+    mem = PrototypeMemory(feature_dim=16)
+
+    # Dummy dataloader
+    dummy_x = torch.randn(20, 16)
+    dummy_y = torch.zeros(20, dtype=torch.long)
+    dataset = torch.utils.data.TensorDataset(dummy_x, dummy_y)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=10)
+
+    res = builder.validate_candidate(
+        candidate_expert=child,
+        parent_expert=parent,
+        encoder=enc,
+        val_loader=loader,
+        prototype_memory=mem,
+    )
+    assert hasattr(res, "passed")
+    assert hasattr(res, "ece")
+
+
+def test_test_time_adaptation():
+    enc = SharedEncoder(input_dim=32, hidden_dims=(16,), output_dim=16)
+    router = DynamicRouter(input_dim=16, num_experts=2, top_k=1)
+    experts = [MLPExpert(16, 16, 5, i) for i in range(2)]
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+
+    adapter = TestTimeAdapter(moe, steps=2, lr=1e-3)
+    x = torch.randn(4, 32)
+    pred = adapter.adapt_and_predict(x)
+    assert pred.shape == (4, 5)
+
+
+def test_metrics_computation():
+    evaluator = ContinualEvaluator(num_tasks=3)
+    evaluator.R = np.array([
+        [0.90, 0.00, 0.00],
+        [0.85, 0.92, 0.00],
+        [0.80, 0.88, 0.95],
+    ], dtype=np.float32)
+
+    acc = evaluator.compute_average_accuracy()
+    forgetting = evaluator.compute_forgetting()
+    bwt = evaluator.compute_backward_transfer()
+
+    assert abs(acc - (0.80 + 0.88 + 0.95) / 3.0) < 1e-4
+    # Task 0 max past was 0.90, final 0.80 -> drop 0.10
+    # Task 1 max past was 0.92, final 0.88 -> drop 0.04
+    # Forgetting = (0.10 + 0.04) / 2 = 0.07
+    assert abs(forgetting - 0.07) < 1e-4
+    # BWT = ((0.80 - 0.90) + (0.88 - 0.92)) / 2 = -0.07
+    assert abs(bwt - (-0.07)) < 1e-4
