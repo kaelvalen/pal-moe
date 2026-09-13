@@ -49,7 +49,7 @@ class DynamicRouter(nn.Module):
             topk_indices: [batch_size, k]
             raw_logits: [batch_size, num_experts]
         """
-        k = top_k or self.top_k
+        k = top_k if top_k is not None else self.top_k
         k = min(k, self.num_experts)
 
         logits = self.gate(h) / max(self.temperature, 1e-5)
@@ -58,12 +58,16 @@ class DynamicRouter(nn.Module):
             noise = torch.randn_like(logits) * self.noise_std
             logits = logits + noise
 
-        # Top-k selection
-        topk_vals, topk_idx = torch.topk(logits, k=k, dim=-1)
-        topk_probs = F.softmax(topk_vals, dim=-1)
+        # Full softmax distribution preserves gradients to all router parameters for top-1 routing
+        dense_probs = F.softmax(logits, dim=-1)
+        topk_probs, topk_idx = torch.topk(dense_probs, k=k, dim=-1)
+
+        # Normalize top-k probabilities to sum to 1 when k > 1
+        if k > 1:
+            topk_probs = topk_probs / (topk_probs.sum(dim=-1, keepdim=True) + 1e-9)
 
         # Create sparse routing weights tensor
-        routing_weights = torch.zeros_like(logits)
+        routing_weights = torch.zeros_like(dense_probs)
         routing_weights.scatter_(-1, topk_idx, topk_probs)
 
         return routing_weights, topk_idx, logits

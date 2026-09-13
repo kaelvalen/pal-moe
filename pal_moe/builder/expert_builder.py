@@ -110,12 +110,18 @@ class ExpertBuilder:
                     and not prototype_memory.is_empty()
                     and parent_expert is not None
                 ):
-                    p_mat = prototype_memory.get_prototype_matrix(device)
-                    if p_mat is not None and p_mat.size(0) > 0:
-                        with torch.no_grad():
-                            parent_anchor = parent_expert(p_mat, track_usage=False)
-                        cand_anchor = candidate_expert(p_mat, track_usage=False)
-                        loss_distill = F.mse_loss(cand_anchor, parent_anchor) * self.distill_lambda
+                    anchors = prototype_memory.get_expert_anchors(parent_expert.expert_id, device)
+                    if anchors is not None:
+                        v_mat, target_anchors = anchors
+                        cand_anchor = candidate_expert(v_mat, track_usage=False)
+                        loss_distill = F.mse_loss(cand_anchor, target_anchors) * self.distill_lambda
+                    else:
+                        p_mat = prototype_memory.get_prototype_matrix(device)
+                        if p_mat is not None and p_mat.size(0) > 0:
+                            with torch.no_grad():
+                                parent_anchor = parent_expert(p_mat, track_usage=False)
+                            cand_anchor = candidate_expert(p_mat, track_usage=False)
+                            loss_distill = F.mse_loss(cand_anchor, parent_anchor) * self.distill_lambda
 
                 loss = loss_task + loss_distill
                 loss.backward()
@@ -207,12 +213,23 @@ class ExpertBuilder:
         proto_acc_cand = None
 
         if prototype_memory is not None and not prototype_memory.is_empty():
-            p_mat = prototype_memory.get_prototype_matrix(device)
-            if p_mat is not None and p_mat.size(0) > 0:
+            anchors = (
+                prototype_memory.get_expert_anchors(parent_expert.expert_id, device)
+                if parent_expert is not None
+                else None
+            )
+            if anchors is not None:
+                v_mat, target_anchors = anchors
                 with torch.no_grad():
-                    parent_out = parent_expert(p_mat, track_usage=False)
-                    cand_out = candidate_expert(p_mat, track_usage=False)
-                    proto_loss_diff = F.mse_loss(cand_out, parent_out).item()
+                    cand_out = candidate_expert(v_mat, track_usage=False)
+                    proto_loss_diff = F.mse_loss(cand_out, target_anchors).item()
+            else:
+                p_mat = prototype_memory.get_prototype_matrix(device)
+                if p_mat is not None and p_mat.size(0) > 0:
+                    with torch.no_grad():
+                        parent_out = parent_expert(p_mat, track_usage=False)
+                        cand_out = candidate_expert(p_mat, track_usage=False)
+                        proto_loss_diff = F.mse_loss(cand_out, parent_out).item()
 
             # 2. Direct accuracy check on historical prototype exemplars (Acc_proto)
             exemplar_data = prototype_memory.get_exemplar_batch(device)
