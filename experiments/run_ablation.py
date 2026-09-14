@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import copy
 import json
 import argparse
+from typing import Optional, List
 import numpy as np
 import torch
 from torchvision import datasets, transforms
@@ -56,10 +57,11 @@ def run_single_config(
     adapt_encoder: bool = False,
     top_k: int = 1,
     epochs: int = 3,
+    seed: int = 42,
     device: torch.device = torch.device("cpu"),
 ):
-    print(f"\n---> Evaluating Config: {config_name}")
-    set_seed(42)
+    print(f"\n---> Evaluating Config: {config_name} (seed={seed})")
+    set_seed(seed)
 
     encoder = copy.deepcopy(base_encoder)
     if adapt_encoder:
@@ -153,29 +155,25 @@ def run_single_config(
     }
 
 
-def run_all_ablations(epochs: int = 3, device_str: str = "auto", output_dir: str = "./results"):
+def run_all_ablations(
+    epochs: int = 3,
+    seeds: list[int] = [42],
+    selected_configs: Optional[list[str]] = None,
+    device_str: str = "auto",
+    output_dir: str = "./results",
+):
     os.makedirs(output_dir, exist_ok=True)
     if device_str == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_str)
-    print(f"[Ablation] Using compute device: {device}")
-
-    tasks = get_split_mnist_tasks(data_dir="./data", batch_size=128, val_split=0.1, seed=42)
-
-    # Pretrain shared encoder
-    print("Pretraining shared base encoder...")
-    set_seed(42)
-    mnist_train = datasets.MNIST("./data", train=True, download=True, transform=transforms.ToTensor())
-    unlabeled_loader = torch.utils.data.DataLoader(mnist_train, batch_size=256, shuffle=True)
-    base_encoder = SharedEncoder(input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp").to(device)
-    base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
-    base_encoder.freeze()
+    print(f"[Ablation] Using compute device: {device} | Seeds: {seeds}")
 
     configs = [
         ("Full Proposed PAL-MoE", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
         ("No Stability Loss (lr=0, le=0)", dict(lambda_r=0.0, lambda_e=0.0, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
         ("No Expert Anchor (lr=0.5, le=0)", dict(lambda_r=0.5, lambda_e=0.0, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
+        ("No Router Stability (lr=0, le=2.5)", dict(lambda_r=0.0, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
         ("Random Expert Init (No Function-Preserving)", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=False, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
         ("No Validation Gate", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=False, use_ema_encoder=False, top_k=1)),
         ("Top-2 Routing", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=2)),
@@ -183,25 +181,79 @@ def run_all_ablations(epochs: int = 3, device_str: str = "auto", output_dir: str
         ("EMA Encoder (Adaptive)", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=True, adapt_encoder=True, top_k=1)),
     ]
 
+    if selected_configs:
+        configs = [c for c in configs if c[0] in selected_configs]
+
     all_results = {}
     table_data = []
 
     for name, kwargs in configs:
-        res = run_single_config(tasks, base_encoder, name, epochs=epochs, device=device, **kwargs)
-        all_results[name] = res
-        table_data.append([
-            name,
-            f"{res['acc']:.2%}",
-            f"{res['forgetting']:.2%}",
-            f"{res['bwt']:.2%}",
-            f"{res['router_stability_kl']:.4f}",
-            str(res['final_experts']),
-            str(res['gate_rejections']),
-        ])
+        seed_runs = []
+        for s in seeds:
+            tasks = get_split_mnist_tasks(data_dir="./data", batch_size=128, val_split=0.1, seed=s)
+            set_seed(s)
+            mnist_train = datasets.MNIST("./data", train=True, download=False, transform=transforms.ToTensor())
+            unlabeled_loader = torch.utils.data.DataLoader(mnist_train, batch_size=256, shuffle=True)
+            base_encoder = SharedEncoder(input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp").to(device)
+            base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
+            base_encoder.freeze()
+
+            res = run_single_config(tasks, base_encoder, name, epochs=epochs, seed=s, device=device, **kwargs)
+            seed_runs.append(res)
+
+        accs = [r["acc"] for r in seed_runs]
+        forg = [r["forgetting"] for r in seed_runs]
+        bwts = [r["bwt"] for r in seed_runs]
+        kls = [r["router_stability_kl"] for r in seed_runs if not np.isnan(r["router_stability_kl"])]
+        exps = [r["final_experts"] for r in seed_runs]
+        rejs = [r["gate_rejections"] for r in seed_runs]
+
+        mean_acc, std_acc = float(np.mean(accs)), float(np.std(accs))
+        mean_forg, std_forg = float(np.mean(forg)), float(np.std(forg))
+        mean_bwt, std_bwt = float(np.mean(bwts)), float(np.std(bwts))
+        mean_kl = float(np.mean(kls)) if kls else float("nan")
+        std_kl = float(np.std(kls)) if len(kls) > 1 else 0.0
+
+        if len(seeds) > 1:
+            table_data.append([
+                name,
+                f"{mean_acc:.2%} ± {std_acc:.2%}",
+                f"{mean_forg:.2%} ± {std_forg:.2%}",
+                f"{mean_bwt:.2%} ± {std_bwt:.2%}",
+                f"{mean_kl:.4f} ± {std_kl:.4f}" if not np.isnan(mean_kl) else "-",
+                f"{np.mean(exps):.1f}",
+                f"{np.mean(rejs):.1f}",
+            ])
+        else:
+            table_data.append([
+                name,
+                f"{mean_acc:.2%}",
+                f"{mean_forg:.2%}",
+                f"{mean_bwt:.2%}",
+                f"{mean_kl:.4f}" if not np.isnan(mean_kl) else "-",
+                str(int(np.mean(exps))),
+                str(int(np.mean(rejs))),
+            ])
+
+        all_results[name] = {
+            "name": name,
+            "acc": mean_acc,
+            "acc_std": std_acc,
+            "forgetting": mean_forg,
+            "forgetting_std": std_forg,
+            "bwt": mean_bwt,
+            "bwt_std": std_bwt,
+            "router_stability_kl": mean_kl,
+            "router_stability_kl_std": std_kl,
+            "final_experts": int(round(np.mean(exps))),
+            "gate_rejections": int(round(np.mean(rejs))),
+            "seed_runs": seed_runs,
+            "acc_matrix": seed_runs[0]["acc_matrix"],
+        }
 
     headers = ["Ablation Configuration", "Avg Acc (↑)", "Forgetting (↓)", "BWT (↑)", "Router KL (↓)", "Experts", "Rejections"]
     print("\n" + "=" * 80)
-    print("ABLATION STUDY RESULTS (Split-MNIST, 5 Tasks)")
+    print(f"ABLATION STUDY RESULTS (Split-MNIST, 5 Tasks, {len(seeds)} Seeds)")
     print("=" * 80)
     print(tabulate(table_data, headers=headers, tablefmt="github"))
     print("=" * 80)
@@ -215,8 +267,16 @@ def run_all_ablations(epochs: int = 3, device_str: str = "auto", output_dir: str
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--seeds", type=int, nargs="+", default=[42], help="List of seeds to evaluate (e.g. 42 43 44)")
+    parser.add_argument("--configs", type=str, nargs="+", default=None, help="Specific configs to run")
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--output_dir", type=str, default="./results")
     args = parser.parse_args()
 
-    run_all_ablations(epochs=args.epochs, device_str=args.device, output_dir=args.output_dir)
+    run_all_ablations(
+        epochs=args.epochs,
+        seeds=args.seeds,
+        selected_configs=args.configs,
+        device_str=args.device,
+        output_dir=args.output_dir,
+    )

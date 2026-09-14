@@ -138,6 +138,75 @@ class SharedEncoder(nn.Module):
         self.eval()
         return total_loss / max(n_batches, 1)
 
+    def pretrain_contrastive(
+        self,
+        dataloader: Any,
+        device: torch.device = torch.device("cpu"),
+        epochs: int = 2,
+        lr: float = 1e-3,
+        temperature: float = 0.1,
+    ) -> float:
+        """
+        Self-supervised contrastive pretraining (SimCLR-style InfoNCE).
+        Forces representations of similar instances together while separating distinct instances,
+        producing highly discriminative, cluster-separated latent representations.
+        """
+        proj_head = nn.Sequential(
+            nn.Linear(self.output_dim, self.output_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(self.output_dim, 64),
+        ).to(device)
+
+        self.to(device)
+        self.train()
+        proj_head.train()
+        optimizer = torch.optim.Adam(list(self.parameters()) + list(proj_head.parameters()), lr=lr)
+
+        total_loss = 0.0
+        n_batches = 0
+
+        for _ in range(epochs):
+            for batch in dataloader:
+                x = batch[0] if isinstance(batch, (tuple, list)) else batch
+                x = x.to(device)
+                b = x.size(0)
+                if b < 2:
+                    continue
+
+                # Generate two stochastic augmentations
+                # 1) Additive noise & scaling
+                noise1 = torch.randn_like(x) * 0.08
+                noise2 = torch.randn_like(x) * 0.08
+                scale1 = torch.empty(b, 1, device=device).uniform_(0.85, 1.15) if x.dim() == 2 else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
+                scale2 = torch.empty(b, 1, device=device).uniform_(0.85, 1.15) if x.dim() == 2 else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
+
+                x1 = torch.clamp(x * scale1 + noise1, -3.0, 3.0)
+                x2 = torch.clamp(x * scale2 + noise2, -3.0, 3.0)
+
+                optimizer.zero_grad()
+                z1 = F.normalize(proj_head(self(x1)), dim=-1)
+                z2 = F.normalize(proj_head(self(x2)), dim=-1)
+
+                z = torch.cat([z1, z2], dim=0)  # [2b, 64]
+                sim = torch.mm(z, z.t()) / temperature  # [2b, 2b]
+                mask = torch.eye(2 * b, dtype=torch.bool, device=device)
+                sim.masked_fill_(mask, -1e9)
+
+                labels = torch.cat([
+                    torch.arange(b, 2 * b, device=device),
+                    torch.arange(0, b, device=device)
+                ], dim=0)
+
+                loss = F.cross_entropy(sim, labels)
+                loss.backward()
+                optimizer.step()
+
+                total_loss += loss.item()
+                n_batches += 1
+
+        self.eval()
+        return total_loss / max(n_batches, 1)
+
 
 class EMAEncoder(nn.Module):
     """

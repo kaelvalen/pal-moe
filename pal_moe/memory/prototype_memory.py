@@ -138,11 +138,13 @@ class PrototypeMemory:
         routing_detached = routing_dist.detach().cpu()
         expert_detached = expert_outputs.detach().cpu()
         y_detached = label.detach().cpu().view(1) if label is not None else None
-        raw_detached = (
-            raw_input.detach().cpu().unsqueeze(0)
-            if (self.store_raw and raw_input is not None)
-            else None
-        )
+        raw_detached = None
+        if self.store_raw and raw_input is not None:
+            r = raw_input.detach().cpu()
+            if r.dim() == 1 or (r.dim() == 3 and r.size(0) in (1, 3)):
+                raw_detached = r.unsqueeze(0)
+            else:
+                raw_detached = r
 
         if self.is_empty():
             new_proto = Prototype(
@@ -287,16 +289,21 @@ class PrototypeMemory:
         model: Any,
         lambda_r: float = 1.0,
         lambda_e: float = 1.0,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        lambda_enc: float = 0.0,
+        return_enc: bool = False,
+    ) -> Tuple[torch.Tensor, ...]:
         """
-        Computes the two stability losses:
+        Computes the stability losses:
         L_router_stab = KL( g_old(v_p) || g_new(v_p) )
         L_expert_stab = MSE( E_old(v_p), E_new(v_p) )
+        L_enc_stab = MSE( encoder(raw_x), v_p ) (if return_enc=True and lambda_enc > 0)
         Vectorized across all prototypes and active experts.
         """
         device = next(model.parameters()).device
         if self.is_empty():
             zero = torch.tensor(0.0, device=device, requires_grad=True)
+            if return_enc:
+                return zero, zero, zero
             return zero, zero
 
         P = len(self.prototypes)
@@ -356,7 +363,56 @@ class PrototypeMemory:
         else:
             l_expert_stab = torch.tensor(0.0, device=device)
 
+        if return_enc:
+            l_enc_stab = self.compute_encoder_stability_loss(model.encoder, lambda_enc=lambda_enc)
+            return l_router_stab, l_expert_stab, l_enc_stab
+
         return l_router_stab, l_expert_stab
+
+    def compute_encoder_stability_loss(
+        self,
+        encoder: nn.Module,
+        lambda_enc: float = 1.0,
+    ) -> torch.Tensor:
+        """
+        Calculates L_encoder_stab: feature-space distillation anchoring the trainable encoder
+        output for stored raw exemplar images to their historical prototype targets v_p.
+        Prevents representation drift during continual training with an unfrozen encoder.
+        """
+        device = next(encoder.parameters()).device
+        if self.is_empty() or lambda_enc <= 0:
+            return torch.tensor(0.0, device=device)
+
+        losses = []
+        for proto in self.prototypes:
+            if proto.raw_x is not None and proto.raw_x.size(0) > 0:
+                raw_dev = proto.raw_x.to(device)
+                curr_feats = encoder(raw_dev)  # [M, D]
+                target_anchor = proto.v_p.to(device).unsqueeze(0).expand_as(curr_feats)  # [M, D]
+                losses.append(F.mse_loss(curr_feats, target_anchor))
+
+        if not losses:
+            return torch.tensor(0.0, device=device)
+        return torch.stack(losses).mean() * lambda_enc
+
+    def get_raw_exemplar_batch(
+        self, device: torch.device
+    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Gathers all stored raw exemplar images and class labels across all prototypes.
+        Returns:
+            (all_raws, all_labels) on device, or None if no raw exemplars exist.
+        """
+        raws = []
+        labels = []
+        for p in self.prototypes:
+            if p.raw_x is not None and p.y_p is not None and p.raw_x.size(0) > 0 and p.y_p.size(0) > 0:
+                min_len = min(p.raw_x.size(0), p.y_p.size(0))
+                raws.append(p.raw_x[:min_len])
+                labels.append(p.y_p[:min_len])
+        if not raws:
+            return None
+        return torch.cat(raws, dim=0).to(device), torch.cat(labels, dim=0).to(device)
 
     def refresh_representations(self, encoder: nn.Module) -> None:
         """

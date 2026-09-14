@@ -31,6 +31,9 @@ class ContinualTrainer:
         builder: ExpertBuilder,
         lambda_r: float = 1.0,
         lambda_e: float = 1.0,
+        lambda_enc: float = 0.0,
+        replay_exemplars: bool = False,
+        lambda_replay: float = 1.0,
         lr: float = 1e-3,
         encoder_lr: Optional[float] = None,
         max_experts: int = 8,
@@ -42,6 +45,9 @@ class ContinualTrainer:
         self.builder = builder
         self.lambda_r = lambda_r
         self.lambda_e = lambda_e
+        self.lambda_enc = lambda_enc
+        self.replay_exemplars = replay_exemplars
+        self.lambda_replay = lambda_replay
         self.lr = lr
         self.encoder_lr = encoder_lr
         self.max_experts = max_experts
@@ -182,14 +188,27 @@ class ContinualTrainer:
                 logits = self.model(x)
                 loss_task = F.cross_entropy(logits, y)
 
-                # Prototype stability losses
-                l_router_stab, l_expert_stab = self.prototype_memory.compute_stability_losses(
+                # Prototype stability losses (router, expert, and optional trainable encoder stability)
+                l_router_stab, l_expert_stab, l_enc_stab = self.prototype_memory.compute_stability_losses(
                     self.model,
                     lambda_r=self.lambda_r,
                     lambda_e=self.lambda_e,
+                    lambda_enc=self.lambda_enc,
+                    return_enc=True,
                 )
 
-                loss = loss_task + l_router_stab + l_expert_stab
+                loss = loss_task + l_router_stab + l_expert_stab + l_enc_stab
+
+                # Optional exemplar replay from prototype memory (hybrid mode)
+                l_replay = torch.tensor(0.0, device=self.device)
+                if self.replay_exemplars and not self.prototype_memory.is_empty():
+                    exemplar_batch = self.prototype_memory.get_raw_exemplar_batch(self.device)
+                    if exemplar_batch is not None:
+                        x_raw_rep, y_rep = exemplar_batch
+                        rep_logits = self.model(x_raw_rep)
+                        l_replay = F.cross_entropy(rep_logits, y_rep) * self.lambda_replay
+                        loss = loss + l_replay
+
                 loss.backward()
                 self.optimizer.step()
 

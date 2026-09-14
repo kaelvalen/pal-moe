@@ -65,14 +65,17 @@ def plot_ablation_results(results_file="results/ablation_results.json", output_p
     configs = list(data.keys())
     accs = [data[c]["acc"] * 100 for c in configs]
     forgetting = [data[c]["forgetting"] * 100 for c in configs]
+    acc_std = [data[c].get("acc_std", 0.0) * 100 for c in configs]
+    forg_std = [data[c].get("forgetting_std", 0.0) * 100 for c in configs]
 
     x = np.arange(len(configs))
     width = 0.35
 
-    fig, ax = plt.subplots(figsize=(12, 6), dpi=300)
+    fig, ax = plt.subplots(figsize=(14, 6), dpi=300)
 
-    rects1 = ax.bar(x - width / 2, accs, width, label="Avg Accuracy (%)", color="#1b9e77")
-    rects2 = ax.bar(x + width / 2, forgetting, width, label="Forgetting (%)", color="#e7298a")
+    has_err = any(s > 0 for s in acc_std)
+    rects1 = ax.bar(x - width / 2, accs, width, yerr=acc_std if has_err else None, capsize=3, label="Avg Accuracy (%)", color="#1b9e77")
+    rects2 = ax.bar(x + width / 2, forgetting, width, yerr=forg_std if has_err else None, capsize=3, label="Forgetting (%)", color="#e7298a")
 
     ax.set_ylabel("Percentage (%)", fontsize=12)
     ax.set_title("Ablation Study of PAL-MoE Components", fontsize=14, fontweight="bold")
