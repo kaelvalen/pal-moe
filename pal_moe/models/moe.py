@@ -198,6 +198,27 @@ class DynamicMoE(nn.Module):
 
 
 
+
+    def freeze_historical_experts(self, leave_unfrozen: int = 1) -> None:
+        """
+        Freezes all experts except the last `leave_unfrozen` experts.
+        Also locks their corresponding routing paths in the router.
+        """
+        num_to_freeze = max(0, self.num_experts - leave_unfrozen)
+        for i in range(num_to_freeze):
+            for param in self.experts[i].parameters():
+                param.requires_grad = False
+        
+        # Lock router gradients for the frozen experts
+        self.router.lock_historical_routing(num_to_freeze)
+
+    def unfreeze_all_experts(self) -> None:
+        """Unfreezes all experts and router paths for joint calibration."""
+        for exp in self.experts:
+            for param in exp.parameters():
+                param.requires_grad = True
+        self.router.lock_historical_routing(0)
+
 # PAL-MoE alias
 PALMoE = DynamicMoE
 

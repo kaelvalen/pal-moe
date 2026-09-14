@@ -528,3 +528,34 @@ def test_split_cifar10_tasks():
 
 
 
+
+def test_freeze_historical_experts():
+    from pal_moe.models.moe import DynamicMoE
+    from pal_moe.models.encoder import SharedEncoder
+    from pal_moe.models.expert import MLPExpert
+    from pal_moe.models.router import DynamicRouter
+    
+    enc = SharedEncoder(input_dim=64, hidden_dims=(32,), output_dim=16)
+    router = DynamicRouter(input_dim=16, num_experts=3)
+    experts = torch.nn.ModuleList([MLPExpert(input_dim=16, hidden_dim=32, num_classes=10) for _ in range(3)])
+    model = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+    
+    # Freeze historical experts
+    model.freeze_historical_experts(leave_unfrozen=1)
+    
+    # Check if expert 0 and 1 are frozen, and expert 2 is unfrozen
+    for param in model.experts[0].parameters():
+        assert not param.requires_grad
+    for param in model.experts[1].parameters():
+        assert not param.requires_grad
+    for param in model.experts[2].parameters():
+        assert param.requires_grad
+        
+    # Check router lock
+    assert model.router.locked_experts == 2
+    
+    # Unfreeze all
+    model.unfreeze_all_experts()
+    for param in model.experts[0].parameters():
+        assert param.requires_grad
+    assert model.router.locked_experts == 0
