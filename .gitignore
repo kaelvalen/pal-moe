@@ -47,7 +47,7 @@ htmlcov/
 .hypothesis/
 
 # Datasets and Raw Data
-data/
+/data/
 *.idx1-ubyte
 *.idx3-ubyte
 *.tar

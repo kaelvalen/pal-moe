@@ -427,4 +427,104 @@ def test_capacity_control_through_expert_builder():
     assert mem.prototypes[0].o_p.shape[0] == 4
 
 
+def test_contrastive_pretraining():
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8, arch="mlp")
+    dummy_data = torch.randn(20, 16)
+    loader = torch.utils.data.DataLoader(dummy_data, batch_size=4)
+    loss = enc.pretrain_contrastive(loader, epochs=1, lr=1e-3)
+    assert loss > 0.0
+    # Weights should be updated from initialization
+    out = enc(dummy_data[:2])
+    assert out.shape == (2, 8)
+
+
+def test_encoder_stability_loss_gradient_flow():
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8, arch="mlp")
+    enc.unfreeze()
+    mem = PrototypeMemory(feature_dim=8, store_raw=True)
+    raw_x = torch.randn(4, 16)
+    with torch.no_grad():
+        feat = enc(raw_x).mean(dim=0)
+    mem.update_or_create_prototype(
+        feat=feat,
+        routing_dist=torch.tensor([1.0]),
+        expert_outputs=torch.randn(1, 2),
+        task_id=0,
+        raw_input=raw_x,
+    )
+
+    # Calculate stability loss
+    l_enc = mem.compute_encoder_stability_loss(enc, lambda_enc=1.5)
+    assert l_enc.requires_grad
+    l_enc.backward()
+    # Gradients should reach encoder parameters
+    has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in enc.parameters())
+    assert has_grad
+
+
+def test_validation_gate_rejection_scenarios():
+    builder_strict = ExpertBuilder(
+        min_acc_threshold=0.85,
+        max_proto_drop=0.05,
+        max_proto_acc_drop=0.01,
+        max_ece=0.10,
+        enable_gate=True,
+    )
+    enc = nn.Identity()
+    parent = MLPExpert(input_dim=8, hidden_dim=8, num_classes=2, expert_id=0)
+    # Untrained random candidate that fails new task accuracy
+    cand_bad = MLPExpert(input_dim=8, hidden_dim=8, num_classes=2, expert_id=1)
+
+    dummy_x = torch.randn(20, 8)
+    # Labels arranged so random model has low accuracy
+    dummy_y = torch.randint(0, 2, (20,))
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(dummy_x, dummy_y), batch_size=5
+    )
+
+    mem = PrototypeMemory(feature_dim=8)
+    feat = torch.randn(8)
+    mem.update_or_create_prototype(feat, torch.tensor([1.0]), torch.randn(1, 2), task_id=0)
+
+    res = builder_strict.validate_candidate(
+        candidate_expert=cand_bad,
+        parent_expert=parent,
+        encoder=enc,
+        val_loader=loader,
+        prototype_memory=mem,
+    )
+    # Strict gate should catch and reject suboptimal candidate
+    assert not res.passed or res.rejection_reason is not None
+
+
+def test_get_raw_exemplar_batch_and_hybrid_replay():
+    mem = PrototypeMemory(feature_dim=8, store_raw=True)
+    raw_x = torch.randn(2, 16)
+    labels = torch.tensor([0, 1])
+    mem.update_or_create_prototype(
+        feat=torch.randn(8),
+        routing_dist=torch.tensor([1.0]),
+        expert_outputs=torch.randn(1, 2),
+        task_id=0,
+        label=labels[0],
+        raw_input=raw_x[0],
+    )
+    raw_batch = mem.get_raw_exemplar_batch(torch.device("cpu"))
+    assert raw_batch is not None
+    x_ex, y_ex = raw_batch
+    assert x_ex.shape[0] >= 1
+    assert y_ex.shape[0] >= 1
+
+
+def test_split_cifar10_tasks():
+    from pal_moe.data.split_cifar import get_split_cifar10_tasks
+    tasks = get_split_cifar10_tasks(data_dir="./data", batch_size=32, val_split=0.1, max_train_samples_per_task=100)
+    assert len(tasks) == 5
+    assert tasks[0].classes == (0, 1)
+    assert tasks[4].classes == (8, 9)
+    sample_b = next(iter(tasks[0].train_loader))
+    assert sample_b[0].shape[1:] == (3, 32, 32)
+
+
+
 

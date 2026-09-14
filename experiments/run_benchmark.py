@@ -376,6 +376,84 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     }
 
     # -------------------------------------------------------------
+    # 8. Proposed Extension: PAL-MoE + Replay (Hybrid, P=60)
+    # -------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("Running Method 8: PAL-MoE + Replay (Hybrid, P=60 Exemplars)")
+    print("=" * 60)
+    set_seed(42)
+    hyb_encoder = copy.deepcopy(base_encoder)
+    hyb_router = DynamicRouter(input_dim=128, num_experts=1, top_k=1, temperature=1.0).to(device)
+    initial_experts_hyb = [
+        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0).to(device)
+    ]
+    moe_hyb = DynamicMoE(
+        encoder=hyb_encoder,
+        router=hyb_router,
+        experts=initial_experts_hyb,
+        use_ema_encoder=False,
+    ).to(device)
+    prototype_mem_hyb = PrototypeMemory(
+        feature_dim=128,
+        distance_threshold=0.5,
+        ema_alpha=0.9,
+        max_prototypes=60,
+        store_raw=True,
+    )
+    trigger_hyb = QuantitativeTrigger(
+        alpha=1.0, beta=0.4, gamma=0.6, delta=0.5, threshold_tau=0.5
+    )
+    builder_hyb = ExpertBuilder(
+        min_acc_threshold=0.60,
+        max_proto_drop=2.0,
+        max_ece=0.35,
+        distill_lambda=0.5,
+    )
+    trainer_hyb = ContinualTrainer(
+        model=moe_hyb,
+        prototype_memory=prototype_mem_hyb,
+        trigger=trigger_hyb,
+        builder=builder_hyb,
+        lambda_r=0.5,
+        lambda_e=2.5,
+        replay_exemplars=True,
+        lambda_replay=1.0,
+        lr=1e-3,
+        max_experts=6,
+        device=device,
+    )
+    evaluator_hyb = ContinualEvaluator(num_tasks=num_tasks, device=device)
+
+    for t_idx, task in enumerate(tasks):
+        print(f"  Training Task {t_idx} (classes {task.classes})... Experts before: {moe_hyb.num_experts}")
+        hist = trainer_hyb.train_task(
+            task_id=t_idx,
+            train_loader=task.train_loader,
+            val_loader=task.val_loader,
+            epochs=epochs_per_task,
+            enable_expansion=True,
+        )
+        print(f"    Triggers: {hist['trigger_events']} | Experts added: {hist['experts_added']} | Gate rejects: {hist['gate_rejections']} | Total experts: {moe_hyb.num_experts}")
+        accs = evaluator_hyb.evaluate_all_seen_tasks(moe_hyb, t_idx, tasks)
+        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
+
+    router_kl_hyb = ContinualEvaluator.compute_router_stability(moe_hyb, prototype_mem_hyb, device)
+    mi_hyb, util_hyb = ContinualEvaluator.compute_expert_specialization_and_utilization(
+        moe_hyb, tasks, device
+    )
+    results["PAL-MoE + Replay (Hybrid, P=60)"] = {
+        "acc": evaluator_hyb.compute_average_accuracy(),
+        "forgetting": evaluator_hyb.compute_forgetting(),
+        "bwt": evaluator_hyb.compute_backward_transfer(),
+        "router_stability_kl": router_kl_hyb,
+        "specialization_mi": mi_hyb,
+        "utilization": util_hyb,
+        "final_experts": moe_hyb.num_experts,
+        "prototype_elements": prototype_mem_hyb.estimate_memory_footprint()["total_elements"],
+        "acc_matrix": evaluator_hyb.R.tolist(),
+    }
+
+    # -------------------------------------------------------------
     # Summary Table
     # -------------------------------------------------------------
     table_data = []
