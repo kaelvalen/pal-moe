@@ -145,6 +145,7 @@ class SharedEncoder(nn.Module):
         epochs: int = 2,
         lr: float = 1e-3,
         temperature: float = 0.1,
+        augment_fn: Optional[callable] = None,
     ) -> float:
         """
         Self-supervised contrastive pretraining (SimCLR-style InfoNCE).
@@ -175,26 +176,9 @@ class SharedEncoder(nn.Module):
 
                 # Generate two stochastic augmentations
                 # 1) Additive noise & scaling
-                if x.dim() == 4: # Image data (CIFAR)
-                    import torchvision.transforms as T
-                    # Un-normalize back to [0,1]
-                    mean = torch.tensor([0.4914, 0.4822, 0.4465], device=device).view(1, 3, 1, 1)
-                    std = torch.tensor([0.2470, 0.2435, 0.2616], device=device).view(1, 3, 1, 1)
-                    x_unnorm = x * std + mean
-                    x_unnorm = torch.clamp(x_unnorm, 0.0, 1.0)
-                    
-                    aug = T.Compose([
-                        T.RandomResizedCrop(x.shape[-2:], scale=(0.2, 1.0), antialias=True),
-                        T.RandomHorizontalFlip(p=0.5),
-                        T.ColorJitter(0.4, 0.4, 0.4, 0.1),
-                    ])
-                    # Apply augmentations on GPU
-                    x1 = aug(x_unnorm)
-                    x2 = aug(x_unnorm)
-                    
-                    # Re-normalize
-                    x1 = (x1 - mean) / std
-                    x2 = (x2 - mean) / std
+                if augment_fn is not None:
+                    x1 = augment_fn(x)
+                    x2 = augment_fn(x)
                 else:
                     noise1 = torch.randn_like(x) * 0.08
                     noise2 = torch.randn_like(x) * 0.08

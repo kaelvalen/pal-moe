@@ -180,15 +180,8 @@ class ContinualTrainer:
                     break
 
 
-        # Freeze old experts during Step 5 to prevent catastrophic forgetting
-        for i, exp in enumerate(self.model.experts):
-            if i < len(self.model.experts) - 1:
-                for p in exp.parameters():
-                    p.requires_grad = False
-            else:
-                for p in exp.parameters():
-                    p.requires_grad = True
-        # Rebuild optimizer to reflect frozen states
+        # Mathematically freeze historical experts and their routing paths
+        self.model.freeze_historical_experts(leave_unfrozen=1)
         self.optimizer = self._build_optimizer()
 
         # Step 5: Continual Training loop with joint stability loss
@@ -227,12 +220,6 @@ class ContinualTrainer:
 
                 loss.backward()
                 
-                # Zero out gradients for OLD router rows to completely prevent router forgetting
-                if self.model.num_experts > 1:
-                    if self.model.router.gate.weight.grad is not None:
-                        self.model.router.gate.weight.grad[:self.model.num_experts-1] = 0.0
-                    if self.model.router.gate.bias.grad is not None:
-                        self.model.router.gate.bias.grad[:self.model.num_experts-1] = 0.0
 
                 self.optimizer.step()
 
