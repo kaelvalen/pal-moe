@@ -61,12 +61,13 @@ class MLPExpert(nn.Module):
         return base_out + adapter_out
 
     def clone_function_preserving(
-        self, new_expert_id: int, creation_task: int
+        self, new_expert_id: int, creation_task: int, freeze_base: bool = True
     ) -> "MLPExpert":
         """
         Creates a new expert E_child via Function-Preserving Expansion from this expert (parent):
         1. Clones fc1 and fc2 weights directly from parent.
         2. Adapter branch is zero-initialized.
+        3. If freeze_base is True, freezes fc1/fc2 so only the adapter trains (Parameter-Efficient).
         Therefore: E_child(h) == E_parent(h) identically for all h at initialization.
         """
         child = MLPExpert(
@@ -81,6 +82,13 @@ class MLPExpert(nn.Module):
         # Copy primary pathway weights
         child.fc1.load_state_dict(self.fc1.state_dict())
         child.fc2.load_state_dict(self.fc2.state_dict())
+        
+        # Parameter efficiency: Freeze base pathway to prevent parameter explosion
+        if freeze_base:
+            for p in child.fc1.parameters():
+                p.requires_grad = False
+            for p in child.fc2.parameters():
+                p.requires_grad = False
 
         # Copy adapter_down representation if desired, ensure adapter_up is strictly zero
         child.adapter_down.load_state_dict(self.adapter_down.state_dict())

@@ -110,12 +110,28 @@ class DynamicMoE(nn.Module):
     def get_all_expert_outputs(self, h: torch.Tensor) -> torch.Tensor:
         """
         Evaluates all experts on representation h: [batch_size, num_experts, num_classes].
-        Used for anchor computation and distillation.
+        Optimized via torch.func.vmap to avoid O(N) kernel launch overhead.
         """
-        outputs = []
-        for expert in self.experts:
-            outputs.append(expert(h, track_usage=False))
-        return torch.stack(outputs, dim=1)
+        if not self.experts:
+            return torch.empty(h.size(0), 0, 0, device=h.device)
+
+        # Optimization: use vmap for O(1) kernel launch batched forward pass
+        try:
+            from torch.func import stack_module_state, functional_call, vmap
+            params, buffers = stack_module_state(self.experts)
+
+            def fmodel(p, b, x):
+                return functional_call(self.experts[0], (p, b), (x,), kwargs={"track_usage": False})
+
+            batched_forward = vmap(fmodel, in_dims=(0, 0, None))
+            out = batched_forward(params, buffers, h)  # [E, B, C]
+            return out.transpose(0, 1)  # [B, E, C]
+        except Exception:
+            # Fallback loop
+            outputs = []
+            for expert in self.experts:
+                outputs.append(expert(h, track_usage=False))
+            return torch.stack(outputs, dim=1)
 
     def add_expert(
         self,
