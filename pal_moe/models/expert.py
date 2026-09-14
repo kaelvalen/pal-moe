@@ -21,7 +21,7 @@ class MLPExpert(nn.Module):
     def __init__(
         self,
         input_dim: int = 128,
-        hidden_dim: int = 64,
+        hidden_dim: int = 256,
         num_classes: int = 10,
         expert_id: int = 0,
         creation_task: int = 0,

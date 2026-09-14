@@ -167,6 +167,7 @@ class ContinualTrainer:
                     self.optimizer = self._build_optimizer()
                 else:
                     history["gate_rejections"] += 1
+                    print(f"      [Validation Gate] Rejected! Reason: {gate_result.rejection_reason}")
 
         # Step 4.5: If task 0, align router's initial expert with task 0 representation
         if task_id == 0 and len(self.model.experts) >= 1:
@@ -178,7 +179,20 @@ class ContinualTrainer:
                     self.model.router.gate.bias.data[0] = 0.0
                     break
 
+
+        # Freeze old experts during Step 5 to prevent catastrophic forgetting
+        for i, exp in enumerate(self.model.experts):
+            if i < len(self.model.experts) - 1:
+                for p in exp.parameters():
+                    p.requires_grad = False
+            else:
+                for p in exp.parameters():
+                    p.requires_grad = True
+        # Rebuild optimizer to reflect frozen states
+        self.optimizer = self._build_optimizer()
+
         # Step 5: Continual Training loop with joint stability loss
+
         for epoch in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
@@ -209,9 +223,19 @@ class ContinualTrainer:
                         rep_logits = self.model(latent_h=x_latent_rep)
                         l_replay = F.cross_entropy(rep_logits, y_rep) * self.lambda_replay
                         loss = loss + l_replay
+                loss = loss + l_replay
 
                 loss.backward()
+                
+                # Zero out gradients for OLD router rows to completely prevent router forgetting
+                if self.model.num_experts > 1:
+                    if self.model.router.gate.weight.grad is not None:
+                        self.model.router.gate.weight.grad[:self.model.num_experts-1] = 0.0
+                    if self.model.router.gate.bias.grad is not None:
+                        self.model.router.gate.bias.grad[:self.model.num_experts-1] = 0.0
+
                 self.optimizer.step()
+
 
                 # Update EMA encoder if enabled
                 self.model.update_ema_encoder()
@@ -248,7 +272,12 @@ class ContinualTrainer:
         elif any(p.requires_grad for p in self.model.encoder.parameters()):
             self.prototype_memory.refresh_representations(self.model.encoder)
 
+
+        
         # Step 8: End-of-task Joint Latent Fine-tuning
+        # DO NOT unfreeze old experts! Only the newest expert and router learn negative boundaries.
+
+
         # Expose experts to negative boundaries from all stored latent exemplars (OOD penalty)
         if task_id > 0 and not self.prototype_memory.is_empty():
             self.model.train()
