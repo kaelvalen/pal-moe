@@ -175,13 +175,34 @@ class SharedEncoder(nn.Module):
 
                 # Generate two stochastic augmentations
                 # 1) Additive noise & scaling
-                noise1 = torch.randn_like(x) * 0.08
-                noise2 = torch.randn_like(x) * 0.08
-                scale1 = torch.empty(b, 1, device=device).uniform_(0.85, 1.15) if x.dim() == 2 else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
-                scale2 = torch.empty(b, 1, device=device).uniform_(0.85, 1.15) if x.dim() == 2 else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
+                if x.dim() == 4: # Image data (CIFAR)
+                    import torchvision.transforms as T
+                    # Un-normalize back to [0,1]
+                    mean = torch.tensor([0.4914, 0.4822, 0.4465], device=device).view(1, 3, 1, 1)
+                    std = torch.tensor([0.2470, 0.2435, 0.2616], device=device).view(1, 3, 1, 1)
+                    x_unnorm = x * std + mean
+                    x_unnorm = torch.clamp(x_unnorm, 0.0, 1.0)
+                    
+                    aug = T.Compose([
+                        T.RandomResizedCrop(x.shape[-2:], scale=(0.2, 1.0), antialias=True),
+                        T.RandomHorizontalFlip(p=0.5),
+                        T.ColorJitter(0.4, 0.4, 0.4, 0.1),
+                    ])
+                    # Apply augmentations on GPU
+                    x1 = aug(x_unnorm)
+                    x2 = aug(x_unnorm)
+                    
+                    # Re-normalize
+                    x1 = (x1 - mean) / std
+                    x2 = (x2 - mean) / std
+                else:
+                    noise1 = torch.randn_like(x) * 0.08
+                    noise2 = torch.randn_like(x) * 0.08
+                    scale1 = torch.empty(b, 1, device=device).uniform_(0.85, 1.15) if x.dim() == 2 else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
+                    scale2 = torch.empty(b, 1, device=device).uniform_(0.85, 1.15) if x.dim() == 2 else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
 
-                x1 = torch.clamp(x * scale1 + noise1, -3.0, 3.0)
-                x2 = torch.clamp(x * scale2 + noise2, -3.0, 3.0)
+                    x1 = torch.clamp(x * scale1 + noise1, -3.0, 3.0)
+                    x2 = torch.clamp(x * scale2 + noise2, -3.0, 3.0)
 
                 optimizer.zero_grad()
                 z1 = F.normalize(proj_head(self(x1)), dim=-1)
