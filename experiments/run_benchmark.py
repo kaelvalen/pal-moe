@@ -71,8 +71,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     mnist_train = datasets.MNIST("./data", train=True, download=True, transform=transforms.ToTensor())
     unlabeled_loader = torch.utils.data.DataLoader(mnist_train, batch_size=256, shuffle=True)
     base_encoder = SharedEncoder(input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp").to(device)
-    # Use contrastive pretraining to create linearly separable features for the Linear Router!
-    base_encoder.pretrain_contrastive(unlabeled_loader, device=device, epochs=3)
+    base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
     base_encoder.freeze()
     print("  Shared Encoder successfully pretrained and frozen for all benchmark models.")
 
@@ -141,10 +140,10 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     }
 
     # -------------------------------------------------------------
-    # 3. Baseline: Experience Replay (Budgeted P=60, matching prototype memory)
+    # 3. Baseline: Experience Replay (Budgeted P=250, matching prototype memory)
     # -------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("Running Baseline 3: Experience Replay (Budgeted P=60)")
+    print("Running Baseline 3: Experience Replay (Budgeted P=250)")
     print("=" * 60)
     set_seed(42)
     replay_net_budget = nn.Sequential(
@@ -160,7 +159,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
         accs = evaluator_replay_budget.evaluate_all_seen_tasks(replay_net_budget, t_idx, tasks)
         print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
 
-    results["Replay (P=60)"] = {
+    results["Replay (P=250)"] = {
         "acc": evaluator_replay_budget.compute_average_accuracy(),
         "forgetting": evaluator_replay_budget.compute_forgetting(),
         "bwt": evaluator_replay_budget.compute_backward_transfer(),
@@ -314,7 +313,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
         feature_dim=128,
         distance_threshold=0.5,
         ema_alpha=0.9,
-        max_prototypes=60,
+        max_prototypes=250,
         store_raw=False,
     )
     trigger = QuantitativeTrigger(
@@ -377,10 +376,10 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     }
 
     # -------------------------------------------------------------
-    # 8. Proposed Extension: PAL-MoE + Replay (Hybrid, P=60)
+    # 8. Proposed Extension: PAL-MoE + Replay (Hybrid, P=250)
     # -------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("Running Method 8: PAL-MoE + Replay (Hybrid, P=60 Exemplars)")
+    print("Running Method 8: PAL-MoE + Replay (Hybrid, P=250 Exemplars)")
     print("=" * 60)
     set_seed(42)
     hyb_encoder = copy.deepcopy(base_encoder)
@@ -398,7 +397,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
         feature_dim=128,
         distance_threshold=0.5,
         ema_alpha=0.9,
-        max_prototypes=60,
+        max_prototypes=250,
         store_raw=True,
     )
     trigger_hyb = QuantitativeTrigger(
@@ -442,7 +441,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     mi_hyb, util_hyb = ContinualEvaluator.compute_expert_specialization_and_utilization(
         moe_hyb, tasks, device
     )
-    results["PAL-MoE + Replay (Hybrid, P=60)"] = {
+    results["PAL-MoE + Replay (Hybrid, P=250)"] = {
         "acc": evaluator_hyb.compute_average_accuracy(),
         "forgetting": evaluator_hyb.compute_forgetting(),
         "bwt": evaluator_hyb.compute_backward_transfer(),
