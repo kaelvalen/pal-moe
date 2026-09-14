@@ -61,7 +61,7 @@ class MLPExpert(nn.Module):
         return base_out + adapter_out
 
     def clone_function_preserving(
-        self, new_expert_id: int, creation_task: int, freeze_base: bool = True
+        self, new_expert_id: int, creation_task: int, freeze_base: bool = False
     ) -> "MLPExpert":
         """
         Creates a new expert E_child via Function-Preserving Expansion from this expert (parent):

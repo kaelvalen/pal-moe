@@ -50,14 +50,20 @@ class DynamicMoE(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,
+        x: Optional[torch.Tensor] = None,
         top_k: Optional[int] = None,
         return_routing_info: bool = False,
+        latent_h: Optional[torch.Tensor] = None,
     ) -> torch.Tensor | tuple[torch.Tensor, Dict[str, Any]]:
         """
         Forward pass with sparse top-k mixture.
+        If latent_h is provided, bypasses the encoder (useful for Latent Replay).
         """
-        h = self.encoder(x)
+        if latent_h is not None:
+            h = latent_h
+        else:
+            assert x is not None, "Either x or latent_h must be provided."
+            h = self.encoder(x)
         routing_weights, topk_idx, router_logits = self.router(h, top_k=top_k)
 
         batch_size = h.size(0)

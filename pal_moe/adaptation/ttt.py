@@ -199,13 +199,14 @@ class ContinualTrainer:
 
                 loss = loss_task + l_router_stab + l_expert_stab + l_enc_stab
 
-                # Optional exemplar replay from prototype memory (hybrid mode)
+                # Optional latent exemplar replay from prototype memory (hybrid mode)
                 l_replay = torch.tensor(0.0, device=self.device)
                 if self.replay_exemplars and not self.prototype_memory.is_empty():
-                    exemplar_batch = self.prototype_memory.get_raw_exemplar_batch(self.device)
+                    # Latent Replay: Extremely cheap and memory efficient
+                    exemplar_batch = self.prototype_memory.get_exemplar_batch(self.device)
                     if exemplar_batch is not None:
-                        x_raw_rep, y_rep = exemplar_batch
-                        rep_logits = self.model(x_raw_rep)
+                        x_latent_rep, y_rep = exemplar_batch
+                        rep_logits = self.model(latent_h=x_latent_rep)
                         l_replay = F.cross_entropy(rep_logits, y_rep) * self.lambda_replay
                         loss = loss + l_replay
 
@@ -246,6 +247,22 @@ class ContinualTrainer:
             self.prototype_memory.refresh_representations(self.model.ema_encoder)
         elif any(p.requires_grad for p in self.model.encoder.parameters()):
             self.prototype_memory.refresh_representations(self.model.encoder)
+
+        # Step 8: End-of-task Joint Latent Fine-tuning
+        # Expose experts to negative boundaries from all stored latent exemplars (OOD penalty)
+        if task_id > 0 and not self.prototype_memory.is_empty():
+            self.model.train()
+            exemplar_batch = self.prototype_memory.get_exemplar_batch(self.device)
+            if exemplar_batch is not None:
+                x_latent_all, y_all = exemplar_batch
+                if x_latent_all.size(0) > 0:
+                    for _ in range(5):  # 5 epochs of joint calibration
+                        self.optimizer.zero_grad()
+                        # Full joint forward pass bypassing encoder
+                        logits_joint = self.model(latent_h=x_latent_all)
+                        loss_joint = F.cross_entropy(logits_joint, y_all)
+                        loss_joint.backward()
+                        self.optimizer.step()
 
         return history
 
