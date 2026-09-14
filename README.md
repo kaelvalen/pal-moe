@@ -10,10 +10,13 @@ Unlike traditional networks that overwrite past knowledge, PAL-MoE dynamically s
 
 1.**Latent Replay & End-of-Task Joint Fine-Tuning**
    Instead of storing heavy raw pixels (images) for replay, PAL-MoE stores lightweight 128-dimensional latent vectors (`x_p`) outputted by the encoder. This allows a massive effective replay buffer at minimal memory cost. At the end of each task, all experts and the router are jointly calibrated using these latent exemplars, effectively teaching experts the "negative boundaries" of other tasks (OOD penalty).
+
 2.**Mathematical Freezing & Absolute Protection**
    To entirely eliminate expert and router drift, PAL-MoE permanently locks older experts and their corresponding routing gradients immediately after their specific task concludes. As the model encounters new data, only the *newest* expert and the *newest* row in the router are permitted to adapt.
+
 3.**Contrastive Pretraining for Linear Separability**
    PAL-MoE utilizes SimCLR-based contrastive pretraining on the shared base encoder (up to 50 epochs for complex datasets like CIFAR-10). This ensures that the latent space features are cleanly clustered and linearly separable, providing the perfect foundation for a simple, fast Linear Router to avoid routing confusion.
+
 4.**Dynamic Capacity Growth (Net2Net)**
    When the model detects a domain shift (via the Quantitative Trigger `S(x)`), it spawns a new Expert. The new expert learns the new task without corrupting older experts.
 
