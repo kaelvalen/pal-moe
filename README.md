@@ -10,13 +10,10 @@ Unlike traditional networks that overwrite past knowledge, PAL-MoE dynamically s
 
 1. **Latent Replay & End-of-Task Joint Fine-Tuning**
    Instead of storing heavy raw pixels (images) for replay, PAL-MoE stores lightweight 128-dimensional latent vectors (`x_p`) outputted by the encoder. This allows a massive effective replay buffer at minimal memory cost. At the end of each task, all experts and the router are jointly calibrated using these latent exemplars, effectively teaching experts the "negative boundaries" of other tasks (OOD penalty).
-  
 2. **Mathematical Freezing & Absolute Protection**
    To entirely eliminate expert and router drift, PAL-MoE permanently locks older experts and their corresponding routing gradients immediately after their specific task concludes. As the model encounters new data, only the *newest* expert and the *newest* row in the router are permitted to adapt.
-  
 3. **Contrastive Pretraining for Linear Separability**
    PAL-MoE utilizes SimCLR-based contrastive pretraining on the shared base encoder (up to 50 epochs for complex datasets like CIFAR-10). This ensures that the latent space features are cleanly clustered and linearly separable, providing the perfect foundation for a simple, fast Linear Router to avoid routing confusion.
-
 4. **Dynamic Capacity Growth (Net2Net)**
    When the model detects a domain shift (via the Quantitative Trigger `S(x)`), it spawns a new Expert. The new expert learns the new task without corrupting older experts.
 
@@ -27,19 +24,21 @@ Unlike traditional networks that overwrite past knowledge, PAL-MoE dynamically s
 Evaluated against standard Continual Learning baselines under a strict memory budget limit (Buffer=250 items).
 
 ### 1. Split-MNIST (5 Tasks, Minimal Base)
-| Method | Avg Acc (↑) | Forgetting (↓) | BWT (↑) | Experts |
-| :--- | :---: | :---: | :---: | :---: |
-| Naive Fine-tuning | 19.18% | 98.30% | -98.30% | 1 |
-| SOTA: Experience Replay (Buffer=250) | 81.67% | 17.85% | -17.85% | 1 |
-| **PAL-MoE (Ours - Pure / Zero Replay)** | **67.78%** | **9.57% ** | **-8.64%** | **5** |
-| **PAL-MoE + Replay (Hybrid, P=250)** | **82.46% ** | **13.62%** | **-13.62%** | **5** |
+
+| Method                                        |   Avg Acc (↑)   | Forgetting (↓) |     BWT (↑)     |   Experts   |
+| :-------------------------------------------- | :--------------: | :--------------: | :---------------: | :---------: |
+| Naive Fine-tuning                             |      19.18%      |      98.30%      |      -98.30%      |      1      |
+| SOTA: Experience Replay (Buffer=250)          |      81.67%      |      17.85%      |      -17.85%      |      1      |
+| **PAL-MoE (Ours - Pure / Zero Replay)** | **67.78%** |    **9.57% **    | **-8.64%** | **5** |
+| **PAL-MoE + Replay (Hybrid, P=250)**    |   **82.46% **   | **13.62%** | **-13.62%** | **5** |
 
 ### 2. Split-CIFAR-10 (5 Tasks, Hard, CNN Encoder)
+
 *Using a 50-Epoch SimCLR pre-trained ResNet-style encoder without ImageNet transfer learning.*
 
-| Method | Avg Acc (↑) | Forgetting (↓) | BWT (↑) | Experts |
-| :--- | :---: | :---: | :---: | :---: |
-| Experience Replay (Buffer=250) | ~28.00% | ~70.00% | - | 1 |
+| Method                                     | Avg Acc (↑) | Forgetting (↓) |     BWT (↑)     |   Experts   |
+| :----------------------------------------- | :----------: | :--------------: | :---------------: | :---------: |
+| Experience Replay (Buffer=250)             |   ~28.00%   |     ~70.00%     |         -         |      1      |
 | **PAL-MoE + Replay (Hybrid, P=250)** | **43.01% ** | **42.89%** | **-42.89%** | **5** |
 
 *(Note: Baseline Continual Learning on CIFAR-10 from scratch without ImageNet pretraining severely collapses. PAL-MoE outperforms ER significantly in this extremely constrained regime.)*
@@ -73,13 +72,16 @@ pal-moe/
 ## How to Run
 
 ### Activate Environment
+
 ```bash
 source .venv/bin/activate
 export PYTHONPATH=.
 ```
 
 ### Run the Benchmark (GPU Recommended)
+
 Run the script to reproduce the results:
+
 ```bash
 # For MNIST
 LD_LIBRARY_PATH=/run/opengl-driver/lib python experiments/run_benchmark.py --dataset mnist --device cuda
@@ -98,7 +100,7 @@ If you use **PAL-MoE** in your research or benchmarks, please cite:
 @software{pal_moe2026,
   author = {Hakbilen, Mehmet Arda},
   title = {PAL-MoE: Prototype-Anchored Lifelong Mixture of Experts},
-  url = {https://github.com/mehmetardahakbilen/pal-moe},
+  url = {https://github.com/kaelvalen/pal-moe},
   version = {1.0.0},
   year = {2026}
 }
