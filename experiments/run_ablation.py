@@ -222,7 +222,22 @@ def run_all_ablations(
                 base_encoder = SharedEncoder(input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp").to(device)
             
             if dataset == "cifar10":
-                base_encoder.pretrain_contrastive(unlabeled_loader, device=device, epochs=50)
+    
+            import torchvision.transforms as T
+            def cifar_augment(x):
+                # Un-normalize back to [0,1]
+                mean = torch.tensor([0.4914, 0.4822, 0.4465], device=device).view(1, 3, 1, 1)
+                std = torch.tensor([0.2470, 0.2435, 0.2616], device=device).view(1, 3, 1, 1)
+                x_unnorm = torch.clamp(x * std + mean, 0.0, 1.0)
+                aug = T.Compose([
+                    T.RandomResizedCrop(x.shape[-2:], scale=(0.2, 1.0), antialias=True),
+                    T.RandomHorizontalFlip(p=0.5),
+                    T.ColorJitter(0.4, 0.4, 0.4, 0.1),
+                ])
+                x_aug = aug(x_unnorm)
+                return (x_aug - mean) / std
+                
+            base_encoder.pretrain_contrastive(unlabeled_loader, device=device, epochs=50, augment_fn=cifar_augment)
                 # DO NOT freeze for CIFAR-10
             else:
                 base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)

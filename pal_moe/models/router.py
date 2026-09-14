@@ -35,6 +35,28 @@ class DynamicRouter(nn.Module):
 
         # Linear projection from representation to expert logits
         self.gate = nn.Linear(input_dim, num_experts, bias=True)
+        self.locked_experts = 0
+        
+        # Register hooks to mask gradients for locked historical experts
+        self.gate.weight.register_hook(self._weight_backward_hook)
+        self.gate.bias.register_hook(self._bias_backward_hook)
+
+    def _weight_backward_hook(self, grad):
+        if self.locked_experts > 0 and grad is not None:
+            grad = grad.clone()
+            grad[:self.locked_experts] = 0.0
+        return grad
+        
+    def _bias_backward_hook(self, grad):
+        if self.locked_experts > 0 and grad is not None:
+            grad = grad.clone()
+            grad[:self.locked_experts] = 0.0
+        return grad
+        
+    def lock_historical_routing(self, num_locked: int):
+        """Locks the routing probabilities for the first `num_locked` experts by zeroing their gradients."""
+        self.locked_experts = min(num_locked, self.num_experts)
+
 
     def forward(
         self, h: torch.Tensor, top_k: Optional[int] = None
@@ -130,6 +152,8 @@ class DynamicRouter(nn.Module):
 
         self.gate = new_gate
         self.num_experts = new_num
+        self.gate.weight.register_hook(self._weight_backward_hook)
+        self.gate.bias.register_hook(self._bias_backward_hook)
         return old_num
 
     def prune_expert(self, prune_idx: int) -> None:
