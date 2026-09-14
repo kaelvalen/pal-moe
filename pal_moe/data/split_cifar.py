@@ -45,8 +45,8 @@ def get_split_cifar10_tasks(
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
     ])
 
-    train_dataset = datasets.CIFAR10(data_dir, train=True, download=False, transform=transform_train)
-    test_dataset = datasets.CIFAR10(data_dir, train=False, download=False, transform=transform_test)
+    train_dataset = datasets.CIFAR10(data_dir, train=True, download=True, transform=transform_train)
+    test_dataset = datasets.CIFAR10(data_dir, train=False, download=True, transform=transform_test)
 
     train_targets = torch.tensor(train_dataset.targets)
     test_targets = torch.tensor(test_dataset.targets)
