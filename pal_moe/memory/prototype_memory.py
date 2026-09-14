@@ -306,16 +306,32 @@ class PrototypeMemory:
                 return zero, zero, zero
             return zero, zero
 
-        P = len(self.prototypes)
         curr_num_experts = model.num_experts
-        vp_mat = torch.stack([p.v_p for p in self.prototypes], dim=0).to(device)  # [P, D]
+
+        # Collect all vp and xp features to anchor the router heavily
+        vp_list = []
+        rp_targets_list = []
+        
+        for p_idx, proto in enumerate(self.prototypes):
+            # Base prototype center
+            vp_list.append(proto.v_p)
+            rp_targets_list.append(proto.r_p)
+            
+            # Exemplar features (x_p) around the prototype
+            if proto.x_p is not None:
+                for i in range(proto.x_p.size(0)):
+                    vp_list.append(proto.x_p[i])
+                    rp_targets_list.append(proto.r_p)
+                    
+        vp_mat = torch.stack(vp_list, dim=0).to(device)  # [P_total, D]
+        P_total = vp_mat.size(0)
 
         # 1. Vectorized router stability loss
-        g_new_dist = model.router.get_full_distribution(vp_mat)  # [P, curr_num_experts]
+        g_new_dist = model.router.get_full_distribution(vp_mat)  # [P_total, curr_num_experts]
 
-        rp_targets = torch.zeros(P, curr_num_experts, device=device)
-        for p_idx, proto in enumerate(self.prototypes):
-            rp_old = proto.r_p.to(device)
+        rp_targets = torch.zeros(P_total, curr_num_experts, device=device)
+        for p_idx, rp_old in enumerate(rp_targets_list):
+            rp_old = rp_old.to(device)
             n_old = rp_old.size(0)
             if curr_num_experts > n_old:
                 pad_size = curr_num_experts - n_old
@@ -339,23 +355,23 @@ class PrototypeMemory:
         for i in range(curr_num_experts):
             weights = []
             targets = []
-            proto_indices = []
+            vp_for_expert = []
             for p_idx, proto in enumerate(self.prototypes):
                 if i < proto.r_p.size(0):
                     w = proto.r_p[i].item()
                     if w > 0.01:
                         weights.append(w)
                         targets.append(proto.o_p[i])
-                        proto_indices.append(p_idx)
+                        vp_for_expert.append(proto.v_p)
 
-            if proto_indices:
-                sub_vp = vp_mat[proto_indices]  # [M, D]
+            if vp_for_expert:
+                sub_vp = torch.stack(vp_for_expert, dim=0).to(device)  # [M, D]
                 e_curr_out = model.experts[i](sub_vp, track_usage=False)  # [M, C]
                 target_out = torch.stack(targets, dim=0).to(device)       # [M, C]
                 w_tensor = torch.tensor(weights, device=device).unsqueeze(-1)  # [M, 1]
                 num_classes = target_out.size(-1)
                 mse_unreduced = F.mse_loss(e_curr_out, target_out, reduction="none")  # [M, C]
-                weighted_loss = (mse_unreduced * w_tensor).sum() / (P * num_classes)
+                weighted_loss = (mse_unreduced * w_tensor).sum() / (len(self.prototypes) * num_classes)
                 expert_losses.append(weighted_loss)
 
         if expert_losses:
