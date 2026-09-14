@@ -40,8 +40,8 @@ def get_split_mnist_tasks(
         transforms.Normalize((0.1307,), (0.3081,)),
     ])
 
-    train_dataset = datasets.MNIST(data_dir, train=True, download=False, transform=transform)
-    test_dataset = datasets.MNIST(data_dir, train=False, download=False, transform=transform)
+    train_dataset = datasets.MNIST(data_dir, train=True, download=True, transform=transform)
+    test_dataset = datasets.MNIST(data_dir, train=False, download=True, transform=transform)
 
     task_classes = [(0, 1), (2, 3), (4, 5), (6, 7), (8, 9)]
     tasks = []
