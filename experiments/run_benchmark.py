@@ -71,7 +71,8 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     mnist_train = datasets.MNIST("./data", train=True, download=True, transform=transforms.ToTensor())
     unlabeled_loader = torch.utils.data.DataLoader(mnist_train, batch_size=256, shuffle=True)
     base_encoder = SharedEncoder(input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp").to(device)
-    base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
+    # Use contrastive pretraining to create linearly separable features for the Linear Router!
+    base_encoder.pretrain_contrastive(unlabeled_loader, device=device, epochs=3)
     base_encoder.freeze()
     print("  Shared Encoder successfully pretrained and frozen for all benchmark models.")
 
@@ -86,7 +87,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     set_seed(42)
     naive_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0),
+        MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=0),
     ).to(device)
     naive_trainer = NaiveFineTuning(naive_net, lr=1e-3, device=device)
     evaluator_naive = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -117,7 +118,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     set_seed(42)
     ewc_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0),
+        MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=0),
     ).to(device)
     ewc_trainer = EWC(ewc_net, ewc_lambda=1000.0, lr=1e-3, device=device)
     evaluator_ewc = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -148,7 +149,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     set_seed(42)
     replay_net_budget = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0),
+        MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=0),
     ).to(device)
     replay_trainer_budget = ReplayTrainer(replay_net_budget, buffer_size=60, lr=1e-3, device=device)
     evaluator_replay_budget = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -179,7 +180,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     set_seed(42)
     replay_net_360 = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0),
+        MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=0),
     ).to(device)
     replay_trainer_360 = ReplayTrainer(replay_net_360, buffer_size=360, lr=1e-3, device=device)
     evaluator_replay_360 = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -210,7 +211,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     set_seed(42)
     replay_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0),
+        MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=0),
     ).to(device)
     replay_trainer = ReplayTrainer(replay_net, buffer_size=250, lr=1e-3, device=device)
     evaluator_replay = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -242,7 +243,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     std_encoder = copy.deepcopy(base_encoder)
     std_router = DynamicRouter(input_dim=128, num_experts=4, top_k=1).to(device)
     std_experts = [
-        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=i).to(device)
+        MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=i).to(device)
         for i in range(4)
     ]
     std_moe = DynamicMoE(encoder=std_encoder, router=std_router, experts=std_experts, use_ema_encoder=False).to(device)
@@ -300,7 +301,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     dyn_encoder = copy.deepcopy(base_encoder)
     dyn_router = DynamicRouter(input_dim=128, num_experts=1, top_k=1, temperature=1.0).to(device)
     initial_experts = [
-        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0).to(device)
+        MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=0).to(device)
     ]
     moe_model = DynamicMoE(
         encoder=dyn_encoder,
@@ -385,7 +386,7 @@ def run_benchmark(epochs_per_task: int = 3, device_str: str = "auto", output_dir
     hyb_encoder = copy.deepcopy(base_encoder)
     hyb_router = DynamicRouter(input_dim=128, num_experts=1, top_k=1, temperature=1.0).to(device)
     initial_experts_hyb = [
-        MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0).to(device)
+        MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=0).to(device)
     ]
     moe_hyb = DynamicMoE(
         encoder=hyb_encoder,
