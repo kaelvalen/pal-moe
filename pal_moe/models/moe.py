@@ -219,6 +219,18 @@ class DynamicMoE(nn.Module):
                 param.requires_grad = True
         self.router.lock_historical_routing(0)
 
+    def unfreeze_experts_keep_routing_lock(self) -> None:
+        """
+        Unfreezes ALL experts (so historical experts can learn the negative
+        boundaries of other tasks during joint calibration) while KEEPING the
+        historical routing rows locked. Only the newest router row adapts, so
+        old-task inputs keep being routed to their original experts.
+        """
+        for exp in self.experts:
+            for param in exp.parameters():
+                param.requires_grad = True
+        self.router.lock_historical_routing(max(0, self.num_experts - 1))
+
 # PAL-MoE alias
 PALMoE = DynamicMoE
 

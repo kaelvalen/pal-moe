@@ -184,3 +184,123 @@ class DynamicRouter(nn.Module):
             self.gate.bias.data[idx1] = 0.5 * (self.gate.bias.data[idx1] + self.gate.bias.data[idx2])
         self.prune_expert(idx2)
         return idx1
+
+class DistanceRouter(nn.Module):
+    """
+    Non-parametric distance-based router.
+    Routes instances based on cosine similarity to expert centroids.
+    Because there are no learnable parameters in the routing mechanism,
+    this strictly prevents catastrophic routing drift and gradient imbalance.
+    """
+    def __init__(
+        self,
+        input_dim: int = 128,
+        num_experts: int = 4,
+        top_k: int = 1,
+        temperature: float = 0.1,
+    ):
+        super().__init__()
+        self.input_dim = input_dim
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.temperature = temperature
+        
+        # Expert centroids: [num_experts, input_dim]
+        # We use register_buffer so they are saved in state_dict but NOT optimized by grad
+        self.register_buffer("centroids", torch.randn(num_experts, input_dim))
+        self.centroids = F.normalize(self.centroids, p=2, dim=1)
+        self.locked_experts = 0
+
+    def lock_historical_routing(self, num_locked: int):
+        self.locked_experts = min(num_locked, self.num_experts)
+        
+    def forward(
+        self, h: torch.Tensor, top_k: Optional[int] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        k = top_k if top_k is not None else self.top_k
+        k = min(k, self.num_experts)
+
+        h_norm = F.normalize(h, p=2, dim=1)
+        c_norm = F.normalize(self.centroids, p=2, dim=1)
+        
+        # Cosine similarity logits
+        sim = torch.matmul(h_norm, c_norm.T)
+        logits = sim / max(self.temperature, 1e-5)
+
+        dense_probs = F.softmax(logits, dim=-1)
+        topk_probs, topk_idx = torch.topk(dense_probs, k=k, dim=-1)
+
+        if k > 1:
+            topk_probs = topk_probs / (topk_probs.sum(dim=-1, keepdim=True) + 1e-9)
+
+        routing_weights = torch.zeros_like(dense_probs)
+        routing_weights.scatter_(-1, topk_idx, topk_probs)
+
+        return routing_weights, topk_idx, logits
+
+    def get_full_distribution(self, h: torch.Tensor) -> torch.Tensor:
+        h_norm = F.normalize(h, p=2, dim=1)
+        c_norm = F.normalize(self.centroids, p=2, dim=1)
+        sim = torch.matmul(h_norm, c_norm.T)
+        logits = sim / max(self.temperature, 1e-5)
+        return F.softmax(logits, dim=-1)
+        
+    @staticmethod
+    def compute_entropy(probs: torch.Tensor) -> torch.Tensor:
+        eps = 1e-9
+        return -torch.sum(probs * torch.log(probs + eps), dim=-1)
+        
+    def add_expert(
+        self,
+        parent_id: Optional[int] = None,
+        prototype_feat: Optional[torch.Tensor] = None,
+    ) -> int:
+        old_num = self.num_experts
+        new_num = old_num + 1
+
+        new_centroids = torch.zeros(new_num, self.input_dim, device=self.centroids.device)
+        new_centroids[:old_num] = self.centroids
+
+        if prototype_feat is not None:
+            new_centroids[old_num] = F.normalize(prototype_feat.view(-1), p=2, dim=0)
+        elif parent_id is not None and 0 <= parent_id < old_num:
+            noise = torch.randn_like(self.centroids[parent_id]) * 0.1
+            new_centroids[old_num] = F.normalize(self.centroids[parent_id] + noise, p=2, dim=0)
+        else:
+            new_centroids[old_num] = F.normalize(torch.randn(self.input_dim, device=self.centroids.device), p=2, dim=0)
+
+        self.centroids = new_centroids
+        self.num_experts = new_num
+        return old_num
+
+    def prune_expert(self, prune_idx: int) -> None:
+        assert 0 <= prune_idx < self.num_experts
+        assert self.num_experts > 1, "Cannot prune the only expert."
+
+        old_num = self.num_experts
+        new_num = old_num - 1
+
+        keep_indices = [i for i in range(old_num) if i != prune_idx]
+        self.centroids = self.centroids[keep_indices]
+        self.num_experts = new_num
+        self.top_k = min(self.top_k, new_num)
+
+    def merge_experts(self, idx1: int, idx2: int) -> int:
+        assert 0 <= idx1 < self.num_experts and 0 <= idx2 < self.num_experts and idx1 != idx2
+        
+        c_merged = 0.5 * (self.centroids[idx1] + self.centroids[idx2])
+        self.centroids[idx1] = F.normalize(c_merged, p=2, dim=0)
+        self.prune_expert(idx2)
+        return idx1
+
+    def update_active_centroid(self, h: torch.Tensor, momentum: float = 0.99):
+        """Updates the centroid of the ACTIVE (unlocked) expert using an EMA of incoming features."""
+        # Only the newest expert gets updated in our strictly frozen architecture
+        active_idx = self.num_experts - 1
+        if active_idx >= self.locked_experts:
+            with torch.no_grad():
+                h_mean = h.mean(dim=0)
+                h_mean = F.normalize(h_mean, p=2, dim=0)
+                c_old = self.centroids[active_idx]
+                c_new = momentum * c_old + (1.0 - momentum) * h_mean
+                self.centroids[active_idx] = F.normalize(c_new, p=2, dim=0)
