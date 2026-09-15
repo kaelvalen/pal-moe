@@ -78,6 +78,34 @@ def run_benchmark(
         args.pretrain_epochs = 50 if dataset in ("cifar10", "cifar100") else 1
     num_classes = 100 if dataset == "cifar100" else 10
 
+    feature_dim = args.feature_dim
+    expert_hidden = args.expert_hidden
+    conv_channels = tuple(int(c) for c in args.conv_channels.split(",") if c.strip())
+    selected = (
+        {m.strip() for m in args.methods.split(",") if m.strip()}
+        if args.methods
+        else None
+    )
+
+    def run(method_id: str) -> bool:
+        """Whether a method block is enabled (empty --methods = run everything)."""
+        return selected is None or method_id in selected
+
+    method_keys = {
+        "naive": "Naive Fine-tuning",
+        "ewc": "EWC",
+        "replay60": "Replay (P=60)",
+        "replay360": "Replay (P=360)",
+        "replay250": "Experience Replay (Buffer=250)",
+        "derpp": "DER++ (P=250)",
+        "erace": "ER-ACE (P=250)",
+        "agem": "AGEM (P=250)",
+        "icarl": "iCaRL (k=25)",
+        "stdmoe": "Standard MoE",
+        "palmoe": "PAL-MoE (Ours)",
+        "hybrid": "PAL-MoE + Replay (Hybrid, P=250)",
+    }
+
     if dataset == "cifar10":
         from pal_moe.data.split_cifar import get_split_cifar10_tasks
 
@@ -112,7 +140,11 @@ def run_benchmark(
             pin_memory=args.num_workers > 0 and device.type == "cuda",
         )
         base_encoder = SharedEncoder(
-            input_dim=input_dim, hidden_dims=None, output_dim=128, arch="conv"
+            input_dim=input_dim,
+            hidden_dims=None,
+            output_dim=feature_dim,
+            arch="conv",
+            conv_channels=conv_channels,
         ).to(device)
         base_encoder.pretrain_contrastive(
             unlabeled_loader, device=device, epochs=args.pretrain_epochs
@@ -152,7 +184,11 @@ def run_benchmark(
             pin_memory=args.num_workers > 0 and device.type == "cuda",
         )
         base_encoder = SharedEncoder(
-            input_dim=input_dim, hidden_dims=None, output_dim=128, arch="conv"
+            input_dim=input_dim,
+            hidden_dims=None,
+            output_dim=feature_dim,
+            arch="conv",
+            conv_channels=conv_channels,
         ).to(device)
         base_encoder.pretrain_contrastive(
             unlabeled_loader, device=device, epochs=args.pretrain_epochs
@@ -176,7 +212,10 @@ def run_benchmark(
             mnist_train, batch_size=256, shuffle=True
         )
         base_encoder = SharedEncoder(
-            input_dim=input_dim, hidden_dims=(256, 128), output_dim=128, arch="mlp"
+            input_dim=input_dim,
+            hidden_dims=(256, 128),
+            output_dim=feature_dim,
+            arch="mlp",
         ).to(device)
         base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
         base_encoder.freeze()
@@ -196,12 +235,12 @@ def run_benchmark(
     set_seed(args.seed)
     naive_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0),
+        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
     ).to(device)
     naive_trainer = NaiveFineTuning(naive_net, lr=1e-3, device=device)
     evaluator_naive = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("naive") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         naive_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
         accs = evaluator_naive.evaluate_all_seen_tasks(naive_net, t_idx, tasks)
@@ -227,12 +266,12 @@ def run_benchmark(
     set_seed(args.seed)
     ewc_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0),
+        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
     ).to(device)
     ewc_trainer = EWC(ewc_net, ewc_lambda=1000.0, lr=1e-3, device=device)
     evaluator_ewc = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("ewc") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         ewc_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
         accs = evaluator_ewc.evaluate_all_seen_tasks(ewc_net, t_idx, tasks)
@@ -258,14 +297,14 @@ def run_benchmark(
     set_seed(args.seed)
     replay_net_budget = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0),
+        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
     ).to(device)
     replay_trainer_budget = ReplayTrainer(
         replay_net_budget, buffer_size=60, lr=1e-3, device=device
     )
     evaluator_replay_budget = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("replay60") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         replay_trainer_budget.train_task(
             t_idx, task.train_loader, epochs=epochs_per_task
@@ -295,14 +334,14 @@ def run_benchmark(
     set_seed(args.seed)
     replay_net_360 = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0),
+        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
     ).to(device)
     replay_trainer_360 = ReplayTrainer(
         replay_net_360, buffer_size=360, lr=1e-3, device=device
     )
     evaluator_replay_360 = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("replay360") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         replay_trainer_360.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
         accs = evaluator_replay_360.evaluate_all_seen_tasks(
@@ -330,12 +369,12 @@ def run_benchmark(
     set_seed(args.seed)
     replay_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0),
+        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
     ).to(device)
     replay_trainer = ReplayTrainer(replay_net, buffer_size=250, lr=1e-3, device=device)
     evaluator_replay = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("replay250") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         replay_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
         accs = evaluator_replay.evaluate_all_seen_tasks(replay_net, t_idx, tasks)
@@ -361,12 +400,12 @@ def run_benchmark(
     set_seed(args.seed)
     der_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0),
+        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
     ).to(device)
     der_trainer = DERPP(der_net, buffer_size=250, lr=1e-3, device=device)
     evaluator_der = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("derpp") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         der_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
         accs = evaluator_der.evaluate_all_seen_tasks(der_net, t_idx, tasks)
@@ -392,12 +431,12 @@ def run_benchmark(
     set_seed(args.seed)
     erace_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0),
+        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
     ).to(device)
     erace_trainer = ERACE(erace_net, buffer_size=250, lr=1e-3, device=device)
     evaluator_erace = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("erace") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         erace_trainer.train_task(
             t_idx,
@@ -428,12 +467,12 @@ def run_benchmark(
     set_seed(args.seed)
     agem_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0),
+        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
     ).to(device)
     agem_trainer = AGEM(agem_net, buffer_size=250, lr=1e-3, device=device)
     evaluator_agem = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("agem") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         agem_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
         accs = evaluator_agem.evaluate_all_seen_tasks(agem_net, t_idx, tasks)
@@ -461,7 +500,7 @@ def run_benchmark(
     set_seed(args.seed)
     icarl_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0),
+        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
     ).to(device)
     icarl_trainer = ICaRL(
         icarl_net,
@@ -472,7 +511,7 @@ def run_benchmark(
     )
     evaluator_icarl = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("icarl") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         icarl_trainer.train_task(
             t_idx,
@@ -504,10 +543,10 @@ def run_benchmark(
     print("=" * 60)
     set_seed(args.seed)
     std_encoder = copy.deepcopy(base_encoder)
-    std_router = DynamicRouter(input_dim=128, num_experts=4, top_k=1).to(device)
+    std_router = DynamicRouter(input_dim=feature_dim, num_experts=4, top_k=1).to(device)
     std_experts = [
         MLPExpert(
-            input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=i
+            input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=i
         ).to(device)
         for i in range(4)
     ]
@@ -520,7 +559,7 @@ def run_benchmark(
     opt_std = torch.optim.Adam(std_moe.parameters(), lr=1e-3)
     evaluator_std_moe = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("stdmoe") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         std_moe.train()
         for epoch in range(epochs_per_task):
@@ -573,15 +612,15 @@ def run_benchmark(
     dyn_encoder = copy.deepcopy(base_encoder)
     if args.router_type == "distance":
         dyn_router = DistanceRouter(
-            input_dim=128, num_experts=1, top_k=1, temperature=0.05
+            input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.05
         ).to(device)
     else:
         dyn_router = DynamicRouter(
-            input_dim=128, num_experts=1, top_k=1, temperature=1.0
+            input_dim=feature_dim, num_experts=1, top_k=1, temperature=1.0
         ).to(device)
     initial_experts = [
         MLPExpert(
-            input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0
+            input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0
         ).to(device)
     ]
     moe_model = DynamicMoE(
@@ -592,10 +631,10 @@ def run_benchmark(
     ).to(device)
 
     prototype_mem = PrototypeMemory(
-        feature_dim=128,
+        feature_dim=feature_dim,
         distance_threshold=0.5,
         ema_alpha=0.9,
-        max_prototypes=250,
+        max_prototypes=args.proto_size,
         store_raw=False,
     )
     trigger = QuantitativeTrigger(
@@ -630,7 +669,7 @@ def run_benchmark(
     )
     evaluator_dynamic = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("palmoe") else []):
         print(
             f"  Training Task {t_idx} (classes {task.classes})... Experts before: {moe_model.num_experts}"
         )
@@ -682,15 +721,15 @@ def run_benchmark(
     hyb_encoder = copy.deepcopy(base_encoder)
     if args.router_type == "distance":
         hyb_router = DistanceRouter(
-            input_dim=128, num_experts=1, top_k=1, temperature=0.05
+            input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.05
         ).to(device)
     else:
         hyb_router = DynamicRouter(
-            input_dim=128, num_experts=1, top_k=1, temperature=1.0
+            input_dim=feature_dim, num_experts=1, top_k=1, temperature=1.0
         ).to(device)
     initial_experts_hyb = [
         MLPExpert(
-            input_dim=128, hidden_dim=256, num_classes=num_classes, expert_id=0
+            input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0
         ).to(device)
     ]
     moe_hyb = DynamicMoE(
@@ -700,10 +739,10 @@ def run_benchmark(
         use_ema_encoder=False,
     ).to(device)
     prototype_mem_hyb = PrototypeMemory(
-        feature_dim=128,
+        feature_dim=feature_dim,
         distance_threshold=0.5,
         ema_alpha=0.9,
-        max_prototypes=250,
+        max_prototypes=args.proto_size,
         store_raw=True,
     )
     trigger_hyb = QuantitativeTrigger(
@@ -736,7 +775,7 @@ def run_benchmark(
     )
     evaluator_hyb = ContinualEvaluator(num_tasks=num_tasks, device=device)
 
-    for t_idx, task in enumerate(tasks):
+    for t_idx, task in enumerate(tasks if run("hybrid") else []):
         print(
             f"  Training Task {t_idx} (classes {task.classes})... Experts before: {moe_hyb.num_experts}"
         )
@@ -773,6 +812,11 @@ def run_benchmark(
         ],
         "acc_matrix": evaluator_hyb.R.tolist(),
     }
+
+    # Drop skipped methods so the table/JSON only contain what actually ran.
+    if selected is not None:
+        kept = {name for mid, name in method_keys.items() if run(mid)}
+        results = {k: v for k, v in results.items() if k in kept}
 
     # -------------------------------------------------------------
     # Summary Table
@@ -839,6 +883,40 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="Encoder pretraining epochs (None = dataset default)",
+    )
+    parser.add_argument(
+        "--feature_dim",
+        type=int,
+        default=128,
+        help="Latent/feature dimension (encoder output, router and expert input)",
+    )
+    parser.add_argument(
+        "--expert_hidden",
+        type=int,
+        default=256,
+        help="Hidden width of every MLP expert",
+    )
+    parser.add_argument(
+        "--conv_channels",
+        type=str,
+        default="32,64,128",
+        help="Comma-separated conv encoder channels (default reproduces the original net)",
+    )
+    parser.add_argument(
+        "--proto_size",
+        type=int,
+        default=250,
+        help="PAL-MoE prototype memory budget (also sets the hybrid's latent store size)",
+    )
+    parser.add_argument(
+        "--methods",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated method ids to run (empty = all). Ids: naive, ewc, "
+            "replay60, replay360, replay250, derpp, erace, agem, icarl, stdmoe, "
+            "palmoe, hybrid"
+        ),
     )
     parser.add_argument(
         "--anchor",

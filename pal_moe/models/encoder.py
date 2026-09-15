@@ -24,6 +24,7 @@ class SharedEncoder(nn.Module):
         output_dim: int = 128,
         arch: Literal["mlp", "conv"] = "mlp",
         dropout: float = 0.0,
+        conv_channels: tuple[int, ...] = (32, 64, 128),
     ):
         super().__init__()
         self.input_dim = input_dim
@@ -48,26 +49,29 @@ class SharedEncoder(nn.Module):
             layers.append(nn.ReLU(inplace=True))
             self.net = nn.Sequential(*layers)
         elif arch == "conv":
-            # For 3-channel (CIFAR) or 1-channel (MNIST) inputs
+            # For 3-channel (CIFAR) or 1-channel (MNIST) inputs.
+            # Pools after every conv block except the last, so the default
+            # (32, 64, 128) reproduces the original 3-stage architecture.
             in_channels = 3 if input_dim == 3072 else 1
-            self.net = nn.Sequential(
-                nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
-                nn.BatchNorm2d(32),
-                nn.ReLU(inplace=True),
-                nn.MaxPool2d(2),  # 16x16 or 14x14
-                nn.Conv2d(32, 64, kernel_size=3, padding=1),
-                nn.BatchNorm2d(64),
-                nn.ReLU(inplace=True),
-                nn.MaxPool2d(2),  # 8x8 or 7x7
-                nn.Conv2d(64, 128, kernel_size=3, padding=1),
-                nn.BatchNorm2d(128),
-                nn.ReLU(inplace=True),
+            layers = []
+            prev_ch = in_channels
+            for i, ch in enumerate(conv_channels):
+                layers += [
+                    nn.Conv2d(prev_ch, ch, kernel_size=3, padding=1),
+                    nn.BatchNorm2d(ch),
+                    nn.ReLU(inplace=True),
+                ]
+                if i < len(conv_channels) - 1:
+                    layers.append(nn.MaxPool2d(2))  # 16x16 or 14x14
+                prev_ch = ch
+            layers += [
                 nn.AdaptiveAvgPool2d((1, 1)),
                 nn.Flatten(),
-                nn.Linear(128, output_dim),
+                nn.Linear(prev_ch, output_dim),
                 nn.BatchNorm1d(output_dim),
                 nn.ReLU(inplace=True),
-            )
+            ]
+            self.net = nn.Sequential(*layers)
         else:
             raise ValueError(f"Unsupported architecture: {arch}")
 
