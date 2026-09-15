@@ -82,6 +82,32 @@ python experiments/run_benchmark_multi.py --dataset cifar10 --device cuda --num_
 Results: `results/benchmark_results_seed{s}.json` (single),
 `results/benchmark_multi.json` (aggregated), `results/ablation_results.json`.
 
+### Scaling up: capacity and budget knobs
+
+Model size and training budget are configurable from the CLI (or a JSON config,
+which overrides CLI defaults):
+
+| Flag | Default | Meaning |
+| :--- | :---: | :--- |
+| `--feature_dim` | 128 | latent width: encoder output, router input, expert input |
+| `--expert_hidden` | 256 | hidden width of every MLP expert |
+| `--conv_channels` | `32,64,128` | CIFAR conv encoder channels (default reproduces the original net exactly) |
+| `--proto_size` | 250 | PAL-MoE prototype-store budget (hybrid's latent exemplars) |
+| `--methods` | all | comma-separated subset: `naive, ewc, replay60, replay360, replay250, derpp, erace, agem, icarl, stdmoe, palmoe, hybrid` |
+| `--num_workers` | 0 | DataLoader workers (results-neutral, see design fact 8) |
+
+`configs/cifar10_big.json` is the reference "big" run: conv `64,128,256`
+(438k-param encoder) → 256-dim latents, expert hidden 512, P=1000, 15 epochs/task,
+150 SimCLR pretrain epochs, both PAL-MoE variants only (a full-table run at this
+geometry means re-running every baseline, which the same flags support):
+
+```bash
+python experiments/run_benchmark.py --config configs/cifar10_big.json --device cuda
+```
+
+Note: a config file wins over CLI flags, so use explicit flags (not `--config`)
+when you need a different long schedule for a smoke test.
+
 ## Measured design facts (controlled experiments)
 
 All figures below are Split-MNIST, seed 42, 3 epochs/task, current code

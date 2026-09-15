@@ -45,6 +45,28 @@ def test_shared_and_ema_encoder():
     assert not torch.allclose(h2, h_ema_updated, atol=1e-4)
 
 
+def test_conv_encoder_channels_and_feature_dim():
+    default = SharedEncoder(input_dim=3072, hidden_dims=None, output_dim=128, arch="conv")
+    # Default channels must reproduce the original 3-stage layout exactly
+    assert [type(m).__name__ for m in default.net] == [
+        "Conv2d", "BatchNorm2d", "ReLU", "MaxPool2d",
+        "Conv2d", "BatchNorm2d", "ReLU", "MaxPool2d",
+        "Conv2d", "BatchNorm2d", "ReLU",
+        "AdaptiveAvgPool2d", "Flatten", "Linear", "BatchNorm1d", "ReLU",
+    ]
+    assert default.net[-3].in_features == 128
+
+    big = SharedEncoder(
+        input_dim=3072,
+        hidden_dims=None,
+        output_dim=256,
+        arch="conv",
+        conv_channels=(64, 128, 256),
+    )
+    big.eval()
+    assert big(torch.randn(4, 3, 32, 32)).shape == (4, 256)
+
+
 def test_function_preserving_expert_expansion():
     parent = MLPExpert(input_dim=32, hidden_dim=16, num_classes=10, expert_id=0)
     child = parent.clone_function_preserving(new_expert_id=1, creation_task=1)

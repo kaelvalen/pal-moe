@@ -46,6 +46,22 @@ def main():
         default=0,
         help="DataLoader workers forwarded to run_benchmark.py (0 = single-process)",
     )
+    parser.add_argument("--feature_dim", type=int, default=128)
+    parser.add_argument("--expert_hidden", type=int, default=256)
+    parser.add_argument("--conv_channels", type=str, default="32,64,128")
+    parser.add_argument("--proto_size", type=int, default=250)
+    parser.add_argument(
+        "--pretrain_epochs",
+        type=int,
+        default=None,
+        help="Encoder pretraining epochs (default: dataset default)",
+    )
+    parser.add_argument(
+        "--methods",
+        type=str,
+        default="",
+        help="Comma-separated method ids (empty = all); forwarded to run_benchmark.py",
+    )
     parser.add_argument("--output_dir", type=str, default="./results")
     args = parser.parse_args()
 
@@ -73,7 +89,19 @@ def main():
             seed_dir,
             "--lambda_ood",
             str(args.lambda_ood),
+            "--feature_dim",
+            str(args.feature_dim),
+            "--expert_hidden",
+            str(args.expert_hidden),
+            "--conv_channels",
+            args.conv_channels,
+            "--proto_size",
+            str(args.proto_size),
         ]
+        if args.methods:
+            cmd += ["--methods", args.methods]
+        if args.pretrain_epochs is not None:
+            cmd += ["--pretrain_epochs", str(args.pretrain_epochs)]
         if args.joint_keep_routing_lock:
             cmd.append("--joint_keep_routing_lock")
         if args.max_proto_drop is not None:
@@ -121,6 +149,12 @@ def main():
             "max_proto_acc_drop": args.max_proto_acc_drop,
             "joint_freeze_router": args.joint_freeze_router,
             "joint_keep_routing_lock": args.joint_keep_routing_lock,
+            "feature_dim": args.feature_dim,
+            "expert_hidden": args.expert_hidden,
+            "conv_channels": args.conv_channels,
+            "proto_size": args.proto_size,
+            "methods": args.methods,
+            "pretrain_epochs": args.pretrain_epochs,
         },
         "per_seed": per_seed,
         "aggregated": agg,
