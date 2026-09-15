@@ -40,6 +40,12 @@ def main():
     parser.add_argument("--max_proto_acc_drop", type=float, default=None)
     parser.add_argument("--joint_freeze_router", action="store_true", default=False)
     parser.add_argument("--joint_keep_routing_lock", action="store_true")
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=0,
+        help="DataLoader workers forwarded to run_benchmark.py (0 = single-process)",
+    )
     parser.add_argument("--output_dir", type=str, default="./results")
     args = parser.parse_args()
 
@@ -76,6 +82,8 @@ def main():
             cmd += ["--max_proto_acc_drop", str(args.max_proto_acc_drop)]
         if args.joint_freeze_router:
             cmd.append("--joint_freeze_router")
+        if args.num_workers:
+            cmd += ["--num_workers", str(args.num_workers)]
 
         print(f"\n########## Seed {s} ##########")
         subprocess.run(cmd, check=True)
