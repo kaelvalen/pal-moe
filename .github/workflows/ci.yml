@@ -68,3 +68,54 @@ jobs:
       
     - name: Build package distribution
       run: python -m build
+
+  benchmark-verify:
+    name: Benchmark Reproducibility Smoke
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Cache Datasets
+      uses: actions/cache@v4
+      with:
+        path: ./data
+        key: dataset-cache-mnist-v1
+        restore-keys: |
+          dataset-cache-mnist-
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+        pip install -e .
+    - name: Download MNIST
+      run: |
+        python - <<'PY'
+        from torchvision import datasets, transforms
+        datasets.MNIST("./data", train=True, download=True,
+                       transform=transforms.Compose([transforms.ToTensor()]))
+        PY
+    - name: CPU benchmark smoke (1 epoch, all 12 methods)
+      run: |
+        python experiments/run_benchmark.py --epochs 1 --device cpu --output_dir /tmp/ci-bench
+    - name: Assert benchmark sanity bounds
+      run: |
+        python - <<'PY'
+        import json
+        d = json.load(open("/tmp/ci-bench/benchmark_results_seed42.json"))
+        for name in ("PAL-MoE (Ours)", "PAL-MoE + Replay (Hybrid, P=250)", "DER++ (P=250)",
+                     "Experience Replay (Buffer=250)", "Naive Fine-tuning"):
+            assert name in d, f"missing method in results: {name}"
+        hyb = d["PAL-MoE + Replay (Hybrid, P=250)"]["acc"]
+        pure = d["PAL-MoE (Ours)"]["acc"]
+        naive = d["Naive Fine-tuning"]["acc"]
+        print(f"hybrid={hyb:.2%} pure={pure:.2%} naive={naive:.2%}")
+        # sanity bounds only (1-epoch CPU smoke, not a SOTA check)
+        assert hyb > 0.50, f"hybrid sanity bound failed: {hyb:.2%}"
+        assert pure > 0.25, f"pure sanity bound failed: {pure:.2%}"
+        assert pure > naive, f"pure PAL-MoE should beat naive fine-tuning: {pure:.2%} vs {naive:.2%}"
+        print("benchmark-verify OK")
+        PY

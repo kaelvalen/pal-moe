@@ -22,6 +22,7 @@ class StandardMoE(nn.Module):
     - Top-k sparse routing
     - Naive sequential fine-tuning on continual tasks (no prototype memory, no stability loss)
     """
+
     def __init__(
         self,
         input_dim: int = 784,
@@ -36,18 +37,29 @@ class StandardMoE(nn.Module):
         super().__init__()
         self.device = device
         encoder = SharedEncoder(input_dim=input_dim, output_dim=feature_dim)
-        router = DynamicRouter(input_dim=feature_dim, num_experts=num_experts, top_k=top_k)
+        router = DynamicRouter(
+            input_dim=feature_dim, num_experts=num_experts, top_k=top_k
+        )
         experts = [
-            MLPExpert(input_dim=feature_dim, hidden_dim=hidden_dim, num_classes=num_classes, expert_id=i)
+            MLPExpert(
+                input_dim=feature_dim,
+                hidden_dim=hidden_dim,
+                num_classes=num_classes,
+                expert_id=i,
+            )
             for i in range(num_experts)
         ]
-        self.moe = DynamicMoE(encoder=encoder, router=router, experts=experts, use_ema_encoder=False).to(device)
+        self.moe = DynamicMoE(
+            encoder=encoder, router=router, experts=experts, use_ema_encoder=False
+        ).to(device)
         self.optimizer = torch.optim.Adam(self.moe.parameters(), lr=lr)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.moe(x)
 
-    def train_task(self, task_id: int, train_loader: Any, epochs: int = 5) -> Dict[str, Any]:
+    def train_task(
+        self, task_id: int, train_loader: Any, epochs: int = 5
+    ) -> Dict[str, Any]:
         self.moe.train()
         losses = []
         for epoch in range(epochs):

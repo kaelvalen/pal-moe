@@ -1,18 +1,31 @@
 """
 Ablation Study Runner for PAL-MoE (Prototype-Anchored Lifelong Mixture of Experts).
-Systematically verifies the necessity of each component in Section 10:
-1. Full Proposed PAL-MoE
-2. Ablation A: No Stability Loss (lambda_r = 0, lambda_e = 0)
-3. Ablation B: No Expert Output Anchor (lambda_e = 0, lambda_r = 2.5)
-4. Ablation C: Random Expert Init (No Function-Preserving Net2Net clone)
-5. Ablation D: No Validation Gate (unconditional candidate admission)
-6. Ablation E: Top-2 Routing vs Top-1 Routing
-7. Ablation F: EMA Encoder vs Frozen Encoder
+
+Systematically verifies the necessity of each component:
+ 1. Full Proposed PAL-MoE (frozen encoder, stability losses, OOD negative
+    boundary, function-preserving expansion, validation gate, top-1)
+ 2. No Stability Loss  (lambda_r = 0, lambda_e = 0)
+ 3. No Expert Anchor   (lambda_e = 0)
+ 4. No Router Stability (lambda_r = 0)
+ 5. No OOD Negative Boundary (lambda_ood = 0)
+ 6. Random Expert Init (no function-preserving Net2Net clone)
+ 7. No Validation Gate (unconditional candidate admission)
+ 8. Top-2 Routing vs Top-1 Routing
+ 9. Online Adaptive Encoder vs EMA Adaptive Encoder vs Frozen Encoder
+
+Controlled-ablation guarantees:
+ - The base encoder is pretrained ONCE per seed and shared (deepcopy) across
+   every config of that seed, so config differences isolate ONE component.
+ - Tasks/loaders are built once per seed with the same seed, so every config
+   sees identical data ordering.
+ - `set_seed(seed)` is applied before building tasks, before pretraining and
+   inside each config run (deterministic DataLoader / augmentation behavior).
 """
 
 import os
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import copy
@@ -28,13 +41,12 @@ from pal_moe.data.split_mnist import get_split_mnist_tasks
 from pal_moe.models.encoder import SharedEncoder
 from pal_moe.models.router import DynamicRouter
 from pal_moe.models.expert import MLPExpert
-from pal_moe.models.moe import DynamicMoE, PALMoE
+from pal_moe.models.moe import DynamicMoE
 from pal_moe.memory.prototype_memory import PrototypeMemory
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
 from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.adaptation.ttt import ContinualTrainer
 from pal_moe.evaluation.metrics import ContinualEvaluator
-
 
 
 def set_seed(seed: int = 42):
@@ -45,6 +57,93 @@ def set_seed(seed: int = 42):
     torch.backends.cudnn.benchmark = False
 
 
+def make_tasks(dataset: str, seed: int, device: torch.device):
+    """Builds the task stream once per seed (identical order for all configs)."""
+    if dataset == "cifar10":
+        from pal_moe.data.split_cifar import get_split_cifar10_tasks
+
+        tasks = get_split_cifar10_tasks(
+            data_dir="./data", batch_size=128, val_split=0.1, seed=seed
+        )
+    else:
+        tasks = get_split_mnist_tasks(
+            data_dir="./data", batch_size=128, val_split=0.1, seed=seed
+        )
+    return tasks
+
+
+def pretrain_encoder(dataset: str, seed: int, device: torch.device) -> SharedEncoder:
+    """
+    Pretrains the shared base encoder ONCE per seed. MNIST: 1 epoch autoencoder
+    (frozen afterwards). CIFAR-10: 50 epoch SimCLR contrastive (left unfrozen).
+    """
+    set_seed(seed)
+    if dataset == "cifar10":
+        import torchvision.transforms as T
+
+        cifar_train = datasets.CIFAR10(
+            "./data",
+            train=True,
+            download=True,
+            transform=transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
+                    ),
+                ]
+            ),
+        )
+        pretrain_loader = torch.utils.data.DataLoader(
+            cifar_train, batch_size=256, shuffle=True
+        )
+        encoder = SharedEncoder(
+            input_dim=3072, hidden_dims=None, output_dim=128, arch="conv"
+        ).to(device)
+
+        def cifar_augment(x):
+            # Un-normalize back to [0, 1], augment, re-normalize
+            mean = torch.tensor([0.4914, 0.4822, 0.4465], device=device).view(
+                1, 3, 1, 1
+            )
+            std = torch.tensor([0.2470, 0.2435, 0.2616], device=device).view(1, 3, 1, 1)
+            x_unnorm = torch.clamp(x * std + mean, 0.0, 1.0)
+            aug = T.Compose(
+                [
+                    T.RandomResizedCrop(x.shape[-2:], scale=(0.2, 1.0), antialias=True),
+                    T.RandomHorizontalFlip(p=0.5),
+                    T.ColorJitter(0.4, 0.4, 0.4, 0.1),
+                ]
+            )
+            return (aug(x_unnorm) - mean) / std
+
+        encoder.pretrain_contrastive(
+            pretrain_loader, device=device, epochs=50, augment_fn=cifar_augment
+        )
+        # DO NOT freeze for CIFAR-10 (encoder adapts during continual training)
+    else:
+        mnist_train = datasets.MNIST(
+            "./data",
+            train=True,
+            download=True,
+            transform=transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.1307,), (0.3081,)),
+                ]
+            ),
+        )
+        pretrain_loader = torch.utils.data.DataLoader(
+            mnist_train, batch_size=256, shuffle=True
+        )
+        encoder = SharedEncoder(
+            input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp"
+        ).to(device)
+        encoder.pretrain_unsupervised(pretrain_loader, device=device, epochs=1)
+        encoder.freeze()
+    return encoder
+
+
 def run_single_config(
     tasks,
     base_encoder: SharedEncoder,
@@ -52,6 +151,7 @@ def run_single_config(
     dataset: str = "mnist",
     lambda_r: float = 0.5,
     lambda_e: float = 2.5,
+    lambda_ood: float = 0.1,
     use_function_preserving: bool = True,
     use_validation_gate: bool = True,
     use_ema_encoder: bool = False,
@@ -61,7 +161,7 @@ def run_single_config(
     seed: int = 42,
     device: torch.device = torch.device("cpu"),
 ):
-    print(f"\n---> Evaluating Config: {config_name} (seed={seed})")
+    print(f"\n---> Config: {config_name} (seed={seed})")
     set_seed(seed)
 
     encoder = copy.deepcopy(base_encoder)
@@ -70,7 +170,9 @@ def run_single_config(
     else:
         encoder.freeze()
 
-    router = DynamicRouter(input_dim=128, num_experts=1, top_k=top_k, temperature=1.0).to(device)
+    router = DynamicRouter(
+        input_dim=128, num_experts=1, top_k=top_k, temperature=1.0
+    ).to(device)
     initial_experts = [
         MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=0).to(device)
     ]
@@ -86,12 +188,14 @@ def run_single_config(
         feature_dim=128,
         distance_threshold=0.5,
         ema_alpha=0.9,
-        max_prototypes=60,
+        max_prototypes=250,
         store_raw=adapt_encoder,
     )
     trigger = QuantitativeTrigger(
         alpha=1.0, beta=0.4, gamma=0.6, delta=0.5, threshold_tau=0.5
     )
+
+    # Gate thresholds match the production benchmark config
     if dataset == "cifar10":
         builder = ExpertBuilder(
             min_acc_threshold=0.0 if not use_validation_gate else 0.45,
@@ -106,7 +210,7 @@ def run_single_config(
     else:
         builder = ExpertBuilder(
             min_acc_threshold=0.0 if not use_validation_gate else 0.60,
-            max_proto_drop=999.0,
+            max_proto_drop=2.0,
             max_proto_acc_drop=999.0,
             max_ece=999.0,
             distill_lambda=0.5,
@@ -123,6 +227,7 @@ def run_single_config(
         lambda_r=lambda_r,
         lambda_e=lambda_e,
         lambda_enc=lambda_enc,
+        lambda_ood=lambda_ood,
         lr=1e-3,
         encoder_lr=encoder_lr,
         max_experts=6,
@@ -130,12 +235,15 @@ def run_single_config(
     )
 
     if not use_function_preserving:
+
         def random_create(parent_expert, new_expert_id, creation_task):
-            return MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=new_expert_id).to(device)
+            return MLPExpert(
+                input_dim=128, hidden_dim=256, num_classes=10, expert_id=new_expert_id
+            ).to(device)
+
         builder.create_candidate_from_parent = random_create
 
     evaluator = ContinualEvaluator(num_tasks=len(tasks), device=device)
-
     total_experts_added = 0
     total_gate_rejections = 0
 
@@ -149,14 +257,20 @@ def run_single_config(
         )
         total_experts_added += hist.get("experts_added", 0)
         total_gate_rejections += hist.get("gate_rejections", 0)
-        accs = evaluator.evaluate_all_seen_tasks(moe_model, t_idx, tasks)
+        # side-effect: fill the accuracy matrix R[t, :]
+        evaluator.evaluate_all_seen_tasks(moe_model, t_idx, tasks)
 
     avg_acc = evaluator.compute_average_accuracy()
     forgetting = evaluator.compute_forgetting()
     bwt = evaluator.compute_backward_transfer()
-    router_kl = ContinualEvaluator.compute_router_stability(moe_model, prototype_mem, device)
+    router_kl = ContinualEvaluator.compute_router_stability(
+        moe_model, prototype_mem, device
+    )
 
-    print(f"  Result -> Acc: {avg_acc:.2%}, Forgetting: {forgetting:.2%}, Router KL: {router_kl:.4f}, Experts: {moe_model.num_experts}, Rejections: {total_gate_rejections}")
+    print(
+        f"  Result -> Acc: {avg_acc:.2%}, Forgetting: {forgetting:.2%}, "
+        f"Router KL: {router_kl:.4f}, Experts: {moe_model.num_experts}, Rejections: {total_gate_rejections}"
+    )
 
     return {
         "name": config_name,
@@ -169,6 +283,140 @@ def run_single_config(
         "gate_rejections": total_gate_rejections,
         "acc_matrix": evaluator.R.tolist(),
     }
+
+
+CONFIGS = [
+    (
+        "Full Proposed PAL-MoE",
+        dict(
+            lambda_r=0.5,
+            lambda_e=2.5,
+            lambda_ood=0.1,
+            use_function_preserving=True,
+            use_validation_gate=True,
+            use_ema_encoder=False,
+            adapt_encoder=False,
+            top_k=1,
+        ),
+    ),
+    (
+        "No Stability Loss (lr=0, le=0)",
+        dict(
+            lambda_r=0.0,
+            lambda_e=0.0,
+            lambda_ood=0.1,
+            use_function_preserving=True,
+            use_validation_gate=True,
+            use_ema_encoder=False,
+            adapt_encoder=False,
+            top_k=1,
+        ),
+    ),
+    (
+        "No Expert Anchor (le=0)",
+        dict(
+            lambda_r=0.5,
+            lambda_e=0.0,
+            lambda_ood=0.1,
+            use_function_preserving=True,
+            use_validation_gate=True,
+            use_ema_encoder=False,
+            adapt_encoder=False,
+            top_k=1,
+        ),
+    ),
+    (
+        "No Router Stability (lr=0)",
+        dict(
+            lambda_r=0.0,
+            lambda_e=2.5,
+            lambda_ood=0.1,
+            use_function_preserving=True,
+            use_validation_gate=True,
+            use_ema_encoder=False,
+            adapt_encoder=False,
+            top_k=1,
+        ),
+    ),
+    (
+        "No OOD Negative Boundary (ood=0)",
+        dict(
+            lambda_r=0.5,
+            lambda_e=2.5,
+            lambda_ood=0.0,
+            use_function_preserving=True,
+            use_validation_gate=True,
+            use_ema_encoder=False,
+            adapt_encoder=False,
+            top_k=1,
+        ),
+    ),
+    (
+        "Random Expert Init (No Function-Preserving)",
+        dict(
+            lambda_r=0.5,
+            lambda_e=2.5,
+            lambda_ood=0.1,
+            use_function_preserving=False,
+            use_validation_gate=True,
+            use_ema_encoder=False,
+            adapt_encoder=False,
+            top_k=1,
+        ),
+    ),
+    (
+        "No Validation Gate",
+        dict(
+            lambda_r=0.5,
+            lambda_e=2.5,
+            lambda_ood=0.1,
+            use_function_preserving=True,
+            use_validation_gate=False,
+            use_ema_encoder=False,
+            adapt_encoder=False,
+            top_k=1,
+        ),
+    ),
+    (
+        "Top-2 Routing",
+        dict(
+            lambda_r=0.5,
+            lambda_e=2.5,
+            lambda_ood=0.1,
+            use_function_preserving=True,
+            use_validation_gate=True,
+            use_ema_encoder=False,
+            adapt_encoder=False,
+            top_k=2,
+        ),
+    ),
+    (
+        "Online Adaptive Encoder (No EMA)",
+        dict(
+            lambda_r=0.5,
+            lambda_e=2.5,
+            lambda_ood=0.1,
+            use_function_preserving=True,
+            use_validation_gate=True,
+            use_ema_encoder=False,
+            adapt_encoder=True,
+            top_k=1,
+        ),
+    ),
+    (
+        "EMA Adaptive Encoder",
+        dict(
+            lambda_r=0.5,
+            lambda_e=2.5,
+            lambda_ood=0.1,
+            use_function_preserving=True,
+            use_validation_gate=True,
+            use_ema_encoder=True,
+            adapt_encoder=True,
+            top_k=1,
+        ),
+    ),
+]
 
 
 def run_all_ablations(
@@ -184,22 +432,22 @@ def run_all_ablations(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_str)
-    print(f"[Ablation] Using compute device: {device} | Seeds: {seeds} | Dataset: {dataset.upper()}")
+    print(f"[Ablation] Device: {device} | Seeds: {seeds} | Dataset: {dataset.upper()}")
 
-    configs = [
-        ("Full Proposed PAL-MoE", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
-        ("No Stability Loss (lr=0, le=0)", dict(lambda_r=0.0, lambda_e=0.0, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
-        ("No Expert Anchor (lr=0.5, le=0)", dict(lambda_r=0.5, lambda_e=0.0, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
-        ("No Router Stability (lr=0, le=2.5)", dict(lambda_r=0.0, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
-        ("Random Expert Init (No Function-Preserving)", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=False, use_validation_gate=True, use_ema_encoder=False, top_k=1)),
-        ("No Validation Gate", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=False, use_ema_encoder=False, top_k=1)),
-        ("Top-2 Routing", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, top_k=2)),
-        ("Online Encoder (No EMA)", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=False, adapt_encoder=True, top_k=1)),
-        ("EMA Encoder (Adaptive)", dict(lambda_r=0.5, lambda_e=2.5, use_function_preserving=True, use_validation_gate=True, use_ema_encoder=True, adapt_encoder=True, top_k=1)),
-    ]
-
+    configs = CONFIGS
     if selected_configs:
-        configs = [c for c in configs if c[0] in selected_configs]
+        # case-insensitive substring matching for user-friendly CLI UX
+        configs = [
+            c
+            for c in configs
+            if any(sub.lower() in c[0].lower() for sub in selected_configs)
+        ]
+    assert configs, "No configurations matched the --configs filter."
+
+    # CONTROLLED ABLATION: pretrain ONE encoder per seed, share it (deepcopy)
+    # across every config of that seed.
+    encoders = {s: pretrain_encoder(dataset, s, device) for s in seeds}
+    task_sets = {s: make_tasks(dataset, s, device) for s in seeds}
 
     all_results = {}
     table_data = []
@@ -207,49 +455,26 @@ def run_all_ablations(
     for name, kwargs in configs:
         seed_runs = []
         for s in seeds:
-            set_seed(s)
-            if dataset == "cifar10":
-                from pal_moe.data.split_cifar import get_split_cifar10_tasks
-                tasks = get_split_cifar10_tasks(data_dir="./data", batch_size=128, val_split=0.1, seed=s)
-                cifar_train = datasets.CIFAR10("./data", train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))]))
-                unlabeled_loader = torch.utils.data.DataLoader(cifar_train, batch_size=256, shuffle=True)
-                base_encoder = SharedEncoder(input_dim=3072, hidden_dims=None, output_dim=128, arch="conv").to(device)
-            else:
-                from pal_moe.data.split_mnist import get_split_mnist_tasks
-                tasks = get_split_mnist_tasks(data_dir="./data", batch_size=128, val_split=0.1, seed=s)
-                mnist_train = datasets.MNIST("./data", train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]))
-                unlabeled_loader = torch.utils.data.DataLoader(mnist_train, batch_size=256, shuffle=True)
-                base_encoder = SharedEncoder(input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp").to(device)
-            
-            if dataset == "cifar10":
-    
-            import torchvision.transforms as T
-            def cifar_augment(x):
-                # Un-normalize back to [0,1]
-                mean = torch.tensor([0.4914, 0.4822, 0.4465], device=device).view(1, 3, 1, 1)
-                std = torch.tensor([0.2470, 0.2435, 0.2616], device=device).view(1, 3, 1, 1)
-                x_unnorm = torch.clamp(x * std + mean, 0.0, 1.0)
-                aug = T.Compose([
-                    T.RandomResizedCrop(x.shape[-2:], scale=(0.2, 1.0), antialias=True),
-                    T.RandomHorizontalFlip(p=0.5),
-                    T.ColorJitter(0.4, 0.4, 0.4, 0.1),
-                ])
-                x_aug = aug(x_unnorm)
-                return (x_aug - mean) / std
-                
-            base_encoder.pretrain_contrastive(unlabeled_loader, device=device, epochs=50, augment_fn=cifar_augment)
-                # DO NOT freeze for CIFAR-10
-            else:
-                base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
-                base_encoder.freeze()
-
-            res = run_single_config(tasks, base_encoder, name, epochs=epochs, seed=s, device=device, dataset=dataset, **kwargs)
+            res = run_single_config(
+                task_sets[s],
+                encoders[s],
+                name,
+                epochs=epochs,
+                seed=s,
+                device=device,
+                dataset=dataset,
+                **kwargs,
+            )
             seed_runs.append(res)
 
         accs = [r["acc"] for r in seed_runs]
         forg = [r["forgetting"] for r in seed_runs]
         bwts = [r["bwt"] for r in seed_runs]
-        kls = [r["router_stability_kl"] for r in seed_runs if not np.isnan(r["router_stability_kl"])]
+        kls = [
+            r["router_stability_kl"]
+            for r in seed_runs
+            if not np.isnan(r["router_stability_kl"])
+        ]
         exps = [r["final_experts"] for r in seed_runs]
         rejs = [r["gate_rejections"] for r in seed_runs]
 
@@ -260,25 +485,29 @@ def run_all_ablations(
         std_kl = float(np.std(kls)) if len(kls) > 1 else 0.0
 
         if len(seeds) > 1:
-            table_data.append([
-                name,
-                f"{mean_acc:.2%} ± {std_acc:.2%}",
-                f"{mean_forg:.2%} ± {std_forg:.2%}",
-                f"{mean_bwt:.2%} ± {std_bwt:.2%}",
-                f"{mean_kl:.4f} ± {std_kl:.4f}" if not np.isnan(mean_kl) else "-",
-                f"{np.mean(exps):.1f}",
-                f"{np.mean(rejs):.1f}",
-            ])
+            table_data.append(
+                [
+                    name,
+                    f"{mean_acc:.2%} ± {std_acc:.2%}",
+                    f"{mean_forg:.2%} ± {std_forg:.2%}",
+                    f"{mean_bwt:.2%} ± {std_bwt:.2%}",
+                    f"{mean_kl:.4f} ± {std_kl:.4f}" if not np.isnan(mean_kl) else "-",
+                    f"{np.mean(exps):.1f}",
+                    f"{np.mean(rejs):.1f}",
+                ]
+            )
         else:
-            table_data.append([
-                name,
-                f"{mean_acc:.2%}",
-                f"{mean_forg:.2%}",
-                f"{mean_bwt:.2%}",
-                f"{mean_kl:.4f}" if not np.isnan(mean_kl) else "-",
-                str(int(np.mean(exps))),
-                str(int(np.mean(rejs))),
-            ])
+            table_data.append(
+                [
+                    name,
+                    f"{mean_acc:.2%}",
+                    f"{mean_forg:.2%}",
+                    f"{mean_bwt:.2%}",
+                    f"{mean_kl:.4f}" if not np.isnan(mean_kl) else "-",
+                    str(int(np.mean(exps))),
+                    str(int(np.mean(rejs))),
+                ]
+            )
 
         all_results[name] = {
             "name": name,
@@ -296,9 +525,17 @@ def run_all_ablations(
             "acc_matrix": seed_runs[0]["acc_matrix"],
         }
 
-    headers = ["Ablation Configuration", "Avg Acc (↑)", "Forgetting (↓)", "BWT (↑)", "Router KL (↓)", "Experts", "Rejections"]
+    headers = [
+        "Ablation Configuration",
+        "Avg Acc (↑)",
+        "Forgetting (↓)",
+        "BWT (↑)",
+        "Router KL (↓)",
+        "Experts",
+        "Rejections",
+    ]
     print("\n" + "=" * 80)
-    print(f"ABLATION STUDY RESULTS (Split-MNIST, 5 Tasks, {len(seeds)} Seeds)")
+    print(f"ABLATION STUDY RESULTS ({dataset.upper()}, 5 Tasks, {len(seeds)} Seeds)")
     print("=" * 80)
     print(tabulate(table_data, headers=headers, tablefmt="github"))
     print("=" * 80)
@@ -312,11 +549,21 @@ def run_all_ablations(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--seeds", type=int, nargs="+", default=[42], help="List of seeds to evaluate (e.g. 42 43 44)")
-    parser.add_argument("--configs", type=str, nargs="+", default=None, help="Specific configs to run")
+    parser.add_argument(
+        "--seeds", type=int, nargs="+", default=[42], help="List of seeds (e.g. 42 1 2)"
+    )
+    parser.add_argument(
+        "--configs",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Substring filter(s) for config names",
+    )
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--output_dir", type=str, default="./results")
-    parser.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "cifar10"])
+    parser.add_argument(
+        "--dataset", type=str, default="mnist", choices=["mnist", "cifar10"]
+    )
     args = parser.parse_args()
 
     run_all_ablations(

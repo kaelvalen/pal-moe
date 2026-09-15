@@ -18,6 +18,7 @@ class MLPExpert(nn.Module):
     Expert network E_i that maps representation h(x) -> task logits R^C.
     Equipped with a primary pathway and an expandable residual adapter.
     """
+
     def __init__(
         self,
         input_dim: int = 128,
@@ -82,7 +83,7 @@ class MLPExpert(nn.Module):
         # Copy primary pathway weights
         child.fc1.load_state_dict(self.fc1.state_dict())
         child.fc2.load_state_dict(self.fc2.state_dict())
-        
+
         # Parameter efficiency: Freeze base pathway to prevent parameter explosion
         if freeze_base:
             for p in child.fc1.parameters():
@@ -99,4 +100,5 @@ class MLPExpert(nn.Module):
 
 class ExpertAdapter(MLPExpert):
     """Alias for MLPExpert with adapter."""
+
     pass

@@ -11,9 +11,24 @@ import argparse
 from pathlib import Path
 
 BINARY_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".gz", ".tar",
-    ".zip", ".pt", ".pth", ".ckpt", ".bin", ".pyc", ".so", ".dylib",
-    ".idx1-ubyte", ".idx3-ubyte"
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".pdf",
+    ".gz",
+    ".tar",
+    ".zip",
+    ".pt",
+    ".pth",
+    ".ckpt",
+    ".bin",
+    ".pyc",
+    ".so",
+    ".dylib",
+    ".idx1-ubyte",
+    ".idx3-ubyte",
 }
 
 
@@ -48,10 +63,21 @@ def get_git_files(repo_root: Path) -> list[Path]:
 
 def get_fallback_files(repo_root: Path) -> list[Path]:
     """Simple directory traversal excluding common ignored directories."""
-    ignored_dirs = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", "data", "dist", "build"}
+    ignored_dirs = {
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        "data",
+        "dist",
+        "build",
+    }
     files = []
     for root, dirs, filenames in os.walk(repo_root):
-        dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.endswith(".egg-info")]
+        dirs[:] = [
+            d for d in dirs if d not in ignored_dirs and not d.endswith(".egg-info")
+        ]
         for f in filenames:
             p = Path(root) / f
             files.append(p)
@@ -118,13 +144,18 @@ def dump_repository(output_path: Path, repo_root: Path = Path(".")) -> None:
                 out.write(f"[ERROR READING FILE: {e}]\n")
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"Dump written to {output_path} ({size_mb:.2f} MB, {len(files)} files included)")
+    print(
+        f"Dump written to {output_path} ({size_mb:.2f} MB, {len(files)} files included)"
+    )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Dump entire repository into a single text file.")
+    parser = argparse.ArgumentParser(
+        description="Dump entire repository into a single text file."
+    )
     parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=Path,
         default=Path("repo_dump.txt"),
         help="Target output text file (default: repo_dump.txt)",

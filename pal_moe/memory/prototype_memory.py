@@ -20,14 +20,16 @@ from typing import List, Optional, Tuple, Dict, Any
 
 @dataclass
 class Prototype:
-    v_p: torch.Tensor                   # [feature_dim]
-    r_p: torch.Tensor                   # [num_experts_at_creation]
-    o_p: torch.Tensor                   # [num_experts_at_creation, num_classes] (expert output anchors)
+    v_p: torch.Tensor  # [feature_dim]
+    r_p: torch.Tensor  # [num_experts_at_creation]
+    o_p: torch.Tensor  # [num_experts_at_creation, num_classes] (expert output anchors)
     task_id: int
     count: int = 1
-    x_p: Optional[torch.Tensor] = None   # [num_exemplars, feature_dim]
-    y_p: Optional[torch.Tensor] = None   # [num_exemplars] (labels for Acc_proto)
-    raw_x: Optional[torch.Tensor] = None # [num_exemplars, input_dim] (raw inputs for refresh)
+    x_p: Optional[torch.Tensor] = None  # [num_exemplars, feature_dim]
+    y_p: Optional[torch.Tensor] = None  # [num_exemplars] (labels for Acc_proto)
+    raw_x: Optional[torch.Tensor] = (
+        None  # [num_exemplars, input_dim] (raw inputs for refresh)
+    )
 
 
 class PrototypeMemory:
@@ -36,6 +38,7 @@ class PrototypeMemory:
     Mitigates representation drift via EMA updates, bounded distance clustering,
     and direct capacity-control synchronization upon expert pruning/merging.
     """
+
     def __init__(
         self,
         feature_dim: int = 128,
@@ -85,9 +88,13 @@ class PrototypeMemory:
                 o_list.append(p.o_p[expert_id])
         if not v_list:
             return None
-        return torch.stack(v_list, dim=0).to(device), torch.stack(o_list, dim=0).to(device)
+        return torch.stack(v_list, dim=0).to(device), torch.stack(o_list, dim=0).to(
+            device
+        )
 
-    def get_exemplar_batch(self, device: torch.device) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    def get_exemplar_batch(
+        self, device: torch.device
+    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
         """
         Gathers all stored exemplar feature vectors and labels across all prototypes.
         Returns:
@@ -96,7 +103,12 @@ class PrototypeMemory:
         feats = []
         labels = []
         for p in self.prototypes:
-            if p.x_p is not None and p.y_p is not None and p.x_p.size(0) > 0 and p.y_p.size(0) > 0:
+            if (
+                p.x_p is not None
+                and p.y_p is not None
+                and p.x_p.size(0) > 0
+                and p.y_p.size(0) > 0
+            ):
                 min_len = min(p.x_p.size(0), p.y_p.size(0))
                 feats.append(p.x_p[:min_len])
                 labels.append(p.y_p[:min_len])
@@ -168,7 +180,9 @@ class PrototypeMemory:
         if min_dist.item() <= self.distance_threshold:
             # Update existing prototype with EMA
             proto = self.prototypes[closest_idx.item()]
-            proto.v_p = self.ema_alpha * proto.v_p + (1.0 - self.ema_alpha) * feat_detached
+            proto.v_p = (
+                self.ema_alpha * proto.v_p + (1.0 - self.ema_alpha) * feat_detached
+            )
             proto.count += 1
             # Maintain exemplars up to buffer size
             if proto.x_p is not None and proto.x_p.size(0) < self.exemplars_per_proto:
@@ -234,10 +248,12 @@ class PrototypeMemory:
         if not self.prototypes:
             return
         from collections import Counter
+
         task_counts = Counter([p.task_id for p in self.prototypes])
         overrepresented_task = max(task_counts, key=task_counts.get)
         candidates = [
-            (i, p.count) for i, p in enumerate(self.prototypes)
+            (i, p.count)
+            for i, p in enumerate(self.prototypes)
             if p.task_id == overrepresented_task
         ]
         min_idx = min(candidates, key=lambda x: x[1])[0]
@@ -311,23 +327,25 @@ class PrototypeMemory:
         # Collect all vp and xp features to anchor the router heavily
         vp_list = []
         rp_targets_list = []
-        
+
         for p_idx, proto in enumerate(self.prototypes):
             # Base prototype center
             vp_list.append(proto.v_p)
             rp_targets_list.append(proto.r_p)
-            
+
             # Exemplar features (x_p) around the prototype
             if proto.x_p is not None:
                 for i in range(proto.x_p.size(0)):
                     vp_list.append(proto.x_p[i])
                     rp_targets_list.append(proto.r_p)
-                    
+
         vp_mat = torch.stack(vp_list, dim=0).to(device)  # [P_total, D]
         P_total = vp_mat.size(0)
 
         # 1. Vectorized router stability loss
-        g_new_dist = model.router.get_full_distribution(vp_mat)  # [P_total, curr_num_experts]
+        g_new_dist = model.router.get_full_distribution(
+            vp_mat
+        )  # [P_total, curr_num_experts]
 
         rp_targets = torch.zeros(P_total, curr_num_experts, device=device)
         for p_idx, rp_old in enumerate(rp_targets_list):
@@ -367,11 +385,15 @@ class PrototypeMemory:
             if vp_for_expert:
                 sub_vp = torch.stack(vp_for_expert, dim=0).to(device)  # [M, D]
                 e_curr_out = model.experts[i](sub_vp, track_usage=False)  # [M, C]
-                target_out = torch.stack(targets, dim=0).to(device)       # [M, C]
+                target_out = torch.stack(targets, dim=0).to(device)  # [M, C]
                 w_tensor = torch.tensor(weights, device=device).unsqueeze(-1)  # [M, 1]
                 num_classes = target_out.size(-1)
-                mse_unreduced = F.mse_loss(e_curr_out, target_out, reduction="none")  # [M, C]
-                weighted_loss = (mse_unreduced * w_tensor).sum() / (len(self.prototypes) * num_classes)
+                mse_unreduced = F.mse_loss(
+                    e_curr_out, target_out, reduction="none"
+                )  # [M, C]
+                weighted_loss = (mse_unreduced * w_tensor).sum() / (
+                    len(self.prototypes) * num_classes
+                )
                 expert_losses.append(weighted_loss)
 
         if expert_losses:
@@ -380,7 +402,9 @@ class PrototypeMemory:
             l_expert_stab = torch.tensor(0.0, device=device)
 
         if return_enc:
-            l_enc_stab = self.compute_encoder_stability_loss(model.encoder, lambda_enc=lambda_enc)
+            l_enc_stab = self.compute_encoder_stability_loss(
+                model.encoder, lambda_enc=lambda_enc
+            )
             return l_router_stab, l_expert_stab, l_enc_stab
 
         return l_router_stab, l_expert_stab
@@ -404,7 +428,9 @@ class PrototypeMemory:
             if proto.raw_x is not None and proto.raw_x.size(0) > 0:
                 raw_dev = proto.raw_x.to(device)
                 curr_feats = encoder(raw_dev)  # [M, D]
-                target_anchor = proto.v_p.to(device).unsqueeze(0).expand_as(curr_feats)  # [M, D]
+                target_anchor = (
+                    proto.v_p.to(device).unsqueeze(0).expand_as(curr_feats)
+                )  # [M, D]
                 losses.append(F.mse_loss(curr_feats, target_anchor))
 
         if not losses:
@@ -422,7 +448,12 @@ class PrototypeMemory:
         raws = []
         labels = []
         for p in self.prototypes:
-            if p.raw_x is not None and p.y_p is not None and p.raw_x.size(0) > 0 and p.y_p.size(0) > 0:
+            if (
+                p.raw_x is not None
+                and p.y_p is not None
+                and p.raw_x.size(0) > 0
+                and p.y_p.size(0) > 0
+            ):
                 min_len = min(p.raw_x.size(0), p.y_p.size(0))
                 raws.append(p.raw_x[:min_len])
                 labels.append(p.y_p[:min_len])
@@ -467,4 +498,3 @@ class PrototypeMemory:
             "total_elements": total_floats,
             "size_kb": (total_floats * 4) / 1024,
         }
-

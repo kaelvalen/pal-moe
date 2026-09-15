@@ -35,13 +35,19 @@ def get_split_mnist_tasks(
     Task 4: digits 8, 9
     """
     torch.manual_seed(seed)
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,)),
-    ])
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,)),
+        ]
+    )
 
-    train_dataset = datasets.MNIST(data_dir, train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST(data_dir, train=False, download=True, transform=transform)
+    train_dataset = datasets.MNIST(
+        data_dir, train=True, download=True, transform=transform
+    )
+    test_dataset = datasets.MNIST(
+        data_dir, train=False, download=True, transform=transform
+    )
 
     task_classes = [(0, 1), (2, 3), (4, 5), (6, 7), (8, 9)]
     tasks = []
@@ -69,7 +75,9 @@ def get_split_mnist_tasks(
         val_sub = Subset(train_dataset, val_idx)
         test_sub = Subset(test_dataset, test_indices)
 
-        train_loader = DataLoader(train_sub, batch_size=batch_size, shuffle=True, drop_last=True)
+        train_loader = DataLoader(
+            train_sub, batch_size=batch_size, shuffle=True, drop_last=True
+        )
         val_loader = DataLoader(val_sub, batch_size=batch_size, shuffle=False)
         test_loader = DataLoader(test_sub, batch_size=batch_size, shuffle=False)
 

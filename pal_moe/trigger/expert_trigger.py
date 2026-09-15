@@ -29,6 +29,7 @@ class QuantitativeTrigger:
     """
     Computes S(x) over a batch or window to decide when to expand the expert pool.
     """
+
     def __init__(
         self,
         alpha: float = 1.0,
@@ -77,7 +78,12 @@ class QuantitativeTrigger:
                     loss_i = F.cross_entropy(exp_logits, y).item()
                 else:
                     # Unsupervised: entropy of expert's prediction (lower entropy = higher confidence)
-                    loss_i = -(exp_probs * torch.log(exp_probs + 1e-9)).sum(dim=-1).mean().item()
+                    loss_i = (
+                        -(exp_probs * torch.log(exp_probs + 1e-9))
+                        .sum(dim=-1)
+                        .mean()
+                        .item()
+                    )
                 expert_losses.append(loss_i)
 
             # Best expert has minimum loss

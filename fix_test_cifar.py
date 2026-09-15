@@ -1,6 +1,6 @@
 import re
 
-with open('tests/test_pal_moe.py', 'r') as f:
+with open("tests/test_pal_moe.py", "r") as f:
     content = f.read()
 
 old_test = """def test_split_cifar10_tasks():
@@ -34,5 +34,5 @@ new_test = """def test_split_cifar10_tasks():
 
 content = content.replace(old_test, new_test)
 
-with open('tests/test_pal_moe.py', 'w') as f:
+with open("tests/test_pal_moe.py", "w") as f:
     f.write(content)

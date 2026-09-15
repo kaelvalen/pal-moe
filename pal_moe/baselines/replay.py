@@ -14,6 +14,7 @@ class ReplayTrainer:
     """
     Standard rehearsal-based continual learning baseline.
     """
+
     def __init__(
         self,
         model: nn.Module,
@@ -30,7 +31,9 @@ class ReplayTrainer:
         self.buffer_x: List[torch.Tensor] = []
         self.buffer_y: List[torch.Tensor] = []
 
-    def update_buffer(self, train_loader: Any, per_task_budget: Optional[int] = None) -> None:
+    def update_buffer(
+        self, train_loader: Any, per_task_budget: Optional[int] = None
+    ) -> None:
         """Stores random exemplars from current task."""
         collected_x = []
         collected_y = []
@@ -42,7 +45,11 @@ class ReplayTrainer:
 
         indices = list(range(cat_x.size(0)))
         random.shuffle(indices)
-        budget = per_task_budget if per_task_budget is not None else max(1, self.buffer_size // 5)
+        budget = (
+            per_task_budget
+            if per_task_budget is not None
+            else max(1, self.buffer_size // 5)
+        )
         selected = indices[:budget]
 
         for idx in selected:
@@ -51,18 +58,25 @@ class ReplayTrainer:
 
         # Enforce max buffer size
         if len(self.buffer_x) > self.buffer_size:
-            self.buffer_x = self.buffer_x[-self.buffer_size:]
-            self.buffer_y = self.buffer_y[-self.buffer_size:]
+            self.buffer_x = self.buffer_x[-self.buffer_size :]
+            self.buffer_y = self.buffer_y[-self.buffer_size :]
 
-    def get_replay_batch(self, batch_size: int = 32) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    def get_replay_batch(
+        self, batch_size: int = 32
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         if not self.buffer_x:
             return None, None
-        indices = [random.randint(0, len(self.buffer_x) - 1) for _ in range(min(batch_size, len(self.buffer_x)))]
+        indices = [
+            random.randint(0, len(self.buffer_x) - 1)
+            for _ in range(min(batch_size, len(self.buffer_x)))
+        ]
         bx = torch.stack([self.buffer_x[i] for i in indices]).to(self.device)
         by = torch.stack([self.buffer_y[i] for i in indices]).to(self.device)
         return bx, by
 
-    def train_task(self, task_id: int, train_loader: Any, epochs: int = 5) -> Dict[str, Any]:
+    def train_task(
+        self, task_id: int, train_loader: Any, epochs: int = 5
+    ) -> Dict[str, Any]:
         self.model.train()
         losses = []
         for epoch in range(epochs):

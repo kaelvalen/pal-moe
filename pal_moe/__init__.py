@@ -3,7 +3,6 @@ PAL-MoE: Prototype-Anchored Lifelong Mixture of Experts in PyTorch.
 Continual learning framework for mitigating catastrophic forgetting in dynamic MoE.
 """
 
-
 from .models.moe import DynamicMoE, PALMoE
 from .models.encoder import SharedEncoder, EMAEncoder
 from .models.router import DynamicRouter
