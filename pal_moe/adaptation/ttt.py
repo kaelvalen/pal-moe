@@ -37,6 +37,8 @@ class ContinualTrainer:
         lr: float = 1e-3,
         encoder_lr: Optional[float] = None,
         max_experts: int = 8,
+        joint_unfreeze_all: bool = True,
+        joint_keep_routing_lock: bool = False,
         device: torch.device = torch.device("cpu"),
     ):
         self.model = model
@@ -51,6 +53,15 @@ class ContinualTrainer:
         self.lr = lr
         self.encoder_lr = encoder_lr
         self.max_experts = max_experts
+        # If True, end-of-task joint calibration temporarily unfreezes ALL experts
+        # and the full router (historical behavior). If False, only the newest expert
+        # and router row learn during calibration (this is what caused catastrophic
+        # routing collapse / recency bias on Split-MNIST).
+        self.joint_unfreeze_all = joint_unfreeze_all
+        # If joint_unfreeze_all is True, keep the historical ROUTING rows locked so
+        # old-task inputs keep flowing to their original experts while all experts
+        # still calibrate on every stored exemplar (negative boundaries).
+        self.joint_keep_routing_lock = joint_keep_routing_lock
         self.device = device
 
         self.optimizer = self._build_optimizer()
@@ -175,8 +186,11 @@ class ContinualTrainer:
                 for x_init, _ in train_loader:
                     x_init = x_init.to(self.device)
                     h_0 = self.model.get_routing_features(x_init).mean(dim=0)
-                    self.model.router.gate.weight.data[0] = F.normalize(h_0, dim=0) * 3.0
-                    self.model.router.gate.bias.data[0] = 0.0
+                    if hasattr(self.model.router, 'gate'):
+                        self.model.router.gate.weight.data[0] = F.normalize(h_0, dim=0) * 3.0
+                        self.model.router.gate.bias.data[0] = 0.0
+                    elif hasattr(self.model.router, 'centroids'):
+                        self.model.router.centroids[0] = F.normalize(h_0, dim=0)
                     break
 
 
@@ -216,12 +230,15 @@ class ContinualTrainer:
                         rep_logits = self.model(latent_h=x_latent_rep)
                         l_replay = F.cross_entropy(rep_logits, y_rep) * self.lambda_replay
                         loss = loss + l_replay
-                loss = loss + l_replay
 
                 loss.backward()
                 
 
                 self.optimizer.step()
+
+                if hasattr(self.model.router, "update_active_centroid"):
+                    h_detached = self.model.get_routing_features(x).detach()
+                    self.model.router.update_active_centroid(h_detached)
 
 
                 # Update EMA encoder if enabled
@@ -262,16 +279,32 @@ class ContinualTrainer:
 
         
         # Step 8: End-of-task Joint Latent Fine-tuning
-        # DO NOT unfreeze old experts! Only the newest expert and router learn negative boundaries.
-
-
-        # Expose experts to negative boundaries from all stored latent exemplars (OOD penalty)
+        # Joint calibration exposes EVERY stored latent exemplar to the model so
+        # experts learn the "negative boundaries" of other tasks (OOD penalty).
+        #
+        # Regression fix: with joint_unfreeze_all=False only the newest expert and
+        # the newest router row were calibrated. Because the router's old rows were
+        # gradient-locked while the new row was trained on ALL tasks' exemplars, the
+        # new row developed a recency bias: it captured old-task inputs, and the
+        # newest expert (trained only on a small exemplar set) could not classify
+        # them -> task-0 accuracy collapsed to ~0% (cf. acc matrix in
+        # benchmark_results.json). Joint calibration therefore temporarily unfreezes
+        # everything, then re-locks history so the protection guarantee still holds
+        # during the NEXT task's training phase.
         if task_id > 0 and not self.prototype_memory.is_empty():
             self.model.train()
             exemplar_batch = self.prototype_memory.get_exemplar_batch(self.device)
             if exemplar_batch is not None:
                 x_latent_all, y_all = exemplar_batch
                 if x_latent_all.size(0) > 0:
+                    if self.joint_unfreeze_all:
+                        if self.joint_keep_routing_lock:
+                            # All experts calibrate, but historical routing stays locked:
+                            # old-task data keeps flowing to its original expert.
+                            self.model.unfreeze_experts_keep_routing_lock()
+                        else:
+                            self.model.unfreeze_all_experts()
+                        self.optimizer = self._build_optimizer()
                     for _ in range(5):  # 5 epochs of joint calibration
                         self.optimizer.zero_grad()
                         # Full joint forward pass bypassing encoder
@@ -279,6 +312,15 @@ class ContinualTrainer:
                         loss_joint = F.cross_entropy(logits_joint, y_all)
                         loss_joint.backward()
                         self.optimizer.step()
+
+                    if hasattr(self.model.router, "update_active_centroid"):
+                        h_detached = self.model.get_routing_features(x_latent_all).detach()
+                        self.model.router.update_active_centroid(h_detached)
+
+                    if self.joint_unfreeze_all:
+                        # Re-lock history: only the newest expert and router row stay trainable
+                        self.model.freeze_historical_experts(leave_unfrozen=1)
+                        self.optimizer = self._build_optimizer()
 
         return history
 

@@ -217,7 +217,7 @@ def run_all_ablations(
             else:
                 from pal_moe.data.split_mnist import get_split_mnist_tasks
                 tasks = get_split_mnist_tasks(data_dir="./data", batch_size=128, val_split=0.1, seed=s)
-                mnist_train = datasets.MNIST("./data", train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))]))
+                mnist_train = datasets.MNIST("./data", train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]))
                 unlabeled_loader = torch.utils.data.DataLoader(mnist_train, batch_size=256, shuffle=True)
                 base_encoder = SharedEncoder(input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp").to(device)
             
