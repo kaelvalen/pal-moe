@@ -31,9 +31,16 @@ def get_split_cifar10_tasks(
     val_split: float = 0.1,
     seed: int = 42,
     max_train_samples_per_task: Optional[int] = None,
+    num_workers: int = 0,
+    pin_memory: bool = False,
 ) -> List[SplitCIFAR10Task]:
     """
     Creates 5 sequential tasks for Split-CIFAR-10 benchmark.
+
+    ``num_workers`` / ``pin_memory`` only affect loader throughput: with the
+    deterministic (non-random) CIFAR transforms here, raising ``num_workers``
+    yields an identical batch order and RNG stream, it just overlaps the
+    CPU-side decode/normalize with GPU compute.
     """
     torch.manual_seed(seed)
     transform_train = transforms.Compose(
@@ -88,10 +95,27 @@ def get_split_cifar10_tasks(
         test_sub = Subset(test_dataset, test_indices)
 
         train_loader = DataLoader(
-            train_sub, batch_size=batch_size, shuffle=True, drop_last=True
+            train_sub,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
-        val_loader = DataLoader(val_sub, batch_size=batch_size, shuffle=False)
-        test_loader = DataLoader(test_sub, batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(
+            val_sub,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+        test_loader = DataLoader(
+            test_sub,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
 
         tasks.append(
             SplitCIFAR10Task(

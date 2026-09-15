@@ -34,9 +34,15 @@ def get_split_cifar100_tasks(
     val_split: float = 0.1,
     seed: int = 42,
     max_train_samples_per_task: Optional[int] = None,
+    num_workers: int = 0,
+    pin_memory: bool = False,
 ) -> List[SplitCIFAR100Task]:
     """
     Creates 20 sequential tasks for the Split-CIFAR-100 benchmark (5 classes each).
+
+    ``num_workers`` / ``pin_memory`` only affect loader throughput; the CIFAR
+    transforms are deterministic, so the batch order and RNG stream are
+    unchanged when they are raised.
     """
     torch.manual_seed(seed)
     transform_train = transforms.Compose(
@@ -92,12 +98,22 @@ def get_split_cifar100_tasks(
             batch_size=batch_size,
             shuffle=True,
             drop_last=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
         val_loader = DataLoader(
-            Subset(train_dataset, val_idx), batch_size=batch_size, shuffle=False
+            Subset(train_dataset, val_idx),
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
         test_loader = DataLoader(
-            Subset(test_dataset, test_indices), batch_size=batch_size, shuffle=False
+            Subset(test_dataset, test_indices),
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
 
         tasks.append(

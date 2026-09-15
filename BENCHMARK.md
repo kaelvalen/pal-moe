@@ -73,6 +73,10 @@ python experiments/run_benchmark.py --config configs/mnist_default.json --device
 
 # Controlled ablation (one pretrained encoder shared per seed across configs)
 python experiments/run_ablation.py --seeds 42 1 2 --device cuda
+
+# CIFAR runs: overlap CPU decode/transform with GPU compute (results-neutral)
+python experiments/run_benchmark.py --dataset cifar10 --device cuda --num_workers 8
+python experiments/run_benchmark_multi.py --dataset cifar10 --device cuda --num_workers 8
 ```
 
 Results: `results/benchmark_results_seed{s}.json` (single),
@@ -117,6 +121,15 @@ All figures below are Split-MNIST, seed 42, 3 epochs/task, current code
    88.14% / 4.95% forgetting (seed 42), above plain ER (83.07) and the PAL-MoE
    hybrid (82.35). The pure variant (76.60, zero raw replay) beats AGEM, ER-ACE,
    iCaRL, ER(P=60), EWC, Naive and Standard-MoE from a ~284 KB latent store.
+
+8. **The CIFAR data pipeline, not the GPU, caps throughput** with the default
+   single-process loaders. Measured on this machine (RTX 5060, SM ≈ 40-60%
+   during a run): a 2-class Split-CIFAR-10 task loader takes ~8.5 ms/batch at
+   `num_workers=0`, dropping to ~4.6 ms (4) / ~4.2 ms (8); the 50k-image SimCLR
+   loader goes ~16.4 ms → ~7.3 / ~5.3 ms. The CIFAR transforms are
+   deterministic and a clean A/B confirms identical batch order and RNG
+   consumption, so `--num_workers 8` (forwarded by `run_benchmark_multi.py`)
+   is a pure speed knob that does not change results.
 
 ## Ablations
 

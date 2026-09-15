@@ -82,7 +82,12 @@ def run_benchmark(
         from pal_moe.data.split_cifar import get_split_cifar10_tasks
 
         tasks = get_split_cifar10_tasks(
-            data_dir="./data", batch_size=128, val_split=0.1, seed=args.seed
+            data_dir="./data",
+            batch_size=128,
+            val_split=0.1,
+            seed=args.seed,
+            num_workers=args.num_workers,
+            pin_memory=args.num_workers > 0 and device.type == "cuda",
         )
         num_tasks = len(tasks)
         input_dim = 3072
@@ -100,7 +105,11 @@ def run_benchmark(
             ),
         )
         unlabeled_loader = torch.utils.data.DataLoader(
-            mnist_train, batch_size=256, shuffle=True
+            mnist_train,
+            batch_size=256,
+            shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=args.num_workers > 0 and device.type == "cuda",
         )
         base_encoder = SharedEncoder(
             input_dim=input_dim, hidden_dims=None, output_dim=128, arch="conv"
@@ -113,7 +122,12 @@ def run_benchmark(
         from pal_moe.data.split_cifar100 import get_split_cifar100_tasks
 
         tasks = get_split_cifar100_tasks(
-            data_dir="./data", batch_size=128, val_split=0.1, seed=args.seed
+            data_dir="./data",
+            batch_size=128,
+            val_split=0.1,
+            seed=args.seed,
+            num_workers=args.num_workers,
+            pin_memory=args.num_workers > 0 and device.type == "cuda",
         )
         num_tasks = len(tasks)
         input_dim = 3072
@@ -131,7 +145,11 @@ def run_benchmark(
             ),
         )
         unlabeled_loader = torch.utils.data.DataLoader(
-            cifar100_train, batch_size=256, shuffle=True
+            cifar100_train,
+            batch_size=256,
+            shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=args.num_workers > 0 and device.type == "cuda",
         )
         base_encoder = SharedEncoder(
             input_dim=input_dim, hidden_dims=None, output_dim=128, arch="conv"
@@ -826,6 +844,15 @@ if __name__ == "__main__":
         "--anchor",
         action="store_true",
         help="Enable null-space routing anchoring (experimental; measured harmful on Split-MNIST)",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=0,
+        help=(
+            "DataLoader workers for CIFAR loaders (0 = single-process). CIFAR "
+            "transforms are deterministic: speed knob only, results-neutral."
+        ),
     )
     parser.add_argument(
         "--router_type", type=str, default="dynamic", choices=["dynamic", "distance"]
