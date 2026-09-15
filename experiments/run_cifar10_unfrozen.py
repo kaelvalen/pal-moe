@@ -9,6 +9,7 @@ Systematically tests the hypothesis:
 import os
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import copy
@@ -62,7 +63,9 @@ def run_single_cifar_config(
     else:
         encoder.freeze()
 
-    router = DynamicRouter(input_dim=128, num_experts=1, top_k=1, temperature=1.0).to(device)
+    router = DynamicRouter(input_dim=128, num_experts=1, top_k=1, temperature=1.0).to(
+        device
+    )
     initial_experts = [
         MLPExpert(input_dim=128, hidden_dim=64, num_classes=10, expert_id=0).to(device)
     ]
@@ -126,9 +129,13 @@ def run_single_cifar_config(
     avg_acc = evaluator.compute_average_accuracy()
     forgetting = evaluator.compute_forgetting()
     bwt = evaluator.compute_backward_transfer()
-    router_kl = ContinualEvaluator.compute_router_stability(moe_model, prototype_mem, device)
+    router_kl = ContinualEvaluator.compute_router_stability(
+        moe_model, prototype_mem, device
+    )
 
-    print(f"  Result -> Acc: {avg_acc:.2%}, Forgetting: {forgetting:.2%}, Router KL: {router_kl:.4f}, Experts: {moe_model.num_experts}")
+    print(
+        f"  Result -> Acc: {avg_acc:.2%}, Forgetting: {forgetting:.2%}, Router KL: {router_kl:.4f}, Experts: {moe_model.num_experts}"
+    )
 
     return {
         "name": config_name,
@@ -168,13 +175,20 @@ def run_cifar_benchmark(
     print("Pretraining shared ConvNet base encoder contrastively on CIFAR-10...")
     set_seed(seed)
     from torchvision import datasets, transforms
-    cifar_train = datasets.CIFAR10("./data", train=True, download=False, transform=transforms.ToTensor())
+
+    cifar_train = datasets.CIFAR10(
+        "./data", train=True, download=False, transform=transforms.ToTensor()
+    )
     # Subsample for fast pretraining on CPU
     sub_indices = torch.randperm(len(cifar_train))[:10000]
     sub_cifar = torch.utils.data.Subset(cifar_train, sub_indices)
-    unlabeled_loader = torch.utils.data.DataLoader(sub_cifar, batch_size=128, shuffle=True)
+    unlabeled_loader = torch.utils.data.DataLoader(
+        sub_cifar, batch_size=128, shuffle=True
+    )
     base_encoder = SharedEncoder(input_dim=3072, output_dim=128, arch="conv").to(device)
-    base_encoder.pretrain_contrastive(unlabeled_loader, device=device, epochs=2, lr=2e-3)
+    base_encoder.pretrain_contrastive(
+        unlabeled_loader, device=device, epochs=2, lr=2e-3
+    )
     base_encoder.freeze()
     print("  Base ConvNet encoder successfully pretrained.")
 
@@ -198,16 +212,25 @@ def run_cifar_benchmark(
             **kwargs,
         )
         results[name] = res
-        table_data.append([
-            name,
-            f"{res['acc']:.2%}",
-            f"{res['forgetting']:.2%}",
-            f"{res['bwt']:.2%}",
-            f"{res['router_stability_kl']:.4f}",
-            str(res['final_experts']),
-        ])
+        table_data.append(
+            [
+                name,
+                f"{res['acc']:.2%}",
+                f"{res['forgetting']:.2%}",
+                f"{res['bwt']:.2%}",
+                f"{res['router_stability_kl']:.4f}",
+                str(res["final_experts"]),
+            ]
+        )
 
-    headers = ["CIFAR-10 Configuration", "Avg Acc (↑)", "Forgetting (↓)", "BWT (↑)", "Router KL (↓)", "Experts"]
+    headers = [
+        "CIFAR-10 Configuration",
+        "Avg Acc (↑)",
+        "Forgetting (↓)",
+        "BWT (↑)",
+        "Router KL (↓)",
+        "Experts",
+    ]
     print("\n" + "=" * 80)
     print("CONTINUAL LEARNING ON SPLIT-CIFAR-10 (CONV ENCODER)")
     print("=" * 80)

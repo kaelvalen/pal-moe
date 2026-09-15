@@ -8,6 +8,37 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 
+def _project_to_null_space(
+    w: torch.Tensor, basis: Optional[torch.Tensor], scale: float = 1.0
+) -> torch.Tensor:
+    """
+    Null-space anchoring (Gram-Schmidt): projects direction `w` onto the null space
+    of the span of `basis` rows (e.g., historical prototype centroids), so a newly
+    added expert's routing region is orthogonal to (cannot overlap with) the
+    historical experts' regions at initialization.
+    Returns a unit direction scaled by `scale`.
+    """
+    if basis is None or basis.size(0) == 0:
+        return w
+    dirs = F.normalize(basis, p=2, dim=1)  # [B, D]
+    # Bases rows may be mutually correlated: orthonormalize the span via QR
+    # (columns of Q span exactly the same subspace as the basis rows).
+    q, _ = torch.linalg.qr(dirs.t())  # [D, B] -> Q keeps B orthonormal cols
+    q = q[:, : basis.size(0)]  # [D, B]
+    coeffs = w.view(-1) @ q  # [B]
+    w_orth = w.view(-1) - q @ coeffs  # [D]
+    if w_orth.norm(p=2) > 1e-8:
+        return F.normalize(w_orth, p=2, dim=0) * scale
+    # Degenerate: w is fully inside the historical span. Re-sample a random
+    # direction from the null space instead.
+    rand = torch.randn_like(w.view(-1))
+    coeffs_r = rand @ q
+    w_orth = rand - q @ coeffs_r
+    if w_orth.norm(p=2) > 1e-8:
+        return F.normalize(w_orth, p=2, dim=0) * scale
+    return w
+
+
 class DynamicRouter(nn.Module):
     """
     Dynamic Router g(x) mapping representation h in R^d to expert selection weights.
@@ -18,6 +49,7 @@ class DynamicRouter(nn.Module):
     - Merging and pruning expert weights
     - Routing stability evaluation
     """
+
     def __init__(
         self,
         input_dim: int = 128,
@@ -36,7 +68,7 @@ class DynamicRouter(nn.Module):
         # Linear projection from representation to expert logits
         self.gate = nn.Linear(input_dim, num_experts, bias=True)
         self.locked_experts = 0
-        
+
         # Register hooks to mask gradients for locked historical experts
         self.gate.weight.register_hook(self._weight_backward_hook)
         self.gate.bias.register_hook(self._bias_backward_hook)
@@ -44,19 +76,18 @@ class DynamicRouter(nn.Module):
     def _weight_backward_hook(self, grad):
         if self.locked_experts > 0 and grad is not None:
             grad = grad.clone()
-            grad[:self.locked_experts] = 0.0
+            grad[: self.locked_experts] = 0.0
         return grad
-        
+
     def _bias_backward_hook(self, grad):
         if self.locked_experts > 0 and grad is not None:
             grad = grad.clone()
-            grad[:self.locked_experts] = 0.0
+            grad[: self.locked_experts] = 0.0
         return grad
-        
+
     def lock_historical_routing(self, num_locked: int):
         """Locks the routing probabilities for the first `num_locked` experts by zeroing their gradients."""
         self.locked_experts = min(num_locked, self.num_experts)
-
 
     def forward(
         self, h: torch.Tensor, top_k: Optional[int] = None
@@ -115,11 +146,15 @@ class DynamicRouter(nn.Module):
         self,
         parent_id: Optional[int] = None,
         prototype_feat: Optional[torch.Tensor] = None,
+        null_space_basis: Optional[torch.Tensor] = None,
     ) -> int:
         """
         Expands the router from N to N+1 experts.
         If parent_id is given, the new weight row is initialized smoothly from parent.
         If prototype_feat is given, it can also bias towards that feature direction.
+        If null_space_basis is given (e.g. historical prototype centroids), the new
+        row is additionally projected onto its null space so its routing region is
+        disjoint from historical experts (null-space anchoring).
         Returns:
             new_expert_id (int)
         """
@@ -147,8 +182,14 @@ class DynamicRouter(nn.Module):
             new_gate.bias.data[old_num] = old_bias[parent_id]
         else:
             # Kaiming normal
-            nn.init.kaiming_uniform_(new_gate.weight.data[old_num:old_num+1])
+            nn.init.kaiming_uniform_(new_gate.weight.data[old_num : old_num + 1])
             new_gate.bias.data[old_num] = 0.0
+
+        # Null-space anchoring: keep the new row orthogonal to historical regions
+        if null_space_basis is not None and null_space_basis.size(0) > 0:
+            new_gate.weight.data[old_num] = _project_to_null_space(
+                new_gate.weight.data[old_num], null_space_basis, scale=3.0
+            )
 
         self.gate = new_gate
         self.num_experts = new_num
@@ -165,7 +206,9 @@ class DynamicRouter(nn.Module):
         new_num = old_num - 1
 
         keep_indices = [i for i in range(old_num) if i != prune_idx]
-        new_gate = nn.Linear(self.input_dim, new_num, bias=True).to(self.gate.weight.device)
+        new_gate = nn.Linear(self.input_dim, new_num, bias=True).to(
+            self.gate.weight.device
+        )
 
         new_gate.weight.data = self.gate.weight.data[keep_indices]
         new_gate.bias.data = self.gate.bias.data[keep_indices]
@@ -178,12 +221,21 @@ class DynamicRouter(nn.Module):
         """
         Merges idx2 into idx1 by averaging their routing weights, then prunes idx2.
         """
-        assert 0 <= idx1 < self.num_experts and 0 <= idx2 < self.num_experts and idx1 != idx2
+        assert (
+            0 <= idx1 < self.num_experts
+            and 0 <= idx2 < self.num_experts
+            and idx1 != idx2
+        )
         with torch.no_grad():
-            self.gate.weight.data[idx1] = 0.5 * (self.gate.weight.data[idx1] + self.gate.weight.data[idx2])
-            self.gate.bias.data[idx1] = 0.5 * (self.gate.bias.data[idx1] + self.gate.bias.data[idx2])
+            self.gate.weight.data[idx1] = 0.5 * (
+                self.gate.weight.data[idx1] + self.gate.weight.data[idx2]
+            )
+            self.gate.bias.data[idx1] = 0.5 * (
+                self.gate.bias.data[idx1] + self.gate.bias.data[idx2]
+            )
         self.prune_expert(idx2)
         return idx1
+
 
 class DistanceRouter(nn.Module):
     """
@@ -192,6 +244,7 @@ class DistanceRouter(nn.Module):
     Because there are no learnable parameters in the routing mechanism,
     this strictly prevents catastrophic routing drift and gradient imbalance.
     """
+
     def __init__(
         self,
         input_dim: int = 128,
@@ -204,7 +257,7 @@ class DistanceRouter(nn.Module):
         self.num_experts = num_experts
         self.top_k = top_k
         self.temperature = temperature
-        
+
         # Expert centroids: [num_experts, input_dim]
         # We use register_buffer so they are saved in state_dict but NOT optimized by grad
         self.register_buffer("centroids", torch.randn(num_experts, input_dim))
@@ -213,7 +266,7 @@ class DistanceRouter(nn.Module):
 
     def lock_historical_routing(self, num_locked: int):
         self.locked_experts = min(num_locked, self.num_experts)
-        
+
     def forward(
         self, h: torch.Tensor, top_k: Optional[int] = None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -222,7 +275,7 @@ class DistanceRouter(nn.Module):
 
         h_norm = F.normalize(h, p=2, dim=1)
         c_norm = F.normalize(self.centroids, p=2, dim=1)
-        
+
         # Cosine similarity logits
         sim = torch.matmul(h_norm, c_norm.T)
         logits = sim / max(self.temperature, 1e-5)
@@ -244,30 +297,43 @@ class DistanceRouter(nn.Module):
         sim = torch.matmul(h_norm, c_norm.T)
         logits = sim / max(self.temperature, 1e-5)
         return F.softmax(logits, dim=-1)
-        
+
     @staticmethod
     def compute_entropy(probs: torch.Tensor) -> torch.Tensor:
         eps = 1e-9
         return -torch.sum(probs * torch.log(probs + eps), dim=-1)
-        
+
     def add_expert(
         self,
         parent_id: Optional[int] = None,
         prototype_feat: Optional[torch.Tensor] = None,
+        null_space_basis: Optional[torch.Tensor] = None,
     ) -> int:
         old_num = self.num_experts
         new_num = old_num + 1
 
-        new_centroids = torch.zeros(new_num, self.input_dim, device=self.centroids.device)
+        new_centroids = torch.zeros(
+            new_num, self.input_dim, device=self.centroids.device
+        )
         new_centroids[:old_num] = self.centroids
 
         if prototype_feat is not None:
             new_centroids[old_num] = F.normalize(prototype_feat.view(-1), p=2, dim=0)
         elif parent_id is not None and 0 <= parent_id < old_num:
             noise = torch.randn_like(self.centroids[parent_id]) * 0.1
-            new_centroids[old_num] = F.normalize(self.centroids[parent_id] + noise, p=2, dim=0)
+            new_centroids[old_num] = F.normalize(
+                self.centroids[parent_id] + noise, p=2, dim=0
+            )
         else:
-            new_centroids[old_num] = F.normalize(torch.randn(self.input_dim, device=self.centroids.device), p=2, dim=0)
+            new_centroids[old_num] = F.normalize(
+                torch.randn(self.input_dim, device=self.centroids.device), p=2, dim=0
+            )
+
+        # Null-space anchoring for the distance router as well
+        if null_space_basis is not None and null_space_basis.size(0) > 0:
+            new_centroids[old_num] = _project_to_null_space(
+                new_centroids[old_num], null_space_basis, scale=1.0
+            )
 
         self.centroids = new_centroids
         self.num_experts = new_num
@@ -286,8 +352,12 @@ class DistanceRouter(nn.Module):
         self.top_k = min(self.top_k, new_num)
 
     def merge_experts(self, idx1: int, idx2: int) -> int:
-        assert 0 <= idx1 < self.num_experts and 0 <= idx2 < self.num_experts and idx1 != idx2
-        
+        assert (
+            0 <= idx1 < self.num_experts
+            and 0 <= idx2 < self.num_experts
+            and idx1 != idx2
+        )
+
         c_merged = 0.5 * (self.centroids[idx1] + self.centroids[idx2])
         self.centroids[idx1] = F.normalize(c_merged, p=2, dim=0)
         self.prune_expert(idx2)

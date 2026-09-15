@@ -14,13 +14,21 @@ class NaiveFineTuning:
     Standard sequential fine-tuning baseline.
     Serves as empirical lower bound exhibiting classic catastrophic forgetting.
     """
-    def __init__(self, model: nn.Module, lr: float = 1e-3, device: torch.device = torch.device("cpu")):
+
+    def __init__(
+        self,
+        model: nn.Module,
+        lr: float = 1e-3,
+        device: torch.device = torch.device("cpu"),
+    ):
         self.model = model
         self.lr = lr
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-    def train_task(self, task_id: int, train_loader: Any, epochs: int = 5) -> Dict[str, Any]:
+    def train_task(
+        self, task_id: int, train_loader: Any, epochs: int = 5
+    ) -> Dict[str, Any]:
         self.model.train()
         losses = []
         for epoch in range(epochs):

@@ -16,6 +16,7 @@ class SharedEncoder(nn.Module):
     Shared representation extractor h(x) that maps raw inputs into feature space R^d.
     Supports MLP (for MNIST/tabular) and ConvNet (for CIFAR/images).
     """
+
     def __init__(
         self,
         input_dim: int = 784,
@@ -33,12 +34,14 @@ class SharedEncoder(nn.Module):
             layers = []
             prev_dim = input_dim
             for h_dim in hidden_dims:
-                layers.extend([
-                    nn.Linear(prev_dim, h_dim),
-                    nn.LayerNorm(h_dim),
-                    nn.ReLU(inplace=True),
-                    nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
-                ])
+                layers.extend(
+                    [
+                        nn.Linear(prev_dim, h_dim),
+                        nn.LayerNorm(h_dim),
+                        nn.ReLU(inplace=True),
+                        nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
+                    ]
+                )
                 prev_dim = h_dim
             layers.append(nn.Linear(prev_dim, output_dim))
             layers.append(nn.LayerNorm(output_dim))
@@ -113,7 +116,9 @@ class SharedEncoder(nn.Module):
         self.to(device)
         self.train()
         decoder.train()
-        optimizer = torch.optim.Adam(list(self.parameters()) + list(decoder.parameters()), lr=lr)
+        optimizer = torch.optim.Adam(
+            list(self.parameters()) + list(decoder.parameters()), lr=lr
+        )
 
         total_loss = 0.0
         n_batches = 0
@@ -161,7 +166,9 @@ class SharedEncoder(nn.Module):
         self.to(device)
         self.train()
         proj_head.train()
-        optimizer = torch.optim.Adam(list(self.parameters()) + list(proj_head.parameters()), lr=lr)
+        optimizer = torch.optim.Adam(
+            list(self.parameters()) + list(proj_head.parameters()), lr=lr
+        )
 
         total_loss = 0.0
         n_batches = 0
@@ -182,8 +189,16 @@ class SharedEncoder(nn.Module):
                 else:
                     noise1 = torch.randn_like(x) * 0.08
                     noise2 = torch.randn_like(x) * 0.08
-                    scale1 = torch.empty(b, 1, device=device).uniform_(0.85, 1.15) if x.dim() == 2 else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
-                    scale2 = torch.empty(b, 1, device=device).uniform_(0.85, 1.15) if x.dim() == 2 else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
+                    scale1 = (
+                        torch.empty(b, 1, device=device).uniform_(0.85, 1.15)
+                        if x.dim() == 2
+                        else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
+                    )
+                    scale2 = (
+                        torch.empty(b, 1, device=device).uniform_(0.85, 1.15)
+                        if x.dim() == 2
+                        else torch.empty(b, 1, 1, 1, device=device).uniform_(0.85, 1.15)
+                    )
 
                     x1 = torch.clamp(x * scale1 + noise1, -3.0, 3.0)
                     x2 = torch.clamp(x * scale2 + noise2, -3.0, 3.0)
@@ -197,10 +212,13 @@ class SharedEncoder(nn.Module):
                 mask = torch.eye(2 * b, dtype=torch.bool, device=device)
                 sim.masked_fill_(mask, -1e9)
 
-                labels = torch.cat([
-                    torch.arange(b, 2 * b, device=device),
-                    torch.arange(0, b, device=device)
-                ], dim=0)
+                labels = torch.cat(
+                    [
+                        torch.arange(b, 2 * b, device=device),
+                        torch.arange(0, b, device=device),
+                    ],
+                    dim=0,
+                )
 
                 loss = F.cross_entropy(sim, labels)
                 loss.backward()
@@ -219,6 +237,7 @@ class EMAEncoder(nn.Module):
         theta_ema = beta * theta_ema + (1 - beta) * theta_online
     This ensures representation stability for prototype memory and routing features.
     """
+
     def __init__(self, encoder: SharedEncoder, decay: float = 0.99):
         super().__init__()
         self.decay = decay
@@ -232,7 +251,9 @@ class EMAEncoder(nn.Module):
         for ema_param, online_param in zip(
             self.ema_model.parameters(), online_encoder.parameters()
         ):
-            ema_param.data.mul_(self.decay).add_(online_param.data, alpha=1.0 - self.decay)
+            ema_param.data.mul_(self.decay).add_(
+                online_param.data, alpha=1.0 - self.decay
+            )
         # Also copy running stats for batchnorm
         for ema_buf, online_buf in zip(
             self.ema_model.buffers(), online_encoder.buffers()

@@ -42,6 +42,7 @@ class ExpertBuilder:
     """
     Manages the lifecycle of expert expansion, distillation, validation gating, and capacity control.
     """
+
     def __init__(
         self,
         min_acc_threshold: float = 0.70,
@@ -89,7 +90,9 @@ class ExpertBuilder:
         """
         candidate_expert.train()
         encoder.eval()
-        optimizer = torch.optim.Adam(candidate_expert.parameters(), lr=lr, weight_decay=1e-5)
+        optimizer = torch.optim.Adam(
+            candidate_expert.parameters(), lr=lr, weight_decay=1e-5
+        )
 
         avg_loss = 0.0
         total_batches = 0
@@ -112,18 +115,26 @@ class ExpertBuilder:
                     and not prototype_memory.is_empty()
                     and parent_expert is not None
                 ):
-                    anchors = prototype_memory.get_expert_anchors(parent_expert.expert_id, device)
+                    anchors = prototype_memory.get_expert_anchors(
+                        parent_expert.expert_id, device
+                    )
                     if anchors is not None:
                         v_mat, target_anchors = anchors
                         cand_anchor = candidate_expert(v_mat, track_usage=False)
-                        loss_distill = F.mse_loss(cand_anchor, target_anchors) * self.distill_lambda
+                        loss_distill = (
+                            F.mse_loss(cand_anchor, target_anchors)
+                            * self.distill_lambda
+                        )
                     else:
                         p_mat = prototype_memory.get_prototype_matrix(device)
                         if p_mat is not None and p_mat.size(0) > 0:
                             with torch.no_grad():
                                 parent_anchor = parent_expert(p_mat, track_usage=False)
                             cand_anchor = candidate_expert(p_mat, track_usage=False)
-                            loss_distill = F.mse_loss(cand_anchor, parent_anchor) * self.distill_lambda
+                            loss_distill = (
+                                F.mse_loss(cand_anchor, parent_anchor)
+                                * self.distill_lambda
+                            )
 
                 loss = loss_task + loss_distill
                 loss.backward()
@@ -135,7 +146,9 @@ class ExpertBuilder:
         return avg_loss / max(total_batches, 1)
 
     @staticmethod
-    def compute_ece(probs: torch.Tensor, labels: torch.Tensor, n_bins: int = 10) -> float:
+    def compute_ece(
+        probs: torch.Tensor, labels: torch.Tensor, n_bins: int = 10
+    ) -> float:
         """
         Computes Expected Calibration Error (ECE) on predictions.
         """
@@ -239,9 +252,15 @@ class ExpertBuilder:
                 x_proto, y_proto = exemplar_data
                 if x_proto.size(0) > 0 and y_proto.size(0) > 0:
                     with torch.no_grad():
-                        parent_preds = parent_expert(x_proto, track_usage=False).argmax(dim=-1)
-                        cand_preds = candidate_expert(x_proto, track_usage=False).argmax(dim=-1)
-                        proto_acc_parent = (parent_preds == y_proto).float().mean().item()
+                        parent_preds = parent_expert(x_proto, track_usage=False).argmax(
+                            dim=-1
+                        )
+                        cand_preds = candidate_expert(
+                            x_proto, track_usage=False
+                        ).argmax(dim=-1)
+                        proto_acc_parent = (
+                            (parent_preds == y_proto).float().mean().item()
+                        )
                         proto_acc_cand = (cand_preds == y_proto).float().mean().item()
 
         # Gate decisions
@@ -279,7 +298,9 @@ class ExpertBuilder:
             )
         elif ece > self.max_ece:
             passed = False
-            rejection_reason = f"ECE ({ece:.3f}) exceeds calibration threshold ({self.max_ece:.3f})"
+            rejection_reason = (
+                f"ECE ({ece:.3f}) exceeds calibration threshold ({self.max_ece:.3f})"
+            )
 
         return ValidationGateResult(
             passed=passed,
@@ -327,13 +348,17 @@ class ExpertBuilder:
 
             for i in range(n):
                 for j in range(i + 1, n):
-                    sim = F.cosine_similarity(weights[i].unsqueeze(0), weights[j].unsqueeze(0)).item()
+                    sim = F.cosine_similarity(
+                        weights[i].unsqueeze(0), weights[j].unsqueeze(0)
+                    ).item()
                     if sim > best_sim:
                         best_sim = sim
                         merge_pair = (i, j)
 
             i, j = merge_pair
-            actions_taken.append(f"Merged expert {j} into {i} (similarity {best_sim:.3f})")
+            actions_taken.append(
+                f"Merged expert {j} into {i} (similarity {best_sim:.3f})"
+            )
             model.merge_experts(i, j, prototype_memory=prototype_memory)
 
         return {"actions": actions_taken, "final_num_experts": model.num_experts}

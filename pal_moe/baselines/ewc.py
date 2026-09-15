@@ -15,6 +15,7 @@ class EWC:
     Online / Multi-task Elastic Weight Consolidation.
     L_ewc = L_new + sum_p (lambda_ewc / 2) * F_p * (theta_p - theta_p*)^2
     """
+
     def __init__(
         self,
         model: nn.Module,
@@ -34,8 +35,16 @@ class EWC:
     def compute_fisher(self, data_loader: Any, num_samples: int = 200) -> None:
         """Computes diagonal empirical Fisher Information matrix for current task."""
         self.model.eval()
-        fisher = {n: torch.zeros_like(p, device=self.device) for n, p in self.model.named_parameters() if p.requires_grad}
-        params_star = {n: p.detach().clone() for n, p in self.model.named_parameters() if p.requires_grad}
+        fisher = {
+            n: torch.zeros_like(p, device=self.device)
+            for n, p in self.model.named_parameters()
+            if p.requires_grad
+        }
+        params_star = {
+            n: p.detach().clone()
+            for n, p in self.model.named_parameters()
+            if p.requires_grad
+        }
 
         samples_processed = 0
         for x, y in data_loader:
@@ -47,7 +56,7 @@ class EWC:
 
             for n, p in self.model.named_parameters():
                 if p.grad is not None and n in fisher:
-                    fisher[n] += (p.grad.data ** 2) * x.size(0)
+                    fisher[n] += (p.grad.data**2) * x.size(0)
 
             samples_processed += x.size(0)
             if samples_processed >= num_samples:
@@ -67,7 +76,9 @@ class EWC:
                     loss += (fisher[n] * (p - star[n]) ** 2).sum()
         return loss * (self.ewc_lambda / 2.0)
 
-    def train_task(self, task_id: int, train_loader: Any, epochs: int = 5) -> Dict[str, Any]:
+    def train_task(
+        self, task_id: int, train_loader: Any, epochs: int = 5
+    ) -> Dict[str, Any]:
         self.model.train()
         losses = []
         for epoch in range(epochs):

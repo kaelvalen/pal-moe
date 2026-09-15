@@ -26,12 +26,12 @@ from ..models.moe import DynamicMoE
 @dataclass
 class BenchmarkResult:
     method_name: str
-    acc_matrix: np.ndarray             # [T, T]
-    average_accuracy: float            # ACC_T
-    forgetting: float                  # F
-    backward_transfer: float           # BWT
-    router_stability_kl: float         # mean KL divergence
-    expert_specialization_mi: float    # I(Task; Expert)
+    acc_matrix: np.ndarray  # [T, T]
+    average_accuracy: float  # ACC_T
+    forgetting: float  # F
+    backward_transfer: float  # BWT
+    router_stability_kl: float  # mean KL divergence
+    expert_specialization_mi: float  # I(Task; Expert)
     expert_utilization_entropy: float  # Normalized H(Expert)
     num_final_experts: int
     task_accuracies: List[float]
@@ -41,6 +41,7 @@ class ContinualEvaluator:
     """
     Tracks and computes continual learning benchmark metrics across task sequence.
     """
+
     def __init__(self, num_tasks: int, device: torch.device = torch.device("cpu")):
         self.num_tasks = num_tasks
         self.device = device
@@ -114,7 +115,6 @@ class ContinualEvaluator:
             fwts.append(pre_acc - random_baseline_acc)
         return float(np.mean(fwts)) if fwts else 0.0
 
-
     @staticmethod
     def compute_router_stability(
         model: DynamicMoE, prototype_memory: PrototypeMemory, device: torch.device
@@ -129,7 +129,9 @@ class ContinualEvaluator:
         model.eval()
         P = len(prototype_memory.prototypes)
         curr_num_experts = model.num_experts
-        vp_mat = torch.stack([p.v_p for p in prototype_memory.prototypes], dim=0).to(device)
+        vp_mat = torch.stack([p.v_p for p in prototype_memory.prototypes], dim=0).to(
+            device
+        )
 
         with torch.no_grad():
             g_curr = model.router.get_full_distribution(vp_mat)  # [P, curr_num_experts]
