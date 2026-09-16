@@ -266,7 +266,12 @@ class ContinualTrainer:
                     self.optimizer = self._build_optimizer()
                 else:
                     history["gate_rejections"] += 1
-                    task_expert_id = parent_idx
+                    # No new expert: the task was trained on the *newest* expert
+                    # (freeze_historical_experts leaves only that one trainable),
+                    # so that is the expert that actually handles this task.
+                    # Anchoring the task's prototypes to it keeps the router
+                    # distillation consistent with the model's real allocation.
+                    task_expert_id = self.model.num_experts - 1
                     print(
                         f"      [Validation Gate] Rejected! Reason: {gate_result.rejection_reason}"
                     )

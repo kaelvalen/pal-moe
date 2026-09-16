@@ -260,22 +260,27 @@ All figures below are Split-MNIST, seed 42, 3 epochs/task, current code
     | :--- | :---: | :---: | :---: | :---: |
     | PAL-MoE pure, encoder fine-tuned (first big run) | 17.8% | 85.4% | 0.000 | 0.014 |
     | PAL-MoE pure, frozen encoder | 20.8% | 37.3% | 0.194 | 0.287 |
-    | **PAL-MoE pure, frozen + anchor distillation** | **37.5%** | **25.1%** | **0.379** | **0.998** |
-    | **PAL-MoE hybrid, frozen + anchor distillation** | **39.3%** | **22.9%** | 0.376 | 0.998 |
+    | **PAL-MoE pure, frozen + anchor distillation (5 seeds)** | **37.35 ± 0.56%** | **24.32 ± 0.45%** | **0.379** | **0.998** |
+    | **PAL-MoE hybrid, frozen + anchor distillation (5 seeds)** | **38.87 ± 0.47%** | **23.21 ± 0.61%** | 0.376 | 0.998 |
     | PAL-MoE pure, k-NN anchoring instead of distillation | 33.5% | - | - | - |
 
     The checkpoint diagnostic on the distilled model shows task-to-expert
     routing is now exact (each task's inputs route to its own expert) and
     inference-time anchoring adds nothing (37.5% vs 37.4%); the remaining gap to
     the per-expert oracle (66.9%) is expert/representation quality, not routing.
-    Numbers are a single seed; the 5-seed run is the next validation step.
 
-    **Split-MNIST validation (same mechanism, seed 42, 3 epochs/task):** pure
-    PAL-MoE improves from 76.60% / 23.05% forgetting (the current headline
-    seed-42 value) to **78.89% / 4.94%** forgetting (MI 0.998, utilization
-    entropy 0.992). The distillation removes most of the residual forgetting on
-    the dataset where the mechanism was originally tuned, so the fix is not
-    CIFAR-specific.
+    **Split-MNIST validation (5 seeds, 3 epochs/task):** pure PAL-MoE improves
+    from 72.65 ± 3.25% / 28.10 ± 4.04% forgetting (the previous headline) to
+    **78.06 ± 1.40% / 6.16 ± 0.69%**, and the hybrid from 81.09 ± 1.37% /
+    13.28 ± 2.11% to **82.96 ± 0.53% / 3.50 ± 0.76%** (MI 0.998, utilization
+    entropy 0.992). The mechanism is not CIFAR-specific.
+
+    One subtlety found by the multi-seed runs: when the validation gate rejects
+    expansion, the task has no dedicated expert. The prototype owner must then
+    be the *newest* expert (the one the task phase actually trained), not the
+    trigger's best parent — anchoring a rejected task to the parent gave the
+    router distillation the wrong target and collapsed that task (MNIST hybrid
+    81.1% → 71.1% before the fix, 83.0% after).
 
     **Same-budget comparison (5 epochs/task, 50 SimCLR epochs, frozen encoder,
     seed 42, single run, all methods):** pure PAL-MoE reaches **37.52% / 23.5%
