@@ -93,8 +93,22 @@ which overrides CLI defaults):
 | `--expert_hidden` | 256 | hidden width of every MLP expert |
 | `--conv_channels` | `32,64,128` | CIFAR conv encoder channels (default reproduces the original net exactly) |
 | `--proto_size` | 250 | PAL-MoE prototype-store budget (hybrid's latent exemplars) |
+| `--freeze_encoder` | off | Keep the CIFAR encoder fixed after pretraining (stable prototype anchors; mirrors the MNIST setup) |
+| `--proto_routing_alpha` | 0 | Prototype-anchored **inference** routing: `g = (1 - a·conf)·g_router + a·conf·r_p(nearest)` with the threshold-free confidence `conf = clamp(1 - d1/d2, 0, 1)` |
+| `--proto_routing_threshold` | off | Optional absolute distance gate on top of the confidence weight |
 | `--methods` | all | comma-separated subset: `naive, ewc, replay60, replay360, replay250, derpp, erace, agem, icarl, stdmoe, palmoe, hybrid` |
 | `--num_workers` | 0 | DataLoader workers (results-neutral, see design fact 8) |
+
+**Prototype-anchored inference routing** is the zero-replay answer to the recency
+funnel: training is untouched, but at inference an input close to a stored
+prototype inherits that prototype's historical routing distribution instead of
+blindly trusting a router that has drifted. The confidence is deliberately
+threshold-free (nearest-class-mean style: `1 - d1/d2`, where `d2` is the nearest
+prototype of a *different* task) because an absolute distance is not comparable
+across feature spaces — measured prototype coverage at the memory's clustering
+threshold (0.5) is ~0% on Split-MNIST features, so a hard gate would anchor
+nothing. `--proto_routing_alpha 1` lets confident anchors fully override the
+router.
 
 `configs/cifar10_big.json` is the reference "big" run: conv `64,128,256`
 (438k-param encoder) → 256-dim latents, expert hidden 512, P=1000, 15 epochs/task,
@@ -107,6 +121,40 @@ python experiments/run_benchmark.py --config configs/cifar10_big.json --device c
 
 Note: a config file wins over CLI flags, so use explicit flags (not `--config`)
 when you need a different long schedule for a smoke test.
+
+### Diagnosing forgetting from checkpoints
+
+Every PAL-MoE / hybrid run now writes per-task checkpoints
+(`<output_dir>/checkpoints_palmoe/task_{t}.pt`,
+`<output_dir>/checkpoints_hybrid/task_{t}.pt`). The diagnostic separates a
+*router* failure (experts still know their tasks, the router never picks them —
+the recency funnel) from a *destructive calibration* failure (joint fine-tuning
+overwrote the experts):
+
+```bash
+python experiments/diagnose_checkpoint.py \
+  --checkpoint results/cifar10_big/checkpoints_palmoe/task_4.pt
+```
+
+It prints the (task x expert) expert-accuracy matrix, the (task x expert)
+router top-1 assignment shares, and the end-to-end vs. oracle gap. A large
+oracle gap with a collapsed share matrix means the experts are intact and the
+router is the bottleneck.
+
+### Engineering: measured speedups and invariants
+
+Every optimization below was verified to be **numerically equivalent** to the
+previous implementation (stability losses agree to <1e-6; prototype
+registration produces identical prototypes) before being kept:
+
+| Fix | Measured effect |
+| :--- | :--- |
+| `num_workers` for CIFAR loaders (`--num_workers 8`) | task loader 8.5 → 4.2 ms/batch; SimCLR 16.4 → 5.3 ms/batch |
+| Cached prototype/route/output matrices in `PrototypeMemory` (was re-stacking ~1000 CPU tensors and doing per-prototype `.item()` host syncs every batch) | `compute_stability_losses` **10.13 s → 0.13 s** per call (1000 prototypes, 6 experts, RTX 5060) |
+| Batch registration via a single working matrix | O(P·D) once per batch instead of per sample |
+| Vectorized expert utilization/MI metrics (was a per-sample Python loop) | removes O(N) host syncs per test pass |
+| Reuse the split loader's dataset for the SimCLR loader | one CIFAR dataset instance instead of two |
+| Frozen encoders stay in `eval()` during task phases | no silent BatchNorm drift for "frozen" representations |
 
 ## Measured design facts (controlled experiments)
 
@@ -156,6 +204,86 @@ All figures below are Split-MNIST, seed 42, 3 epochs/task, current code
    deterministic and a clean A/B confirms identical batch order and RNG
    consumption, so `--num_workers 8` (forwarded by `run_benchmark_multi.py`)
    is a pure speed knob that does not change results.
+
+9. **On CIFAR the recency funnel is representation drift, not a router
+   weakness.** Controlled sweep (Split-CIFAR-10, conv 64/128/256 → 256-dim
+   latents, 5 epochs/task, 50 SimCLR epochs, pure PAL-MoE, seed 42):
+
+   | Variant | Avg Acc | Forgetting | Router MI | Util. entropy |
+   | :--- | :---: | :---: | :---: | :---: |
+   | baseline (encoder fine-tuned online) | 18.5% | 85.1% | 0.001 | 0.015 |
+   | **frozen encoder** | **33.9%** | **32.7%** | **0.228** | **0.758** |
+   | prototype-anchored inference routing | 19.8% | 83.0% | 0.001 | 0.014 |
+   | frozen + prototype routing | 31.4% | 32.0% | 0.185 | 0.327 |
+
+   Freezing the encoder removes the funnel (routing entropy 0.015 → 0.758) and
+   more than doubles pure accuracy. Prototype-anchored inference routing cannot
+   compensate for drift — in a drifted space the nearest prototype of a
+   *different* task is as close as the correct one, so confidence ≈ 0 — and it
+   slightly hurts once the encoder is stable (stale `r_p` overrides a correct
+   router). Prototype coverage at the memory's clustering threshold (0.5) is
+   ~0% (measured min distances p50 ≈ 6.5-7.2), which is why the anchoring
+   confidence is threshold-free and `--proto_routing_threshold` is optional.
+   CIFAR pure mode therefore needs `--freeze_encoder` (see
+   `configs/cifar10_big_frozen.json`).
+
+10. **Attention-style routing does not help — the linear gate is already
+    sufficient.** Same schedule as fact 9 (pure, frozen encoder, 5 epochs,
+    50 SimCLR epochs, seed 42):
+
+    | Router | Avg Acc | Forgetting | MI | Util. entropy |
+    | :--- | :---: | :---: | :---: | :---: |
+    | linear gate (`dynamic`) | **33.9%** | **32.7%** | 0.228 | **0.759** |
+    | cosine attention (`attention`) | 20.9% | 41.7% | 0.187 | 0.487 |
+    | cosine attention + task-0 key alignment | 25.0% | 34.6% | 0.097 | 0.521 |
+
+    A learnable query projection makes the attention score bilinear, i.e.
+    expressiveness-equivalent to the linear gate; the L2-bounded logits and the
+    missing per-expert bias then hurt early routing. `--router_type attention`
+    remains available as an opt-in experiment, but the CIFAR bottlenecks were
+    representation drift and cross-task readout — not router capacity.
+
+11. **Router-anchor distillation fixes the cross-task readout from latent memory
+    only.** At the end of every task the router is trained (300 steps, lr 1e-3)
+    to predict the explicit prototype owners — a supervised signal derived
+    entirely from stored latents and task ids, no raw exemplars. On the
+    15-epoch frozen CIFAR-10 checkpoint this lifts the raw router from **21.3% →
+    38.0%** (offline sweep: 100-300 steps are equivalent, 1000 steps overfit)
+    and balances the per-task profile (0.46/0.24/0.31/0.42/0.48); adding k-NN
+    prototype anchoring on top gives 37.9%, so distillation alone is sufficient.
+    Enabled in both big frozen configs via `--router_anchor_steps 300`.
+
+    **End-to-end confirmation (Split-CIFAR-10, big geometry, 15 epochs/task,
+    150 SimCLR epochs, seed 42, `configs/cifar10_big_frozen.json`):**
+
+    | Method | Avg Acc | Forgetting | Router MI | Util. entropy |
+    | :--- | :---: | :---: | :---: | :---: |
+    | PAL-MoE pure, encoder fine-tuned (first big run) | 17.8% | 85.4% | 0.000 | 0.014 |
+    | PAL-MoE pure, frozen encoder | 20.8% | 37.3% | 0.194 | 0.287 |
+    | **PAL-MoE pure, frozen + anchor distillation** | **37.5%** | **25.1%** | **0.379** | **0.998** |
+    | **PAL-MoE hybrid, frozen + anchor distillation** | **39.3%** | **22.9%** | 0.376 | 0.998 |
+    | PAL-MoE pure, k-NN anchoring instead of distillation | 33.5% | - | - | - |
+
+    The checkpoint diagnostic on the distilled model shows task-to-expert
+    routing is now exact (each task's inputs route to its own expert) and
+    inference-time anchoring adds nothing (37.5% vs 37.4%); the remaining gap to
+    the per-expert oracle (66.9%) is expert/representation quality, not routing.
+    Numbers are a single seed; the 5-seed run is the next validation step.
+
+    **Split-MNIST validation (same mechanism, seed 42, 3 epochs/task):** pure
+    PAL-MoE improves from 76.60% / 23.05% forgetting (the current headline
+    seed-42 value) to **78.89% / 4.94%** forgetting (MI 0.998, utilization
+    entropy 0.992). The distillation removes most of the residual forgetting on
+    the dataset where the mechanism was originally tuned, so the fix is not
+    CIFAR-specific.
+
+    **Same-budget comparison (5 epochs/task, 50 SimCLR epochs, frozen encoder,
+    seed 42, single run, all methods):** pure PAL-MoE reaches **37.52% / 23.5%
+    forgetting** and beats every baseline — AGEM 23.0%, DER++ 21.6%, ER 20.6%,
+    ER-ACE 19.6%, EWC 17.3%, Standard-MoE 17.2%, Naive 17.2%, iCaRL 8.6% —
+    while storing **zero raw exemplars**. The hybrid (P=250) is statistically
+    indistinguishable (37.85%), i.e. the latent anchors carry the readout at
+    this geometry. Multi-seed validation is the remaining step.
 
 ## Ablations
 

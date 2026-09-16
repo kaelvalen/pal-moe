@@ -33,7 +33,7 @@ def main():
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--dataset", type=str, default="mnist")
     parser.add_argument(
-        "--router_type", type=str, default="dynamic", choices=["dynamic", "distance"]
+        "--router_type", type=str, default="dynamic", choices=["dynamic", "distance", "attention"]
     )
     parser.add_argument("--lambda_ood", type=float, default=0.0)
     parser.add_argument("--max_proto_drop", type=float, default=None)
@@ -56,6 +56,10 @@ def main():
         default=None,
         help="Encoder pretraining epochs (default: dataset default)",
     )
+    parser.add_argument("--freeze_encoder", action="store_true", default=False)
+    parser.add_argument("--router_anchor_steps", type=int, default=0)
+    parser.add_argument("--router_anchor_lr", type=float, default=1e-3)
+    parser.add_argument("--proto_routing_alpha", type=float, default=0.0)
     parser.add_argument(
         "--methods",
         type=str,
@@ -102,6 +106,14 @@ def main():
             cmd += ["--methods", args.methods]
         if args.pretrain_epochs is not None:
             cmd += ["--pretrain_epochs", str(args.pretrain_epochs)]
+        if args.freeze_encoder:
+            cmd.append("--freeze_encoder")
+        if args.router_anchor_steps:
+            cmd += ["--router_anchor_steps", str(args.router_anchor_steps)]
+        if args.router_anchor_lr != 1e-3:
+            cmd += ["--router_anchor_lr", str(args.router_anchor_lr)]
+        if args.proto_routing_alpha > 0:
+            cmd += ["--proto_routing_alpha", str(args.proto_routing_alpha)]
         if args.joint_keep_routing_lock:
             cmd.append("--joint_keep_routing_lock")
         if args.max_proto_drop is not None:
@@ -155,6 +167,10 @@ def main():
             "proto_size": args.proto_size,
             "methods": args.methods,
             "pretrain_epochs": args.pretrain_epochs,
+            "freeze_encoder": args.freeze_encoder,
+            "router_anchor_steps": args.router_anchor_steps,
+            "router_anchor_lr": args.router_anchor_lr,
+            "proto_routing_alpha": args.proto_routing_alpha,
         },
         "per_seed": per_seed,
         "aggregated": agg,
