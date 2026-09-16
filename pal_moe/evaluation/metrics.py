@@ -79,7 +79,17 @@ class ContinualEvaluator:
 
     def compute_forgetting(self) -> float:
         """
-        F = (1 / (T - 1)) * sum_{i=1}^{T-1} max_{t in {1,...,T-1}} (R_{t, i} - R_{T, i})
+        Average drop from each old task's best accuracy to its final accuracy.
+
+        With R[t, i] = accuracy on task i after training task t (0-based) and
+        T = num_tasks - 1 (the last task, which is excluded because it has no
+        "after"), for every i in {0, ..., T-1}:
+
+            forgetting_i = max(0, max(R[i..T-1, i]) - R[T, i])
+
+        F = mean(forgetting_i). The clamp at zero means positive backward
+        transfer is reported as 0 rather than as negative forgetting (the code
+        convention is deliberately pessimistic; state this when publishing).
         """
         if self.num_tasks <= 1:
             return 0.0
@@ -94,6 +104,8 @@ class ContinualEvaluator:
     def compute_backward_transfer(self) -> float:
         """
         BWT = (1 / (T - 1)) * sum_{i=1}^{T-1} (R_{T, i} - R_{i, i})
+        Signed (no clamp): in the common case max_past == R[i, i] this equals
+        the negative of the clamped forgetting.
         """
         if self.num_tasks <= 1:
             return 0.0

@@ -40,13 +40,13 @@ All methods share the same pretrained encoder and matched head capacity.
 | iCaRL (k=25) | 59.15 ± 2.13% | 10.68 ± 1.93% | -10.68% | 1 | exemplars |
 | ER-ACE (P=250) | 62.19 ± 5.55% | 42.17 ± 6.97% | -42.17% | 1 | raw buffer |
 | Experience Replay (P=60) | 65.13 ± 1.60% | 40.39 ± 2.13% | -40.39% | 1 | raw buffer |
-| **PAL-MoE (Ours - Pure / Zero Raw Replay)** | **72.65 ± 3.25%** | **28.10 ± 4.04%** | **-28.10%** | **5** | **~284 KB latents, no images** |
-| **PAL-MoE + Replay (Hybrid, P=250)** | **81.09 ± 1.37%** | **13.28 ± 2.11%** | **-13.28%** | **4** | latent + raw exemplars |
+| **PAL-MoE (Ours - Pure / Zero Raw Replay)** | **78.06 ± 1.40%** | **6.16 ± 0.69%** | **-6.16%** | **5** | **~284 KB latents, no images** |
+| **PAL-MoE + Replay (Hybrid, P=250)** | **82.96 ± 0.53%** | **3.50 ± 0.76%** | **-3.50%** | **4** | latent + raw exemplars |
 | Experience Replay (Buffer=250) | 81.26 ± 1.25% | 18.91 ± 1.77% | -18.91% | 1 | raw buffer |
 | Experience Replay (P=360) | 83.54 ± 1.03% | 15.83 ± 1.73% | -15.83% | 1 | raw buffer |
 | DER++ (P=250) | 87.08 ± 1.12% | 6.81 ± 1.14% | -6.81% | 1 | raw buffer + logits |
 
-*(Honest reading: **at the same 250-item budget the hybrid matches classic Experience Replay on accuracy (81.09 vs 81.26, overlapping within one std) while forgetting significantly less — 13.28% vs 18.91%.** Its **pure variant reaches 72.65% with zero raw exemplars**, beating iCaRL, ER-ACE, ER(P=60), AGEM, EWC, Naive and Standard-MoE from a ~284 KB latent store. DER++ remains the accuracy leader on this saturated benchmark (87.08%); that is reported as-is.)*
+*(Honest reading: **the hybrid now beats classic Experience Replay at the same 250-item budget (82.96 vs 81.26) with a quarter of the forgetting (3.50% vs 18.91%)**, and the **pure variant reaches 78.06% with zero raw exemplars** — ahead of iCaRL, ER-ACE, ER(P=60), AGEM, EWC, Naive and Standard-MoE from a ~284 KB latent store, with forgetting on par with DER++. DER++ remains the accuracy leader (87.08%); that is reported as-is. The improvements come from prototype-owner router distillation — a zero-replay mechanism that sharpens cross-task routing, see BENCHMARK.md design fact 11.)*
 
 ### 2. Split-CIFAR-10 (5 Tasks, Wide CNN Encoder, Frozen)
 
@@ -65,7 +65,7 @@ All methods share the same pretrained encoder and matched head capacity.
 | **PAL-MoE (pure)** | **37.52%** | **23.54%** | **0 (latent only)** |
 | PAL-MoE + Replay (Hybrid, P=250) | 37.85% | 25.89% | 250 |
 
-*(Honest reading: **the pure variant, which stores no raw inputs at all (latent prototypes + task ids only), beats every replay-based baseline by ~14.5 points on average accuracy while forgetting far less than ER/DER++/AGEM.** The hybrid adds nothing at this geometry — the latent anchors carry the readout. At the longer 15-epoch schedule the frozen+distilled recipe reaches **37.45% pure / 39.31% hybrid** (forgetting 25.1 / 22.9, routing utilization entropy 0.998). Remaining gap is per-expert quality (oracle 66.9%), not routing; numbers are single-seed and a 5-seed validation is pending.)*
+*(Honest reading: **the pure variant, which stores no raw inputs at all (latent prototypes + task ids only), beats every replay-based baseline by ~14.5 points on average accuracy while forgetting far less than ER/DER++/AGEM.** The hybrid adds little at this geometry — the latent anchors carry the readout. At the longer 15-epoch schedule the same recipe reaches **37.35 ± 0.56% pure / 38.87 ± 0.47% hybrid across 5 seeds** (forgetting 24.3 ± 0.5 / 23.2 ± 0.6, routing utilization entropy 0.998). Remaining gap is per-expert quality (oracle 66.9%), not routing.)*
 
 *Note: the encoder fine-tuning regime is harder for the replay baselines on CIFAR-10 from scratch — with an unfrozen encoder the earlier pure/hybrid runs scored 17.75% / 25.54%, so the frozen-representation setting is part of the method's design, not a free lunch. Split-CIFAR-100 (20 tasks × 5 classes) support is implemented — `pal_moe/data/split_cifar100.py`, `--dataset cifar100` — pending a full benchmark run.*
 
