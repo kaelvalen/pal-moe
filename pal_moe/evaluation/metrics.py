@@ -182,9 +182,12 @@ class ContinualEvaluator:
                     x = x.to(device)
                     h = model.get_routing_features(x)
                     _, topk_idx, _ = model.router(h)
-                    for k_idx in topk_idx.flatten().cpu().numpy():
-                        if k_idx < num_experts:
-                            counts[t_idx, k_idx] += 1
+                    flat = topk_idx.flatten()
+                    valid = flat[flat < num_experts]
+                    if valid.numel() > 0:
+                        counts[t_idx] += np.bincount(
+                            valid.cpu().numpy(), minlength=num_experts
+                        )
 
         total_counts = np.sum(counts)
         if total_counts == 0:

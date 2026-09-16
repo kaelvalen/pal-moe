@@ -25,6 +25,8 @@ def get_split_mnist_tasks(
     batch_size: int = 128,
     val_split: float = 0.1,
     seed: int = 42,
+    num_workers: int = 0,
+    pin_memory: bool = False,
 ) -> List[SplitMNISTTask]:
     """
     Creates 5 sequential tasks for Split-MNIST benchmark:
@@ -76,10 +78,27 @@ def get_split_mnist_tasks(
         test_sub = Subset(test_dataset, test_indices)
 
         train_loader = DataLoader(
-            train_sub, batch_size=batch_size, shuffle=True, drop_last=True
+            train_sub,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
-        val_loader = DataLoader(val_sub, batch_size=batch_size, shuffle=False)
-        test_loader = DataLoader(test_sub, batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(
+            val_sub,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+        test_loader = DataLoader(
+            test_sub,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
 
         tasks.append(
             SplitMNISTTask(
