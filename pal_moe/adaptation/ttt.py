@@ -44,6 +44,8 @@ class ContinualTrainer:
         joint_keep_routing_lock: bool = False,
         joint_freeze_router: bool = False,
         lambda_ood: float = 0.0,
+        router_anchor_steps: int = 0,
+        router_anchor_lr: float = 1e-3,
         checkpoint_dir: Optional[str] = None,
         device: torch.device = torch.device("cpu"),
     ):
@@ -80,6 +82,8 @@ class ContinualTrainer:
         # old-task inputs have no reason to be routed to it (complements null-space
         # routing anchoring). 0.0 disables the term.
         self.lambda_ood = lambda_ood
+        self.router_anchor_steps = router_anchor_steps
+        self.router_anchor_lr = router_anchor_lr
         self.checkpoint_dir = checkpoint_dir
         self.device = device
 
@@ -104,6 +108,50 @@ class ContinualTrainer:
             ]
         return torch.optim.Adam(param_groups, weight_decay=1e-5)
 
+    def _distill_router_anchors(self, steps: int, lr: float) -> float:
+        """
+        Trains the router to reproduce the explicit prototype owners:
+        P(owner expert | prototype feature) — a direct, cross-task supervised
+        signal available without any raw exemplars. Historical routing rows are
+        temporarily unlocked, then the standard lock is restored.
+        """
+        owned = [
+            p
+            for p in self.prototype_memory.prototypes
+            if p.owner_expert is not None
+        ]
+        if not owned or steps <= 0:
+            return 0.0
+
+        vp = torch.stack([p.v_p for p in owned], dim=0).to(self.device)
+        y_owner = torch.tensor(
+            [int(p.owner_expert) for p in owned], device=self.device
+        )
+        # Unlock all rows for the distillation, restore the lock afterwards.
+        self.model.router.lock_historical_routing(0)
+        params = [p for p in self.model.router.parameters() if p.requires_grad]
+        if not params:  # non-parametric routers (e.g. distance) cannot be distilled
+            self.model.freeze_historical_experts(leave_unfrozen=1)
+            self.optimizer = self._build_optimizer()
+            return 0.0
+        was_training = self.model.router.training
+        self.model.router.train()
+        optimizer = torch.optim.Adam(params, lr=lr)
+        last_loss = 0.0
+        for _ in range(steps):
+            optimizer.zero_grad()
+            probs = self.model.router.get_full_distribution(vp)
+            loss = F.nll_loss(torch.log(probs + 1e-9), y_owner)
+            loss.backward()
+            optimizer.step()
+            last_loss = float(loss.item())
+        if not was_training:
+            self.model.router.eval()
+
+        self.model.freeze_historical_experts(leave_unfrozen=1)
+        self.optimizer = self._build_optimizer()
+        return last_loss
+
     def train_task(
         self,
         task_id: int,
@@ -117,6 +165,10 @@ class ContinualTrainer:
         Trains the DynamicMoE model on a given task.
         """
         self.model.train()
+        # A frozen encoder must not drift through BatchNorm running statistics
+        # either: keep it in eval mode for the whole task phase.
+        if not any(p.requires_grad for p in self.model.encoder.parameters()):
+            self.model.encoder.eval()
         history = {
             "loss_total": [],
             "loss_task": [],
@@ -125,7 +177,10 @@ class ContinualTrainer:
             "trigger_events": 0,
             "experts_added": 0,
             "gate_rejections": 0,
+            "router_anchor_loss": 0.0,
         }
+        # Expert that ends up responsible for this task (explicit prototype anchor)
+        task_expert_id: Optional[int] = None
 
         # Step 1: For tasks > 0, check quantitative trigger early on new task data
         if enable_expansion and task_id > 0:
@@ -200,6 +255,7 @@ class ContinualTrainer:
                         prototype_feat=h_proto,
                         null_space_basis=null_basis,
                     )
+                    task_expert_id = new_id
                     # Enforce capacity control if exceeded (with prototype memory synchronization)
                     self.builder.enforce_capacity_control(
                         self.model,
@@ -210,12 +266,14 @@ class ContinualTrainer:
                     self.optimizer = self._build_optimizer()
                 else:
                     history["gate_rejections"] += 1
+                    task_expert_id = parent_idx
                     print(
                         f"      [Validation Gate] Rejected! Reason: {gate_result.rejection_reason}"
                     )
 
         # Step 4.5: If task 0, align router's initial expert with task 0 representation
         if task_id == 0 and len(self.model.experts) >= 1:
+            task_expert_id = self.model.num_experts - 1
             with torch.no_grad():
                 for x_init, _ in train_loader:
                     x_init = x_init.to(self.device)
@@ -227,6 +285,10 @@ class ContinualTrainer:
                         self.model.router.gate.bias.data[0] = 0.0
                     elif hasattr(self.model.router, "centroids"):
                         self.model.router.centroids[0] = F.normalize(h_0, dim=0)
+                    elif hasattr(self.model.router, "keys"):
+                        # Cosine-attention router: point the first expert's key at
+                        # the task-0 feature direction.
+                        self.model.router.keys.data[0] = F.normalize(h_0, dim=0)
                     break
 
         # Mathematically freeze historical experts and their routing paths
@@ -329,6 +391,7 @@ class ContinualTrainer:
                     task_id=task_id,
                     labels=y,
                     raw_inputs=x,
+                    owner_expert=task_expert_id,
                 )
                 registered_count += x.size(0)
                 if registered_count >= 256:
@@ -416,6 +479,16 @@ class ContinualTrainer:
                         # Re-lock history: only the newest expert and router row stay trainable
                         self.model.freeze_historical_experts(leave_unfrozen=1)
                         self.optimizer = self._build_optimizer()
+
+        # Step 9: Distill the router onto the explicit prototype owners.
+        # Zero-replay by construction: it only uses stored latent prototypes and
+        # the task-derived owner labels. This gives the router the cross-task
+        # credit assignment that end-to-end CE cannot learn reliably, and it
+        # removes the need for inference-time anchoring.
+        if self.router_anchor_steps > 0:
+            history["router_anchor_loss"] = self._distill_router_anchors(
+                steps=self.router_anchor_steps, lr=self.router_anchor_lr
+            )
 
         # Persist checkpoint after each task if requested
         if self.checkpoint_dir is not None:

@@ -48,16 +48,26 @@ All methods share the same pretrained encoder and matched head capacity.
 
 *(Honest reading: **at the same 250-item budget the hybrid matches classic Experience Replay on accuracy (81.09 vs 81.26, overlapping within one std) while forgetting significantly less — 13.28% vs 18.91%.** Its **pure variant reaches 72.65% with zero raw exemplars**, beating iCaRL, ER-ACE, ER(P=60), AGEM, EWC, Naive and Standard-MoE from a ~284 KB latent store. DER++ remains the accuracy leader on this saturated benchmark (87.08%); that is reported as-is.)*
 
-### 2. Split-CIFAR-10 (5 Tasks, Hard, CNN Encoder)
+### 2. Split-CIFAR-10 (5 Tasks, Wide CNN Encoder, Frozen)
 
-*50-Epoch SimCLR pre-trained conv encoder without ImageNet transfer learning. The CIFAR numbers below were measured with the previous code revision and are pending a re-run of the current code (long runtime).*
+*Current code, single seed (42), same geometry and schedule for every method: conv encoder 64/128/256 → 256-dim latents (150 SimCLR epochs), experts hidden 512, 5 epochs/task, `--freeze_encoder`, multi-seed pending. PAL-MoE additionally distills its router onto the prototype owners at each task end (`--router_anchor_steps 300`, zero raw replay).*
 
-| Method | Avg Acc (↑) | Forgetting (↓) | BWT (↑) | Experts |
-| :--- | :---: | :---: | :---: | :---: |
-| Experience Replay (Buffer=250) | ~28.00% *(est.)* | ~70.00% *(est.)* | - | 1 |
-| **PAL-MoE + Replay (Hybrid, P=250)** | **43.01%** | **42.89%** | **-42.89%** | **5** |
+| Method | Avg Acc (↑) | Forgetting (↓) | Raw exemplars |
+| :--- | :---: | :---: | :---: |
+| Naive Fine-tuning | 17.24% | 83.41% | – |
+| EWC | 17.31% | 83.59% | – |
+| Standard MoE (4 experts) | 17.17% | 82.31% | – |
+| ER-ACE (P=250) | 19.64% | 75.33% | 250 |
+| Experience Replay (P=250) | 20.63% | 76.96% | 250 |
+| DER++ (P=250) | 21.61% | 68.50% | 250 |
+| AGEM (P=250) | 23.00% | 74.35% | 250 |
+| iCaRL (k=25) | 8.55% | 15.90% | 250 |
+| **PAL-MoE (pure)** | **37.52%** | **23.54%** | **0 (latent only)** |
+| PAL-MoE + Replay (Hybrid, P=250) | 37.85% | 25.89% | 250 |
 
-*(Note: baseline continual learning on CIFAR-10 from scratch without ImageNet pretraining severely collapses; PAL-MoE+Replay retains substantially more in this constrained regime. Split-CIFAR-100 (20 tasks x 5 classes) support is implemented — `pal_moe/data/split_cifar100.py`, `--dataset cifar100` — pending a full benchmark run.)*
+*(Honest reading: **the pure variant, which stores no raw inputs at all (latent prototypes + task ids only), beats every replay-based baseline by ~14.5 points on average accuracy while forgetting far less than ER/DER++/AGEM.** The hybrid adds nothing at this geometry — the latent anchors carry the readout. At the longer 15-epoch schedule the frozen+distilled recipe reaches **37.45% pure / 39.31% hybrid** (forgetting 25.1 / 22.9, routing utilization entropy 0.998). Remaining gap is per-expert quality (oracle 66.9%), not routing; numbers are single-seed and a 5-seed validation is pending.)*
+
+*Note: the encoder fine-tuning regime is harder for the replay baselines on CIFAR-10 from scratch — with an unfrozen encoder the earlier pure/hybrid runs scored 17.75% / 25.54%, so the frozen-representation setting is part of the method's design, not a free lunch. Split-CIFAR-100 (20 tasks × 5 classes) support is implemented — `pal_moe/data/split_cifar100.py`, `--dataset cifar100` — pending a full benchmark run.*
 
 ---
 
@@ -117,6 +127,16 @@ python experiments/run_benchmark.py --dataset cifar100 --device cuda
 
 # Config-driven run
 python experiments/run_benchmark.py --config configs/mnist_default.json --device cuda
+
+# Big CIFAR-10 run (wide encoder, 15 epochs/task, frozen encoder — see BENCHMARK.md)
+python experiments/run_benchmark.py --config configs/cifar10_big_frozen.json --device cuda
+
+# Run only a subset of methods (fast iteration)
+python experiments/run_benchmark.py --dataset cifar10 --methods palmoe,hybrid --device cuda
+
+# Diagnose forgetting from the per-task checkpoints written by every run
+python experiments/diagnose_checkpoint.py \
+  --checkpoint results/cifar10_big_frozen/checkpoints_palmoe/task_4.pt
 
 # Controlled ablation (shared pretrained encoder per seed)
 python experiments/run_ablation.py --seeds 42 1 2 --configs "OOD" --device cuda

@@ -45,6 +45,157 @@ def test_shared_and_ema_encoder():
     assert not torch.allclose(h2, h_ema_updated, atol=1e-4)
 
 
+def test_prototype_anchored_routing_overrides_router():
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2, top_k=1)
+    experts = [
+        MLPExpert(input_dim=8, hidden_dim=8, num_classes=10, expert_id=i)
+        for i in range(2)
+    ]
+    model = DynamicMoE(encoder=enc, router=router, experts=experts)
+    model.eval()
+
+    # Force the learned router to always pick expert 1 (the recency funnel)
+    with torch.no_grad():
+        model.router.gate.weight.zero_()
+        model.router.gate.bias.copy_(torch.tensor([-5.0, 5.0]))
+
+    x = torch.randn(4, 16)
+    with torch.no_grad():
+        h = model.encoder(x)
+        _, greedy, _ = model.router(h)
+    assert greedy.flatten().tolist() == [1, 1, 1, 1]
+
+    memory = PrototypeMemory(feature_dim=8, distance_threshold=1e9, store_raw=False)
+    memory.register_task_batch(
+        features=h[:1],
+        routing_dists=torch.tensor([[0.0, 1.0]]),  # stale r_p points at expert 1
+        all_expert_outs=torch.zeros(1, 2, 10),
+        task_id=0,
+        labels=torch.tensor([0]),
+        owner_expert=0,  # the expert actually trained for this task
+    )
+    assert memory.prototypes[0].owner_expert == 0
+    model.set_prototype_routing(memory, alpha=1.0)
+
+    with torch.no_grad():
+        _, anchored, _ = model._route(model.encoder(x))
+    # The explicit owner anchor must win over the (stale) router and r_p
+    assert anchored.flatten().tolist() == [0, 0, 0, 0]
+
+    # Training-time routing must stay untouched by the anchoring
+    model.train()
+    with torch.no_grad():
+        _, train_route, _ = model._route(model.encoder(x))
+    assert train_route.flatten().tolist() == [1, 1, 1, 1]
+
+
+def test_prototype_routing_confidence_scales_with_ambiguity():
+    """Far/ambiguous inputs must keep the learned router (confidence -> 0)."""
+    torch.manual_seed(3)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2, top_k=1)
+    experts = [
+        MLPExpert(input_dim=8, hidden_dim=8, num_classes=10, expert_id=i)
+        for i in range(2)
+    ]
+    model = DynamicMoE(encoder=enc, router=router, experts=experts)
+    model.eval()
+
+    memory = PrototypeMemory(feature_dim=8, store_raw=False)
+    # Two prototypes from *different* tasks, equidistant from the query below
+    h_anchor = model.encoder(torch.randn(2, 16))
+    memory.register_task_batch(
+        features=h_anchor,
+        routing_dists=torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+        all_expert_outs=torch.zeros(2, 2, 10),
+        task_id=0,
+    )
+    memory.prototypes[1].task_id = 1
+    memory._invalidate_cache()
+
+    query = (h_anchor[0] + h_anchor[1]) / 2  # equidistant from both prototypes
+    model.set_prototype_routing(memory, alpha=1.0)
+    with torch.no_grad():
+        anchors, confidence = model._prototype_routing_anchor(query.unsqueeze(0))
+    assert confidence.item() < 0.05, f"ambiguous input should not be anchored: {confidence}"
+    assert anchors.shape == (1, 2)
+
+
+def test_attention_router_routing_expansion_and_lock():
+    from pal_moe.models.router import AttentionRouter
+
+    torch.manual_seed(0)
+    router = AttentionRouter(input_dim=16, num_experts=2, top_k=1, temperature=0.1)
+    h = torch.randn(8, 16)
+
+    weights, topk, logits = router(h)
+    assert weights.shape == (8, 2)
+    assert topk.shape == (8, 1)
+    # top-1 sparse routing: exactly one nonzero weight per sample
+    assert (weights > 0).sum(dim=1).eq(1).all()
+    assert logits.abs().max() <= 1.0 / 0.1 + 1e-4  # cosine logits are bounded
+
+    dist = router.get_full_distribution(h)
+    assert torch.allclose(dist.sum(dim=1), torch.ones(8), atol=1e-5)
+    assert (AttentionRouter.compute_entropy(dist) >= 0).all()
+
+    # Expansion keeps old keys and adds a prototype-aligned one
+    old_key0 = router.keys.data[0].clone()
+    new_id = router.add_expert(parent_id=0, prototype_feat=h[0])
+    assert new_id == 2 and router.num_experts == 3
+    assert torch.allclose(router.keys.data[0], old_key0)
+    aligned = torch.nn.functional.normalize(h[0], dim=0)
+    assert torch.dot(
+        torch.nn.functional.normalize(router.keys.data[2], dim=0), aligned
+    ) > 0.99
+
+    # Locked historical keys receive no gradient
+    router.lock_historical_routing(2)
+    logits = router._logits(h)
+    logits.sum().backward()
+    assert router.keys.grad[:2].abs().sum() == 0
+    assert router.keys.grad[2].abs().sum() > 0
+
+
+def test_router_anchor_distillation_learns_prototype_owners():
+    from pal_moe.adaptation.ttt import ContinualTrainer
+
+    torch.manual_seed(5)
+    encoder = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2, top_k=1, temperature=1.0)
+    experts = [
+        MLPExpert(input_dim=8, hidden_dim=8, num_classes=10, expert_id=i)
+        for i in range(2)
+    ]
+    model = DynamicMoE(encoder=encoder, router=router, experts=experts)
+    memory = PrototypeMemory(feature_dim=8, store_raw=False)
+
+    h = model.encoder(torch.randn(2, 16))
+    for i, owner in enumerate((0, 1)):
+        memory.register_task_batch(
+            features=h[i : i + 1],
+            routing_dists=torch.eye(2)[owner : owner + 1],
+            all_expert_outs=torch.zeros(1, 2, 10),
+            task_id=owner,
+            labels=torch.tensor([0]),
+            owner_expert=owner,
+        )
+
+    trainer = ContinualTrainer(
+        model=model,
+        prototype_memory=memory,
+        trigger=QuantitativeTrigger(),
+        builder=ExpertBuilder(),
+        device=torch.device("cpu"),
+    )
+    loss = trainer._distill_router_anchors(steps=300, lr=1e-2)
+    assert loss >= 0.0
+    preds = model.router.get_full_distribution(h).argmax(dim=1)
+    assert preds.tolist() == [0, 1]
+
+
 def test_conv_encoder_channels_and_feature_dim():
     default = SharedEncoder(input_dim=3072, hidden_dims=None, output_dim=128, arch="conv")
     # Default channels must reproduce the original 3-stage layout exactly

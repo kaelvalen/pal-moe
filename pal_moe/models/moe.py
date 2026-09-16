@@ -7,7 +7,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 from .encoder import SharedEncoder, EMAEncoder
 from .router import DynamicRouter
@@ -41,6 +41,11 @@ class DynamicMoE(nn.Module):
         else:
             self.ema_encoder = None
 
+        # Optional prototype-anchored inference routing (see set_prototype_routing)
+        self.prototype_memory = None
+        self.proto_routing_alpha = 0.0
+        self.proto_routing_threshold = None
+
         assert len(self.experts) == self.router.num_experts, (
             f"Expert count mismatch: {len(self.experts)} experts vs {self.router.num_experts} router heads"
         )
@@ -48,6 +53,116 @@ class DynamicMoE(nn.Module):
     @property
     def num_experts(self) -> int:
         return len(self.experts)
+
+    def set_prototype_routing(
+        self,
+        prototype_memory: Any,
+        alpha: float = 0.5,
+        threshold: Optional[float] = None,
+    ) -> None:
+        """
+        Enables prototype-anchored inference routing.
+
+        At inference time (model.eval()), each input is routed as
+            g_final = (1 - alpha * conf) * g_router + alpha * conf * r_p(nearest)
+        where `conf = clamp(1 - d1/d2, 0, 1)` is a threshold-free nearest-class-mean
+        confidence: d1 is the distance to the nearest stored prototype, d2 the
+        distance to the nearest prototype of a different task. Close, unambiguous
+        inputs inherit their prototype's historical routing distribution; distant
+        or ambiguous inputs keep the learned router. Training is untouched.
+        """
+        self.prototype_memory = prototype_memory
+        self.proto_routing_alpha = float(alpha)
+        self.proto_routing_threshold = threshold
+
+    @torch.no_grad()
+    def _prototype_routing_anchor(
+        self, h: torch.Tensor
+    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Returns (anchors [B, N], confidence [B, 1]) from a k-NN vote over the
+        stored prototypes.
+
+        The anchor distribution is a distance-weighted vote of the k nearest
+        prototypes' expert anchors (explicit owner experts when available):
+            w_p   = softmax(-d_p / d1)          (scale-free kernel, d1 = nearest)
+            A     = sum_p w_p * anchor_p
+            conf  = 1 - A_second / A_best       (vote margin, threshold-free)
+        Single-nearest-neighbour assignment is too brittle when task regions
+        overlap; the vote margin also gives a principled trust weight, so
+        ambiguous inputs keep the learned router.
+        """
+        mem = self.prototype_memory
+        if mem is None or mem.is_empty():
+            return None
+        v_mat = mem.get_prototype_matrix(h.device)
+        if v_mat is None:
+            return None
+        a_mat = mem.get_expert_anchor_matrix(self.num_experts, h.device)
+        if a_mat is None:
+            return None
+
+        dists = torch.cdist(h, v_mat)  # [B, P]
+        k = min(8, v_mat.size(0))
+        d_k, idx_k = torch.topk(dists, k=k, dim=-1, largest=False)  # [B, k]
+
+        tau = d_k[:, 0].clamp(min=1e-6).unsqueeze(-1)
+        weights = torch.softmax(-d_k / tau, dim=-1)  # [B, k]
+        anchors = torch.einsum("bk,bkn->bn", weights, a_mat[idx_k])  # [B, N]
+
+        if anchors.size(-1) > 1:
+            top2 = anchors.topk(2, dim=-1).values
+            confidence = (1.0 - top2[:, 1] / (top2[:, 0] + 1e-9)).clamp(
+                min=0.0, max=1.0
+            )
+        else:
+            confidence = torch.ones(anchors.size(0), device=h.device)
+
+        if self.proto_routing_threshold is not None:
+            close = (d_k[:, 0] <= self.proto_routing_threshold).float()
+            confidence = confidence * close
+
+        return anchors, confidence.unsqueeze(-1)
+
+    def _route(
+        self,
+        h: torch.Tensor,
+        top_k: Optional[int] = None,
+        need_logits: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Routing dispatch. Uses prototype anchoring in eval mode when enabled,
+        otherwise the learned router. `need_logits` avoids the extra router call
+        when routing information is not requested.
+        """
+        use_anchor = (
+            not self.training
+            and self.prototype_memory is not None
+            and self.proto_routing_alpha > 0
+        )
+        if use_anchor:
+            anchor = self._prototype_routing_anchor(h)
+            if anchor is not None:
+                anchors, confidence = anchor
+                dense = self.router.get_full_distribution(h)
+                weight = self.proto_routing_alpha * confidence
+                dense = (1.0 - weight) * dense + weight * anchors
+                k = top_k if top_k is not None else self.router.top_k
+                k = min(k, self.router.num_experts)
+                topk_probs, topk_idx = torch.topk(dense, k=k, dim=-1)
+                if k > 1:
+                    topk_probs = topk_probs / (
+                        topk_probs.sum(dim=-1, keepdim=True) + 1e-9
+                    )
+                routing_weights = torch.zeros_like(dense).scatter_(
+                    -1, topk_idx, topk_probs
+                )
+                if need_logits:
+                    _, _, router_logits = self.router(h, top_k=top_k)
+                else:
+                    router_logits = dense
+                return routing_weights, topk_idx, router_logits
+        return self.router(h, top_k=top_k)
 
     def forward(
         self,
@@ -65,7 +180,9 @@ class DynamicMoE(nn.Module):
         else:
             assert x is not None, "Either x or latent_h must be provided."
             h = self.encoder(x)
-        routing_weights, topk_idx, router_logits = self.router(h, top_k=top_k)
+        routing_weights, topk_idx, router_logits = self._route(
+            h, top_k=top_k, need_logits=return_routing_info
+        )
 
         batch_size = h.size(0)
         num_classes = self.experts[0].num_classes

@@ -16,35 +16,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import copy
 import json
-import time
 import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from torchvision import datasets, transforms
 from tabulate import tabulate
 
 from pal_moe.data.split_mnist import get_split_mnist_tasks
 from pal_moe.models.encoder import SharedEncoder
-from pal_moe.models.router import (
-    DynamicRouter,
-    DistanceRouter,
-    DistanceRouter,
-    DistanceRouter,
-)
+from pal_moe.models.router import DynamicRouter, DistanceRouter, AttentionRouter
 from pal_moe.models.expert import MLPExpert
-from pal_moe.models.moe import DynamicMoE, PALMoE
+from pal_moe.models.moe import DynamicMoE
 from pal_moe.memory.prototype_memory import PrototypeMemory
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
 from pal_moe.builder.expert_builder import ExpertBuilder
-from pal_moe.adaptation.ttt import ContinualTrainer, TestTimeAdapter
+from pal_moe.adaptation.ttt import ContinualTrainer
 from pal_moe.baselines.naive import NaiveFineTuning
 from pal_moe.baselines.der import DERPP, ERACE
 from pal_moe.baselines.agem import AGEM
 from pal_moe.baselines.icarl import ICaRL
 from pal_moe.baselines.ewc import EWC
 from pal_moe.baselines.replay import ReplayTrainer
-from pal_moe.baselines.standard_moe import StandardMoE
 from pal_moe.evaluation.metrics import ContinualEvaluator
 
 
@@ -81,6 +73,9 @@ def run_benchmark(
     feature_dim = args.feature_dim
     expert_hidden = args.expert_hidden
     conv_channels = tuple(int(c) for c in args.conv_channels.split(",") if c.strip())
+    # CIFAR fine-tunes the encoder online; --freeze_encoder keeps it fixed so the
+    # prototype anchors cannot go stale (mirrors the MNIST setup).
+    encoder_ft = dataset in ("cifar10", "cifar100") and not args.freeze_encoder
     selected = (
         {m.strip() for m in args.methods.split(",") if m.strip()}
         if args.methods
@@ -119,21 +114,10 @@ def run_benchmark(
         )
         num_tasks = len(tasks)
         input_dim = 3072
-        mnist_train = datasets.CIFAR10(
-            "./data",
-            train=True,
-            download=True,
-            transform=transforms.Compose(
-                [
-                    transforms.ToTensor(),
-                    transforms.Normalize(
-                        (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
-                    ),
-                ]
-            ),
-        )
+        # Reuse the train split built by the task loader (identical transforms)
+        # instead of instantiating a second CIFAR-10 dataset object.
         unlabeled_loader = torch.utils.data.DataLoader(
-            mnist_train,
+            tasks[0].train_loader.dataset.dataset,
             batch_size=256,
             shuffle=True,
             num_workers=args.num_workers,
@@ -163,21 +147,8 @@ def run_benchmark(
         )
         num_tasks = len(tasks)
         input_dim = 3072
-        cifar100_train = datasets.CIFAR100(
-            "./data",
-            train=True,
-            download=True,
-            transform=transforms.Compose(
-                [
-                    transforms.ToTensor(),
-                    transforms.Normalize(
-                        (0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)
-                    ),
-                ]
-            ),
-        )
         unlabeled_loader = torch.utils.data.DataLoader(
-            cifar100_train,
+            tasks[0].train_loader.dataset.dataset,
             batch_size=256,
             shuffle=True,
             num_workers=args.num_workers,
@@ -200,16 +171,10 @@ def run_benchmark(
         )
         num_tasks = len(tasks)
         input_dim = 784
-        mnist_train = datasets.MNIST(
-            "./data",
-            train=True,
-            download=True,
-            transform=transforms.Compose(
-                [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
-            ),
-        )
         unlabeled_loader = torch.utils.data.DataLoader(
-            mnist_train, batch_size=256, shuffle=True
+            tasks[0].train_loader.dataset.dataset,
+            batch_size=256,
+            shuffle=True,
         )
         base_encoder = SharedEncoder(
             input_dim=input_dim,
@@ -218,6 +183,9 @@ def run_benchmark(
             arch="mlp",
         ).to(device)
         base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
+        base_encoder.freeze()
+
+    if args.freeze_encoder:
         base_encoder.freeze()
 
     print(
@@ -614,6 +582,10 @@ def run_benchmark(
         dyn_router = DistanceRouter(
             input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.05
         ).to(device)
+    elif args.router_type == "attention":
+        dyn_router = AttentionRouter(
+            input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.1
+        ).to(device)
     else:
         dyn_router = DynamicRouter(
             input_dim=feature_dim, num_experts=1, top_k=1, temperature=1.0
@@ -658,16 +630,25 @@ def run_benchmark(
         builder=builder,
         lambda_r=0.5,
         lambda_e=2.5,
-        lambda_enc=0.5 if dataset in ("cifar10", "cifar100") else 0.0,
-        encoder_lr=1e-4 if dataset in ("cifar10", "cifar100") else None,
+        lambda_enc=0.5 if encoder_ft else 0.0,
+        encoder_lr=1e-4 if encoder_ft else None,
         lr=1e-3,
         max_experts=6,
         joint_keep_routing_lock=args.joint_keep_routing_lock,
         joint_freeze_router=args.joint_freeze_router,
         lambda_ood=args.lambda_ood,
+        router_anchor_steps=args.router_anchor_steps,
+        router_anchor_lr=args.router_anchor_lr,
         device=device,
+        checkpoint_dir=os.path.join(output_dir, "checkpoints_palmoe"),
     )
     evaluator_dynamic = ContinualEvaluator(num_tasks=num_tasks, device=device)
+    if args.proto_routing_alpha > 0:
+        moe_model.set_prototype_routing(
+            prototype_mem,
+            alpha=args.proto_routing_alpha,
+            threshold=args.proto_routing_threshold,
+        )
 
     for t_idx, task in enumerate(tasks if run("palmoe") else []):
         print(
@@ -723,6 +704,10 @@ def run_benchmark(
         hyb_router = DistanceRouter(
             input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.05
         ).to(device)
+    elif args.router_type == "attention":
+        hyb_router = AttentionRouter(
+            input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.1
+        ).to(device)
     else:
         hyb_router = DynamicRouter(
             input_dim=feature_dim, num_experts=1, top_k=1, temperature=1.0
@@ -762,8 +747,8 @@ def run_benchmark(
         builder=builder_hyb,
         lambda_r=0.5,
         lambda_e=2.5,
-        lambda_enc=0.5 if dataset in ("cifar10", "cifar100") else 0.0,
-        encoder_lr=1e-4 if dataset in ("cifar10", "cifar100") else None,
+        lambda_enc=0.5 if encoder_ft else 0.0,
+        encoder_lr=1e-4 if encoder_ft else None,
         replay_exemplars=True,
         lambda_replay=1.0,
         lr=1e-3,
@@ -771,9 +756,18 @@ def run_benchmark(
         joint_keep_routing_lock=args.joint_keep_routing_lock,
         joint_freeze_router=args.joint_freeze_router,
         lambda_ood=args.lambda_ood,
+        router_anchor_steps=args.router_anchor_steps,
+        router_anchor_lr=args.router_anchor_lr,
         device=device,
+        checkpoint_dir=os.path.join(output_dir, "checkpoints_hybrid"),
     )
     evaluator_hyb = ContinualEvaluator(num_tasks=num_tasks, device=device)
+    if args.proto_routing_alpha > 0:
+        moe_hyb.set_prototype_routing(
+            prototype_mem_hyb,
+            alpha=args.proto_routing_alpha,
+            threshold=args.proto_routing_threshold,
+        )
 
     for t_idx, task in enumerate(tasks if run("hybrid") else []):
         print(
@@ -919,6 +913,38 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--freeze_encoder",
+        action="store_true",
+        help="Keep the pretrained encoder fixed (recommended for prototype-anchored CIFAR runs)",
+    )
+    parser.add_argument(
+        "--proto_routing_alpha",
+        type=float,
+        default=0.0,
+        help="Prototype-anchored inference routing weight (0 = off, 1 = pure prototype routing)",
+    )
+    parser.add_argument(
+        "--proto_routing_threshold",
+        type=float,
+        default=None,
+        help="Max prototype distance for anchoring (None = memory distance_threshold)",
+    )
+    parser.add_argument(
+        "--router_anchor_steps",
+        type=int,
+        default=0,
+        help=(
+            "End-of-task router distillation steps onto the explicit prototype "
+            "owners (zero-replay; 0 = off)"
+        ),
+    )
+    parser.add_argument(
+        "--router_anchor_lr",
+        type=float,
+        default=1e-3,
+        help="Learning rate for the router anchor distillation",
+    )
+    parser.add_argument(
         "--anchor",
         action="store_true",
         help="Enable null-space routing anchoring (experimental; measured harmful on Split-MNIST)",
@@ -933,7 +959,10 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--router_type", type=str, default="dynamic", choices=["dynamic", "distance"]
+        "--router_type",
+        type=str,
+        default="dynamic",
+        choices=["dynamic", "distance", "attention"],
     )
     parser.add_argument(
         "--max_proto_drop",
