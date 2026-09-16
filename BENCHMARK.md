@@ -98,6 +98,14 @@ which overrides CLI defaults):
 | `--proto_routing_threshold` | off | Optional absolute distance gate on top of the confidence weight |
 | `--methods` | all | comma-separated subset: `naive, ewc, replay60, replay360, replay250, derpp, erace, agem, icarl, stdmoe, palmoe, hybrid` |
 | `--num_workers` | 0 | DataLoader workers (results-neutral, see design fact 8) |
+| `--feature_cache` | off | Precompute frozen-encoder features and run the whole pipeline on them (requires `--freeze_encoder`; mathematically equivalent, removes all encoder work from training) |
+| `--proto_samples` | 256 | Training samples registered into prototype memory per task |
+| `--proto_threshold` | 0.5 | Prototype merge distance; `auto` = median nearest-neighbour distance of the registration batch (scale-free) |
+| `--proto_per_class` | off | Class-balanced eviction group size (None = per-task eviction) |
+| `--top_k` | 1 | Experts mixed per input (1 = hard top-1, >1 = soft mixture) |
+| `--joint_calib_epochs` | 5 | End-of-task joint latent calibration epochs (0 = disable) |
+| `--refresh_anchors_after_calib` | off | Recompute prototype `r_p`/`o_p` anchors with the calibrated model |
+| `--keep_optimizer_state` | off | Carry Adam moments across task/expansion optimizer rebuilds |
 
 **Prototype-anchored inference routing** is the zero-replay answer to the recency
 funnel: training is untouched, but at inference an input close to a stored
@@ -155,6 +163,31 @@ registration produces identical prototypes) before being kept:
 | Vectorized expert utilization/MI metrics (was a per-sample Python loop) | removes O(N) host syncs per test pass |
 | Reuse the split loader's dataset for the SimCLR loader | one CIFAR dataset instance instead of two |
 | Frozen encoders stay in `eval()` during task phases | no silent BatchNorm drift for "frozen" representations |
+| `--feature_cache` (frozen encoder): precompute h(x) per split, run training/calibration/distillation/registration/eval on the cache | removes all conv forward/backward from the loop (CIFAR-10 cache ≈ 25 MB fp16); measured **2.15× end-to-end** on the 1-epoch Split-MNIST CPU smoke (23.6 s vs 50.8 s, including the uncached pretraining phase, so the cached fraction is faster still); the effect grows with encoder size |
+| Loss history accumulated on-device, converted once per task (was 4 `.item()` syncs per batch) | removes ~280 host syncs per task |
+| `--keep_optimizer_state`: Adam moments carried across optimizer rebuilds (matched by parameter name) | preserves momentum across tasks/expansions (opt-in) |
+
+### Router/dynamics knobs and the planned ablation grid
+
+The mechanism stack (OOD negative-boundary loss, joint latent calibration and
+router-anchor distillation) is currently all enabled in the big configs; their
+individual contributions are **not yet measured** (design fact 11 only isolates
+the distillation indirectly). The flags now support the controlled grid:
+
+```bash
+# Distillation on/off  x  OOD on/off  x  calibration on/off (pure, frozen, CIFAR)
+for ood in 0.0 0.1; do for calib in 0 5; do for dist in 0 300; do
+  python experiments/run_benchmark.py --dataset cifar10 --device cuda \
+    --feature_cache --freeze_encoder --methods palmoe --epochs 5 --pretrain_epochs 50 \
+    --lambda_ood $ood --joint_calib_epochs $calib --router_anchor_steps $dist \
+    --proto_threshold auto --output_dir results/ablation/ood${ood}_calib${calib}_dist${dist}
+done; done; done
+```
+
+Still open (deliberately deferred until a validation run is possible): folding
+the twelve copy-pasted method blocks in `run_benchmark.py` into a registry
+(two shared factories for the router and prototype memory are already
+extracted).
 
 ## Measured design facts (controlled experiments)
 

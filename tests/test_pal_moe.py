@@ -196,6 +196,286 @@ def test_router_anchor_distillation_learns_prototype_owners():
     assert preds.tolist() == [0, 1]
 
 
+def test_rejected_expansion_owner_is_newest_expert():
+    """
+    Regression: when the validation gate rejects expansion, the task's
+    prototypes must be owned by the *newest* expert (the one the task phase
+    trained), not by the trigger's best parent — anchoring to the parent
+    conflated two tasks on one expert and collapsed the rejected task
+    (MNIST hybrid 81.1% -> 71.1% before the fix).
+    """
+    from pal_moe.adaptation.ttt import ContinualTrainer
+    from pal_moe.builder.expert_builder import ValidationGateResult
+    from pal_moe.trigger.expert_trigger import TriggerEvaluationResult
+    from torch.utils.data import DataLoader, TensorDataset
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2, top_k=1)
+    experts = [
+        MLPExpert(input_dim=8, hidden_dim=8, num_classes=4, expert_id=i)
+        for i in range(2)
+    ]
+    model = DynamicMoE(encoder=enc, router=router, experts=experts)
+
+    class AlwaysTrigger:
+        def evaluate(self, model, x, y=None, prototype_memory=None):
+            return TriggerEvaluationResult(
+                should_trigger=True,
+                composite_score=99.0,
+                loss_best_expert=1.0,
+                router_entropy=0.0,
+                proto_distance=1.0,
+                max_confidence=0.0,
+                best_parent_expert_idx=0,  # wrong owner under the old behaviour
+            )
+
+    class RejectingBuilder:
+        def create_candidate_from_parent(self, parent_expert, **kwargs):
+            return parent_expert.clone_function_preserving(**kwargs)
+
+        def train_candidate(self, **kwargs):
+            return 0.0
+
+        def validate_candidate(self, **kwargs):
+            return ValidationGateResult(
+                passed=False,
+                new_task_acc=0.1,
+                old_proto_loss_diff=9.9,
+                ece=0.0,
+                train_loss=0.0,
+                val_loss=0.0,
+                rejection_reason="forced rejection",
+            )
+
+        def enforce_capacity_control(self, model, prototype_memory=None, max_experts=8):
+            return {"actions": [], "final_num_experts": model.num_experts}
+
+    x = torch.randn(16, 16)
+    y = torch.randint(0, 4, (16,))
+    loader = DataLoader(TensorDataset(x, y), batch_size=8)
+    memory = PrototypeMemory(feature_dim=8, store_raw=False)
+
+    trainer = ContinualTrainer(
+        model=model,
+        prototype_memory=memory,
+        trigger=AlwaysTrigger(),
+        builder=RejectingBuilder(),
+        device=torch.device("cpu"),
+    )
+    history = trainer.train_task(
+        task_id=1, train_loader=loader, val_loader=loader, epochs=1
+    )
+
+    assert history["gate_rejections"] == 1
+    assert history["experts_added"] == 0
+    assert model.num_experts == 2
+    registered = [p for p in memory.prototypes if p.task_id == 1]
+    assert registered, "expected prototypes for the rejected task"
+    assert all(p.owner_expert == 1 for p in registered), (
+        f"owners must be the newest expert (1); got "
+        f"{sorted({p.owner_expert for p in registered})}"
+    )
+
+
+def test_feature_cache_matches_raw_encoder():
+    from pal_moe.data.feature_cache import build_feature_cache
+    from torch.utils.data import DataLoader, TensorDataset
+
+    class DummyTask:
+        def __init__(self, task_id, loader):
+            self.task_id = task_id
+            self.classes = (0, 1)
+            self.train_loader = loader
+            self.val_loader = loader
+            self.test_loader = loader
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    enc.freeze()
+    x = torch.randn(12, 16)
+    y = torch.randint(0, 4, (12,))
+    loader = DataLoader(TensorDataset(x, y), batch_size=12, shuffle=False)
+    tasks = [DummyTask(0, loader)]
+
+    cache = build_feature_cache(
+        enc, tasks, torch.device("cpu"), dtype=torch.float32, verbose=False
+    )
+    h_cached, y_cached = next(iter(cache.tasks[0].test_loader))
+    with torch.no_grad():
+        h_raw = enc(x)
+    assert torch.allclose(h_cached, h_raw, atol=1e-5)
+    assert torch.equal(y_cached, y)
+    assert cache.encoder.output_dim == 8
+    assert torch.allclose(cache.encoder(h_cached), h_cached)
+
+    # A model on cached features must produce the same logits as on raw inputs
+    raw_model = DynamicMoE(
+        encoder=enc,
+        router=DynamicRouter(input_dim=8, num_experts=2, top_k=1),
+        experts=[
+            MLPExpert(input_dim=8, hidden_dim=8, num_classes=4, expert_id=i)
+            for i in range(2)
+        ],
+    )
+    cached_model = DynamicMoE(
+        encoder=cache.encoder,
+        router=DynamicRouter(input_dim=8, num_experts=2, top_k=1),
+        experts=[
+            MLPExpert(input_dim=8, hidden_dim=8, num_classes=4, expert_id=i)
+            for i in range(2)
+        ],
+    )
+    cached_model.load_state_dict(
+        {k.replace("encoder.", "encoder.", 1): v for k, v in raw_model.state_dict().items()},
+        strict=False,
+    )
+    with torch.no_grad():
+        out_raw = raw_model(x)
+        out_cached = cached_model(h_cached)
+    assert torch.allclose(out_raw, out_cached, atol=1e-5)
+
+
+def test_prototype_auto_threshold_and_class_balanced_eviction():
+    torch.manual_seed(0)
+    memory = PrototypeMemory(
+        feature_dim=4, distance_threshold=None, max_prototypes=8,
+        max_prototypes_per_class=2,
+    )
+    torch.manual_seed(0)
+    cluster_a = torch.randn(10, 4) * 0.01
+    cluster_b = torch.randn(10, 4) * 0.01 + 5.0
+    feats = torch.cat([cluster_a, cluster_b], dim=0)
+    labels = torch.cat([torch.zeros(10, dtype=torch.long), torch.ones(10, dtype=torch.long)])
+    routing = torch.softmax(torch.randn(20, 2), dim=-1)
+    outs = torch.randn(20, 2, 4)
+    memory.register_task_batch(
+        features=feats, routing_dists=routing, all_expert_outs=outs,
+        task_id=0, labels=labels,
+    )
+    assert memory.distance_threshold is not None and memory.distance_threshold > 0
+    # Scale-free clustering must compress the batch meaningfully instead of the
+    # old "every sample becomes a prototype" behaviour (exact ratio is a tuning
+    # knob; the ablation grid selects it).
+    assert len(memory.prototypes) <= len(feats) // 2, (
+        f"clustering ineffective: {len(memory.prototypes)} prototypes for "
+        f"{len(feats)} samples"
+    )
+    # An explicitly tiny threshold must reproduce one-prototype-per-sample
+    tight = PrototypeMemory(feature_dim=4, distance_threshold=1e-6)
+    tight.register_task_batch(
+        features=feats,
+        routing_dists=torch.softmax(torch.randn(20, 2), dim=-1),
+        all_expert_outs=torch.randn(20, 2, 4),
+        task_id=0,
+        labels=labels,
+    )
+    assert len(tight.prototypes) == len(feats)
+
+    # Class-balanced eviction: both classes survive under the quota
+    memory2 = PrototypeMemory(
+        feature_dim=4, distance_threshold=1e-6, max_prototypes=2,
+        max_prototypes_per_class=1,
+    )
+    feats2 = torch.tensor(
+        [[0.0, 0, 0, 0], [10.0, 0, 0, 0], [20.0, 0, 0, 0]]
+    )
+    labels2 = torch.tensor([0, 0, 1])
+    memory2.register_task_batch(
+        features=feats2,
+        routing_dists=torch.softmax(torch.randn(3, 2), dim=-1),
+        all_expert_outs=torch.randn(3, 2, 4),
+        task_id=0,
+        labels=labels2,
+    )
+    kept_labels = sorted(PrototypeMemory._label_of(p) for p in memory2.prototypes)
+    assert kept_labels == [0, 1], f"class balance broken: {kept_labels}"
+
+
+def test_optimizer_state_is_carried_across_rebuilds():
+    from pal_moe.adaptation.ttt import ContinualTrainer
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    model = DynamicMoE(
+        encoder=enc,
+        router=DynamicRouter(input_dim=8, num_experts=1, top_k=1),
+        experts=[MLPExpert(input_dim=8, hidden_dim=8, num_classes=4, expert_id=0)],
+    )
+    trainer = ContinualTrainer(
+        model=model,
+        prototype_memory=PrototypeMemory(feature_dim=8, store_raw=False),
+        trigger=QuantitativeTrigger(),
+        builder=ExpertBuilder(),
+        keep_optimizer_state=True,
+        device=torch.device("cpu"),
+    )
+    x = torch.randn(4, 16)
+    out = model(x).sum()
+    out.backward()
+    trainer.optimizer.step()
+    before = {id(p): s["step"].item() for p, s in trainer.optimizer.state.items() if "step" in s}
+    assert before, "optimizer state should be populated after a step"
+
+    rebuilt = trainer._build_optimizer()
+    after = {id(p): s["step"].item() for p, s in rebuilt.state.items() if "step" in s}
+    assert after == before, "Adam moments must survive optimizer rebuilds"
+
+
+def test_soft_top_k_mixture_routing():
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=3, top_k=2)
+    experts = [
+        MLPExpert(input_dim=8, hidden_dim=8, num_classes=4, expert_id=i)
+        for i in range(3)
+    ]
+    model = DynamicMoE(encoder=enc, router=router, experts=experts)
+    x = torch.randn(6, 16)
+    with torch.no_grad():
+        weights, topk, _ = model.router(model.encoder(x))
+    assert (weights > 0).sum(dim=1).eq(2).all()  # exactly two experts per input
+    assert torch.allclose(weights.sum(dim=1), torch.ones(6), atol=1e-5)
+    with torch.no_grad():
+        out = model(x)
+    assert out.shape == (6, 4) and torch.isfinite(out).all()
+
+
+def test_refresh_anchors_updates_targets():
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    model = DynamicMoE(
+        encoder=enc,
+        router=DynamicRouter(input_dim=8, num_experts=2, top_k=1),
+        experts=[
+            MLPExpert(input_dim=8, hidden_dim=8, num_classes=4, expert_id=i)
+            for i in range(2)
+        ],
+    )
+    memory = PrototypeMemory(feature_dim=8, store_raw=False)
+    h = model.encoder(torch.randn(4, 16))
+    memory.register_task_batch(
+        features=h,
+        routing_dists=torch.softmax(torch.randn(4, 2), dim=-1),
+        all_expert_outs=torch.randn(4, 2, 4),
+        task_id=0,
+        labels=torch.zeros(4, dtype=torch.long),
+    )
+    old_rp = memory.prototypes[0].r_p.clone()
+    old_op = memory.prototypes[0].o_p.clone()
+    with torch.no_grad():
+        model.router.gate.weight.mul_(0.5)
+        for e in model.experts:
+            e.fc2.weight.mul_(1.5)
+    refreshed = memory.refresh_anchors(model)
+    assert refreshed == len(memory.prototypes)
+    assert not torch.allclose(memory.prototypes[0].r_p, old_rp)
+    assert not torch.allclose(memory.prototypes[0].o_p, old_op)
+    with torch.no_grad():
+        expected_rp = model.router.get_full_distribution(memory.get_prototype_matrix(torch.device("cpu")))[0]
+    assert torch.allclose(memory.prototypes[0].r_p, expected_rp.cpu(), atol=1e-5)
+
+
 def test_conv_encoder_channels_and_feature_dim():
     default = SharedEncoder(input_dim=3072, hidden_dims=None, output_dim=128, arch="conv")
     # Default channels must reproduce the original 3-stage layout exactly
