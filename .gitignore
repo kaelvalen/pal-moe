@@ -80,6 +80,7 @@ wandb/
 .vscode/
 *.swp
 *.swo
+*.rswp
 *~
 .DS_Store
 Thumbs.db
