@@ -29,7 +29,11 @@ class Prototype:
     # anchor, robust to router collapse). None = derive from r_p.
     owner_expert: Optional[int] = None
     x_p: Optional[torch.Tensor] = None  # [num_exemplars, feature_dim]
-    y_p: Optional[torch.Tensor] = None  # [num_exemplars] (labels for Acc_proto)
+    y_p: Optional[torch.Tensor] = None  # [num_exemplars] labels of those exemplars
+    # x_p/y_p serve two roles: (1) the joint-calibration exemplar batch
+    # (features + labels) and (2) extra router-stability anchors (each exemplar
+    # row is treated as a prototype centre whose r_p target is the prototype's).
+    # They contain no raw inputs.
     raw_x: Optional[torch.Tensor] = (
         None  # [num_exemplars, input_dim] (raw inputs for refresh)
     )
@@ -45,11 +49,12 @@ class PrototypeMemory:
     def __init__(
         self,
         feature_dim: int = 128,
-        distance_threshold: float = 0.5,
+        distance_threshold: Optional[float] = 0.5,
         ema_alpha: float = 0.9,
         max_prototypes: int = 50,
         exemplars_per_proto: int = 5,
         store_raw: bool = False,
+        max_prototypes_per_class: Optional[int] = None,
     ):
         self.feature_dim = feature_dim
         self.distance_threshold = distance_threshold
@@ -57,6 +62,9 @@ class PrototypeMemory:
         self.max_prototypes = max_prototypes
         self.exemplars_per_proto = exemplars_per_proto
         self.store_raw = store_raw
+        # When set, eviction keeps a per-(task, class) budget instead of a
+        # per-task one, preventing majority classes from crowding out the rest.
+        self.max_prototypes_per_class = max_prototypes_per_class
 
         self.prototypes: List[Prototype] = []
 
@@ -436,6 +444,16 @@ class PrototypeMemory:
         """
         if features.size(0) == 0:
             return
+        if self.distance_threshold is None:
+            # Scale-free calibration (see _auto_threshold): a fixed absolute
+            # threshold is meaningless across feature spaces — measured nearest
+            # prototype distances on Split-CIFAR are ~6.5-7.2, so the old 0.5
+            # effectively turned every sample into its own prototype.
+            self.distance_threshold = self._auto_threshold(features)
+            print(
+                f"    [prototype] auto distance threshold = "
+                f"{self.distance_threshold:.3f}"
+            )
         work_matrix = (
             torch.stack([p.v_p for p in self.prototypes], dim=0)
             if self.prototypes
@@ -455,22 +473,85 @@ class PrototypeMemory:
                 owner_expert=owner_expert,
             )
 
+    @torch.no_grad()
+    def _auto_threshold(self, features: torch.Tensor, quantile: float = 1.0) -> float:
+        """
+        Scale-free threshold calibration: the median nearest-neighbour distance
+        inside the registration batch, times `quantile`. Points closer than the
+        typical local spacing merge (via EMA chaining), so a dense region
+        collapses to a few centroids while distinct clusters stay apart — unlike
+        a fixed absolute threshold, which is meaningless across feature spaces.
+        """
+        x = features.detach().float()
+        if x.size(0) < 2:
+            return 0.5
+        dists = torch.cdist(x, x)
+        dists.fill_diagonal_(float("inf"))
+        nearest = dists.min(dim=1).values
+        value = float(nearest.median().item()) * quantile
+        return max(value, 1e-6)
+
+    @staticmethod
+    def _label_of(proto: Prototype) -> int:
+        if proto.y_p is not None and proto.y_p.numel() > 0:
+            return int(proto.y_p[0].item())
+        return -1
+
+    @torch.no_grad()
+    def refresh_anchors(self, model: Any) -> int:
+        """
+        Recomputes the routing (`r_p`) and expert-output (`o_p`) anchors of every
+        prototype with the CURRENT model, e.g. after joint calibration.
+
+        Rationale: the stability losses anchor the next task's training to these
+        targets. If they were recorded before calibration (which unfreezes and
+        updates all experts), the targets are stale and the stability MSE fights
+        the calibration improvements. Refreshing them keeps the anchor semantics
+        ("do not change what the calibrated model does on old prototypes")
+        consistent. Returns the number of refreshed prototypes.
+        """
+        if self.is_empty():
+            return 0
+        device = next(model.parameters()).device
+        v_mat = self.get_prototype_matrix(device)
+        if v_mat is None:
+            return 0
+        routing = model.router.get_full_distribution(v_mat)
+        outputs = model.get_all_expert_outputs(v_mat)  # [P, N, C]
+        for i, proto in enumerate(self.prototypes):
+            proto.r_p = routing[i].detach().cpu()
+            proto.o_p = outputs[i].detach().cpu()
+        self._invalidate_cache()
+        return len(self.prototypes)
+
     def _prune_or_merge_least_used(self) -> None:
         """
-        Prunes prototype from the most overrepresented task with lowest assignment count
-        to maintain balanced task representation within the memory budget.
+        Evicts the least-used prototype from the most overrepresented group.
+        With `max_prototypes_per_class` the group is (task, class), which keeps a
+        per-class budget; otherwise it is the task (the original behaviour).
         """
         if not self.prototypes:
             return
         from collections import Counter
 
-        task_counts = Counter([p.task_id for p in self.prototypes])
-        overrepresented_task = max(task_counts, key=task_counts.get)
-        candidates = [
-            (i, p.count)
-            for i, p in enumerate(self.prototypes)
-            if p.task_id == overrepresented_task
-        ]
+        if self.max_prototypes_per_class is not None:
+            groups = Counter(
+                (p.task_id, self._label_of(p)) for p in self.prototypes
+            )
+            overrepresented = max(groups, key=groups.get)
+            candidates = [
+                (i, p.count)
+                for i, p in enumerate(self.prototypes)
+                if (p.task_id, self._label_of(p)) == overrepresented
+            ]
+        else:
+            task_counts = Counter([p.task_id for p in self.prototypes])
+            overrepresented_task = max(task_counts, key=task_counts.get)
+            candidates = [
+                (i, p.count)
+                for i, p in enumerate(self.prototypes)
+                if p.task_id == overrepresented_task
+            ]
         min_idx = min(candidates, key=lambda x: x[1])[0]
         del self.prototypes[min_idx]
         self._invalidate_cache()

@@ -240,6 +240,12 @@ class EMAEncoder(nn.Module):
     Maintains an exponential moving average (EMA) copy of the encoder:
         theta_ema = beta * theta_ema + (1 - beta) * theta_online
     This ensures representation stability for prototype memory and routing features.
+
+    Note: the benchmark runner currently constructs every DynamicMoE with
+    ``use_ema_encoder=False`` (the frozen-encoder recipe makes the EMA copy
+    redundant), so this path is not exercised by the published results. It is
+    kept for online-encoder experiments; `PrototypeMemory.refresh_representations`
+    accepts either the EMA or the online encoder.
     """
 
     def __init__(self, encoder: SharedEncoder, decay: float = 0.99):
