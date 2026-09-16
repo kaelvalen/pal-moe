@@ -59,7 +59,7 @@ Repository = "https://github.com/kaelvalen/pal-moe.git"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["pal_moe*", "dynamic_moe*"]
+include = ["pal_moe*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
