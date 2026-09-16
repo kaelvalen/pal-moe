@@ -131,6 +131,10 @@ python experiments/run_benchmark.py --config configs/mnist_default.json --device
 # Big CIFAR-10 run (wide encoder, 15 epochs/task, frozen encoder — see BENCHMARK.md)
 python experiments/run_benchmark.py --config configs/cifar10_big_frozen.json --device cuda
 
+# Same recipe with frozen-feature caching (faster, mathematically equivalent)
+python experiments/run_benchmark.py --config configs/cifar10_big_frozen.json \
+  --feature_cache --device cuda
+
 # Run only a subset of methods (fast iteration)
 python experiments/run_benchmark.py --dataset cifar10 --methods palmoe,hybrid --device cuda
 

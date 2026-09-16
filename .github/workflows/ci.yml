@@ -119,3 +119,23 @@ jobs:
         assert pure > naive, f"pure PAL-MoE should beat naive fine-tuning: {pure:.2%} vs {naive:.2%}"
         print("benchmark-verify OK")
         PY
+    - name: CPU smoke: feature-cache + frozen encoder + router-anchor distillation
+      run: |
+        python experiments/run_benchmark.py --epochs 1 --device cpu --methods palmoe \
+          --freeze_encoder --feature_cache --router_anchor_steps 50 \
+          --proto_threshold auto --output_dir /tmp/ci-distill
+    - name: Assert distillation smoke + run metadata
+      run: |
+        python - <<'PY'
+        import json
+        d = json.load(open("/tmp/ci-distill/benchmark_results_seed42.json"))
+        assert "PAL-MoE (Ours)" in d, "distill smoke produced no PAL-MoE entry"
+        pure = d["PAL-MoE (Ours)"]["acc"]
+        print(f"distill smoke pure={pure:.2%}")
+        assert pure > 0.20, f"distillation smoke bound failed: {pure:.2%}"
+        meta = json.load(open("/tmp/ci-distill/benchmark_meta_seed42.json"))
+        assert meta["args"]["feature_cache"] is True
+        assert meta["args"]["router_anchor_steps"] == 50
+        assert "git_commit" in meta and "duration_sec" in meta
+        print("distillation smoke OK")
+        PY
