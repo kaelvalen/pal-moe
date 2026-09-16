@@ -46,6 +46,10 @@ class ContinualTrainer:
         lambda_ood: float = 0.0,
         router_anchor_steps: int = 0,
         router_anchor_lr: float = 1e-3,
+        joint_calib_epochs: int = 5,
+        proto_samples: int = 256,
+        refresh_anchors_after_calib: bool = False,
+        keep_optimizer_state: bool = False,
         checkpoint_dir: Optional[str] = None,
         device: torch.device = torch.device("cpu"),
     ):
@@ -84,6 +88,10 @@ class ContinualTrainer:
         self.lambda_ood = lambda_ood
         self.router_anchor_steps = router_anchor_steps
         self.router_anchor_lr = router_anchor_lr
+        self.joint_calib_epochs = joint_calib_epochs
+        self.proto_samples = proto_samples
+        self.refresh_anchors_after_calib = refresh_anchors_after_calib
+        self.keep_optimizer_state = keep_optimizer_state
         self.checkpoint_dir = checkpoint_dir
         self.device = device
 
@@ -106,7 +114,26 @@ class ContinualTrainer:
             param_groups = [
                 {"params": [torch.nn.Parameter(torch.zeros(1))], "lr": self.lr}
             ]
-        return torch.optim.Adam(param_groups, weight_decay=1e-5)
+        optimizer = torch.optim.Adam(param_groups, weight_decay=1e-5)
+
+        # Optional: carry Adam moments across rebuilds (each task/expansion
+        # currently recreates the optimizer, which resets momentum for the
+        # router and the historical experts). State is matched by parameter
+        # name, so the mapping survives expert/router growth.
+        previous = getattr(self, "optimizer", None)
+        if self.keep_optimizer_state and previous is not None:
+            name_of = {id(p): n for n, p in self.model.named_parameters()}
+            old_state = {}
+            for group in previous.param_groups:
+                for p in group["params"]:
+                    if p in previous.state:
+                        old_state[name_of.get(id(p))] = previous.state[p]
+            for group in optimizer.param_groups:
+                for p in group["params"]:
+                    state = old_state.get(name_of.get(id(p)))
+                    if state is not None:
+                        optimizer.state[p] = state
+        return optimizer
 
     def _distill_router_anchors(self, steps: int, lr: float) -> float:
         """
@@ -122,6 +149,16 @@ class ContinualTrainer:
         ]
         if not owned or steps <= 0:
             return 0.0
+
+        # Guard: distilling with a trainable encoder would fit stale prototype
+        # features (recorded before the encoder moved). Only a frozen encoder (or
+        # refreshed prototypes) keeps the targets meaningful.
+        if any(p.requires_grad for p in self.model.encoder.parameters()):
+            print(
+                "      [router-anchor] WARNING: encoder has trainable parameters; "
+                "prototype anchors may be stale. Use --freeze_encoder (or refresh "
+                "prototypes) for correct distillation."
+            )
 
         vp = torch.stack([p.v_p for p in owned], dim=0).to(self.device)
         y_owner = torch.tensor(
@@ -302,6 +339,10 @@ class ContinualTrainer:
 
         # Step 5: Continual Training loop with joint stability loss
 
+        # Per-batch losses are accumulated on-device and converted once, instead
+        # of four host synchronisations (.item()) per batch.
+        _loss_rows: list = []
+
         for epoch in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
@@ -375,10 +416,23 @@ class ContinualTrainer:
                 # Update EMA encoder if enabled
                 self.model.update_ema_encoder()
 
-                history["loss_total"].append(loss.item())
-                history["loss_task"].append(loss_task.item())
-                history["loss_router_stab"].append(l_router_stab.item())
-                history["loss_expert_stab"].append(l_expert_stab.item())
+                _loss_rows.append(
+                    torch.stack(
+                        [
+                            loss.detach(),
+                            loss_task.detach(),
+                            l_router_stab.detach(),
+                            l_expert_stab.detach(),
+                        ]
+                    )
+                )
+
+        if _loss_rows:
+            rows = torch.stack(_loss_rows).cpu().tolist()
+            history["loss_total"] = [r[0] for r in rows]
+            history["loss_task"] = [r[1] for r in rows]
+            history["loss_router_stab"] = [r[2] for r in rows]
+            history["loss_expert_stab"] = [r[3] for r in rows]
 
         # Step 6: Register task prototypes into memory with labels and raw exemplars across batches
         self.model.eval()
@@ -399,7 +453,7 @@ class ContinualTrainer:
                     owner_expert=task_expert_id,
                 )
                 registered_count += x.size(0)
-                if registered_count >= 256:
+                if registered_count >= self.proto_samples:
                     break
 
         # Step 7: Representation refresh if encoder is active/EMA to avoid drift
@@ -424,7 +478,11 @@ class ContinualTrainer:
         #      the regions learned during each task-phase, so it can never be stolen.
         #      Only the experts calibrate on the shared exemplar set. The newest row
         #      is re-unlocked afterwards for the next task's training phase.
-        if task_id > 0 and not self.prototype_memory.is_empty():
+        if (
+            task_id > 0
+            and not self.prototype_memory.is_empty()
+            and self.joint_calib_epochs > 0
+        ):
             self.model.train()
             exemplar_batch = self.prototype_memory.get_exemplar_batch(self.device)
             if exemplar_batch is not None:
@@ -445,7 +503,7 @@ class ContinualTrainer:
                         else:
                             self.model.unfreeze_all_experts()
                         self.optimizer = self._build_optimizer()
-                    for _ in range(5):  # 5 epochs of joint calibration
+                    for _ in range(self.joint_calib_epochs):
                         self.optimizer.zero_grad()
                         # Full joint forward pass bypassing encoder
                         logits_joint = self.model(latent_h=x_latent_all)
@@ -484,6 +542,14 @@ class ContinualTrainer:
                         # Re-lock history: only the newest expert and router row stay trainable
                         self.model.freeze_historical_experts(leave_unfrozen=1)
                         self.optimizer = self._build_optimizer()
+
+        # Step 8.5: Refresh prototype anchors with the calibrated model so the next
+        # task's stability losses anchor to the model's actual behaviour instead of
+        # the (stale) outputs recorded before calibration.
+        if self.refresh_anchors_after_calib and not self.prototype_memory.is_empty():
+            self.model.eval()
+            refreshed = self.prototype_memory.refresh_anchors(self.model)
+            print(f"    [anchors] refreshed {refreshed} prototype anchors")
 
         # Step 9: Distill the router onto the explicit prototype owners.
         # Zero-replay by construction: it only uses stored latent prototypes and

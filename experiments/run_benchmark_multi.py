@@ -60,6 +60,14 @@ def main():
     parser.add_argument("--router_anchor_steps", type=int, default=0)
     parser.add_argument("--router_anchor_lr", type=float, default=1e-3)
     parser.add_argument("--proto_routing_alpha", type=float, default=0.0)
+    parser.add_argument("--feature_cache", action="store_true", default=False)
+    parser.add_argument("--proto_samples", type=int, default=256)
+    parser.add_argument("--proto_threshold", type=str, default="0.5")
+    parser.add_argument("--proto_per_class", type=int, default=None)
+    parser.add_argument("--top_k", type=int, default=1)
+    parser.add_argument("--joint_calib_epochs", type=int, default=5)
+    parser.add_argument("--refresh_anchors_after_calib", action="store_true")
+    parser.add_argument("--keep_optimizer_state", action="store_true")
     parser.add_argument(
         "--methods",
         type=str,
@@ -73,6 +81,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     per_seed = {}
+    seeds_meta = {}
     for s in seeds:
         seed_dir = os.path.join(args.output_dir, f"seed{s}")
         os.makedirs(seed_dir, exist_ok=True)
@@ -114,6 +123,22 @@ def main():
             cmd += ["--router_anchor_lr", str(args.router_anchor_lr)]
         if args.proto_routing_alpha > 0:
             cmd += ["--proto_routing_alpha", str(args.proto_routing_alpha)]
+        if args.feature_cache:
+            cmd.append("--feature_cache")
+        if args.proto_samples != 256:
+            cmd += ["--proto_samples", str(args.proto_samples)]
+        if args.proto_threshold != "0.5":
+            cmd += ["--proto_threshold", str(args.proto_threshold)]
+        if args.proto_per_class is not None:
+            cmd += ["--proto_per_class", str(args.proto_per_class)]
+        if args.top_k != 1:
+            cmd += ["--top_k", str(args.top_k)]
+        if args.joint_calib_epochs != 5:
+            cmd += ["--joint_calib_epochs", str(args.joint_calib_epochs)]
+        if args.refresh_anchors_after_calib:
+            cmd.append("--refresh_anchors_after_calib")
+        if args.keep_optimizer_state:
+            cmd.append("--keep_optimizer_state")
         if args.joint_keep_routing_lock:
             cmd.append("--joint_keep_routing_lock")
         if args.max_proto_drop is not None:
@@ -131,6 +156,11 @@ def main():
         json_path = os.path.join(seed_dir, f"benchmark_results_seed{s}.json")
         with open(json_path) as f:
             per_seed[s] = json.load(f)
+
+        meta_path = os.path.join(seed_dir, f"benchmark_meta_seed{s}.json")
+        if os.path.exists(meta_path):
+            with open(meta_path) as f:
+                seeds_meta[str(s)] = json.load(f)
 
     # Aggregate
     methods = sorted(per_seed[seeds[0]].keys())
@@ -171,9 +201,18 @@ def main():
             "router_anchor_steps": args.router_anchor_steps,
             "router_anchor_lr": args.router_anchor_lr,
             "proto_routing_alpha": args.proto_routing_alpha,
+            "feature_cache": args.feature_cache,
+            "proto_samples": args.proto_samples,
+            "proto_threshold": args.proto_threshold,
+            "proto_per_class": args.proto_per_class,
+            "top_k": args.top_k,
+            "joint_calib_epochs": args.joint_calib_epochs,
+            "refresh_anchors_after_calib": args.refresh_anchors_after_calib,
+            "keep_optimizer_state": args.keep_optimizer_state,
         },
         "per_seed": per_seed,
         "aggregated": agg,
+        "seeds_meta": seeds_meta,
     }
 
     out_path = os.path.join(args.output_dir, "benchmark_multi.json")

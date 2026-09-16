@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import copy
 import json
+import time
+import datetime
 import argparse
 import numpy as np
 import torch
@@ -38,6 +40,54 @@ from pal_moe.baselines.icarl import ICaRL
 from pal_moe.baselines.ewc import EWC
 from pal_moe.baselines.replay import ReplayTrainer
 from pal_moe.evaluation.metrics import ContinualEvaluator
+
+
+def _git_commit() -> str:
+    """Short git hash of the working tree (for reproducibility metadata)."""
+    try:
+        import subprocess
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return (
+            subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=root)
+            .decode()
+            .strip()
+        )
+    except Exception:
+        return "unknown"
+
+
+def _build_router(router_type: str, feature_dim: int, top_k: int, device):
+    """Router factory shared by the two PAL-MoE blocks."""
+    if router_type == "distance":
+        return DistanceRouter(
+            input_dim=feature_dim, num_experts=1, top_k=top_k, temperature=0.05
+        ).to(device)
+    if router_type == "attention":
+        return AttentionRouter(
+            input_dim=feature_dim, num_experts=1, top_k=top_k, temperature=0.1
+        ).to(device)
+    return DynamicRouter(
+        input_dim=feature_dim, num_experts=1, top_k=top_k, temperature=1.0
+    ).to(device)
+
+
+def _build_prototype_memory(
+    feature_dim: int,
+    proto_threshold,
+    proto_size: int,
+    per_class,
+    store_raw: bool,
+) -> PrototypeMemory:
+    """Prototype memory factory shared by the two PAL-MoE blocks."""
+    return PrototypeMemory(
+        feature_dim=feature_dim,
+        distance_threshold=proto_threshold,
+        ema_alpha=0.9,
+        max_prototypes=proto_size,
+        max_prototypes_per_class=per_class,
+        store_raw=store_raw,
+    )
 
 
 def set_seed(seed: int = 42):
@@ -76,6 +126,12 @@ def run_benchmark(
     # CIFAR fine-tunes the encoder online; --freeze_encoder keeps it fixed so the
     # prototype anchors cannot go stale (mirrors the MNIST setup).
     encoder_ft = dataset in ("cifar10", "cifar100") and not args.freeze_encoder
+    proto_threshold = (
+        None
+        if str(args.proto_threshold).lower() in ("auto", "none")
+        else float(args.proto_threshold)
+    )
+    _t_start = time.time()
     selected = (
         {m.strip() for m in args.methods.split(",") if m.strip()}
         if args.methods
@@ -191,6 +247,23 @@ def run_benchmark(
     print(
         "  Shared Encoder successfully pretrained and frozen for all benchmark models."
     )
+
+    if args.feature_cache:
+        from pal_moe.data.feature_cache import build_feature_cache
+
+        cache = build_feature_cache(
+            base_encoder,
+            tasks,
+            device,
+            dtype=torch.float16 if device.type == "cuda" else torch.float32,
+            num_workers=args.num_workers,
+        )
+        tasks = cache.tasks
+        base_encoder = cache.encoder
+        print(
+            "  [feature-cache] enabled: all methods run on cached frozen features "
+            "(encoder removed from the training loop)"
+        )
 
     results = {}
 
@@ -578,18 +651,7 @@ def run_benchmark(
     set_seed(args.seed)
 
     dyn_encoder = copy.deepcopy(base_encoder)
-    if args.router_type == "distance":
-        dyn_router = DistanceRouter(
-            input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.05
-        ).to(device)
-    elif args.router_type == "attention":
-        dyn_router = AttentionRouter(
-            input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.1
-        ).to(device)
-    else:
-        dyn_router = DynamicRouter(
-            input_dim=feature_dim, num_experts=1, top_k=1, temperature=1.0
-        ).to(device)
+    dyn_router = _build_router(args.router_type, feature_dim, args.top_k, device)
     initial_experts = [
         MLPExpert(
             input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0
@@ -602,12 +664,8 @@ def run_benchmark(
         use_ema_encoder=False,
     ).to(device)
 
-    prototype_mem = PrototypeMemory(
-        feature_dim=feature_dim,
-        distance_threshold=0.5,
-        ema_alpha=0.9,
-        max_prototypes=args.proto_size,
-        store_raw=False,
+    prototype_mem = _build_prototype_memory(
+        feature_dim, proto_threshold, args.proto_size, args.proto_per_class, False
     )
     trigger = QuantitativeTrigger(
         alpha=1.0,
@@ -639,6 +697,10 @@ def run_benchmark(
         lambda_ood=args.lambda_ood,
         router_anchor_steps=args.router_anchor_steps,
         router_anchor_lr=args.router_anchor_lr,
+        joint_calib_epochs=args.joint_calib_epochs,
+        proto_samples=args.proto_samples,
+        refresh_anchors_after_calib=args.refresh_anchors_after_calib,
+        keep_optimizer_state=args.keep_optimizer_state,
         device=device,
         checkpoint_dir=os.path.join(output_dir, "checkpoints_palmoe"),
     )
@@ -700,18 +762,7 @@ def run_benchmark(
     print("=" * 60)
     set_seed(args.seed)
     hyb_encoder = copy.deepcopy(base_encoder)
-    if args.router_type == "distance":
-        hyb_router = DistanceRouter(
-            input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.05
-        ).to(device)
-    elif args.router_type == "attention":
-        hyb_router = AttentionRouter(
-            input_dim=feature_dim, num_experts=1, top_k=1, temperature=0.1
-        ).to(device)
-    else:
-        hyb_router = DynamicRouter(
-            input_dim=feature_dim, num_experts=1, top_k=1, temperature=1.0
-        ).to(device)
+    hyb_router = _build_router(args.router_type, feature_dim, args.top_k, device)
     initial_experts_hyb = [
         MLPExpert(
             input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0
@@ -723,12 +774,12 @@ def run_benchmark(
         experts=initial_experts_hyb,
         use_ema_encoder=False,
     ).to(device)
-    prototype_mem_hyb = PrototypeMemory(
-        feature_dim=feature_dim,
-        distance_threshold=0.5,
-        ema_alpha=0.9,
-        max_prototypes=args.proto_size,
-        store_raw=True,
+    prototype_mem_hyb = _build_prototype_memory(
+        feature_dim,
+        proto_threshold,
+        args.proto_size,
+        args.proto_per_class,
+        not args.feature_cache,
     )
     trigger_hyb = QuantitativeTrigger(
         alpha=1.0, beta=0.4, gamma=0.6, delta=0.5, threshold_tau=0.5
@@ -758,6 +809,10 @@ def run_benchmark(
         lambda_ood=args.lambda_ood,
         router_anchor_steps=args.router_anchor_steps,
         router_anchor_lr=args.router_anchor_lr,
+        joint_calib_epochs=args.joint_calib_epochs,
+        proto_samples=args.proto_samples,
+        refresh_anchors_after_calib=args.refresh_anchors_after_calib,
+        keep_optimizer_state=args.keep_optimizer_state,
         device=device,
         checkpoint_dir=os.path.join(output_dir, "checkpoints_hybrid"),
     )
@@ -859,6 +914,21 @@ def run_benchmark(
         json.dump(results, f, indent=2)
     print(f"\nSaved benchmark results to {results_path}")
 
+    meta_path = os.path.join(output_dir, f"benchmark_meta_seed{args.seed}.json")
+    run_meta = {
+        "seed": args.seed,
+        "dataset": dataset,
+        "device": str(device),
+        "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+        "duration_sec": round(time.time() - _t_start, 1),
+        "git_commit": _git_commit(),
+        "torch": torch.__version__,
+        "args": vars(args),
+    }
+    with open(meta_path, "w") as f:
+        json.dump(run_meta, f, indent=2, default=str)
+    print(f"Saved run metadata to {meta_path}")
+
     return results
 
 
@@ -945,6 +1015,61 @@ if __name__ == "__main__":
         help="Learning rate for the router anchor distillation",
     )
     parser.add_argument(
+        "--feature_cache",
+        action="store_true",
+        default=False,
+        help=(
+            "Frozen-encoder feature caching: precompute h(x) once and run the whole "
+            "pipeline on cached features (requires --freeze_encoder; mathematically "
+            "equivalent, removes all encoder work from the training loop)"
+        ),
+    )
+    parser.add_argument(
+        "--proto_samples",
+        type=int,
+        default=256,
+        help="Training samples registered into prototype memory per task",
+    )
+    parser.add_argument(
+        "--proto_threshold",
+        type=str,
+        default="0.5",
+        help=(
+            "Prototype merge distance threshold; 'auto' calibrates it from the "
+            "median nearest-neighbour distance of the registration batch"
+        ),
+    )
+    parser.add_argument(
+        "--proto_per_class",
+        type=int,
+        default=None,
+        help="Class-balanced prototype eviction group size (None = per-task eviction)",
+    )
+    parser.add_argument(
+        "--top_k",
+        type=int,
+        default=1,
+        help="Experts mixed per input (1 = hard top-1; >1 = soft mixture)",
+    )
+    parser.add_argument(
+        "--joint_calib_epochs",
+        type=int,
+        default=5,
+        help="End-of-task joint latent calibration epochs (0 = disable calibration)",
+    )
+    parser.add_argument(
+        "--refresh_anchors_after_calib",
+        action="store_true",
+        default=False,
+        help="Recompute prototype r_p/o_p anchors with the calibrated model",
+    )
+    parser.add_argument(
+        "--keep_optimizer_state",
+        action="store_true",
+        default=False,
+        help="Carry Adam moments across task/expansion optimizer rebuilds",
+    )
+    parser.add_argument(
         "--anchor",
         action="store_true",
         help="Enable null-space routing anchoring (experimental; measured harmful on Split-MNIST)",
@@ -1007,9 +1132,27 @@ if __name__ == "__main__":
 
         with open(args.config) as _cf:
             _cfg = _json.load(_cf)
+        unknown = sorted(k for k in _cfg if not hasattr(args, k))
+        if unknown:
+            print(f"[config] WARNING: unknown keys ignored: {unknown}")
         for _k, _v in _cfg.items():
             if hasattr(args, _k):
                 setattr(args, _k, _v)
+
+    if args.feature_cache and not args.freeze_encoder:
+        raise SystemExit(
+            "--feature_cache requires --freeze_encoder: cached features are only "
+            "valid while the encoder is frozen."
+        )
+    if (
+        args.router_anchor_steps > 0
+        and not args.freeze_encoder
+        and args.dataset in ("cifar10", "cifar100")
+    ):
+        print(
+            "[warn] --router_anchor_steps with a trainable CIFAR encoder distills "
+            "stale prototype anchors; add --freeze_encoder for correct behaviour."
+        )
 
     run_benchmark(
         epochs_per_task=args.epochs,
