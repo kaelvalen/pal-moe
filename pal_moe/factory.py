@@ -70,6 +70,9 @@ def build_prototype_memory(
     max_prototypes: int = 50,
     max_prototypes_per_class: Optional[int] = None,
     store_raw: bool = False,
+    selection: str = "first",
+    candidate_pool: int = 4,
+    eviction: str = "task",
 ) -> PrototypeMemory:
     """Prototype-memory factory shared by every runner."""
     return PrototypeMemory(
@@ -79,6 +82,9 @@ def build_prototype_memory(
         max_prototypes=max_prototypes,
         max_prototypes_per_class=max_prototypes_per_class,
         store_raw=store_raw,
+        selection=selection,
+        candidate_pool=candidate_pool,
+        eviction=eviction,
     )
 
 

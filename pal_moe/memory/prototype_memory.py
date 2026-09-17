@@ -46,6 +46,9 @@ class PrototypeMemory:
     and direct capacity-control synchronization upon expert pruning/merging.
     """
 
+    SELECTION_MODES = ("first", "kcenter", "uncertainty")
+    EVICTION_MODES = ("task", "balanced", "reservoir")
+
     def __init__(
         self,
         feature_dim: int = 128,
@@ -55,7 +58,14 @@ class PrototypeMemory:
         exemplars_per_proto: int = 5,
         store_raw: bool = False,
         max_prototypes_per_class: Optional[int] = None,
+        selection: str = "first",
+        candidate_pool: int = 4,
+        eviction: str = "task",
     ):
+        if selection not in self.SELECTION_MODES:
+            raise ValueError(f"unknown selection mode {selection!r}")
+        if eviction not in self.EVICTION_MODES:
+            raise ValueError(f"unknown eviction mode {eviction!r}")
         self.feature_dim = feature_dim
         self.distance_threshold = distance_threshold
         self.ema_alpha = ema_alpha
@@ -65,6 +75,14 @@ class PrototypeMemory:
         # When set, eviction keeps a per-(task, class) budget instead of a
         # per-task one, preventing majority classes from crowding out the rest.
         self.max_prototypes_per_class = max_prototypes_per_class
+        # Exemplar selection: "first" (original), "kcenter" keeps a
+        # farthest-point cover of the candidate pool, "uncertainty" keeps the
+        # samples farthest from the prototype centre (boundary regions).
+        self.selection = selection
+        self.candidate_pool = max(1, int(candidate_pool))
+        # Eviction: "task" (original over-represented task), "balanced" (same
+        # but never evicts the newest task present), "reservoir" (uniform).
+        self.eviction = eviction
 
         self.prototypes: list[Prototype] = []
 
@@ -450,8 +468,15 @@ class PrototypeMemory:
             if owner_expert is not None:
                 proto.owner_expert = owner_expert
             work_matrix[closest] = proto.v_p
-            # Maintain exemplars up to buffer size
-            if proto.x_p is not None and proto.x_p.size(0) < self.exemplars_per_proto:
+            # Maintain the exemplar buffer. With selection != "first" we keep a
+            # larger candidate pool and periodically re-select `exemplars_per_proto`
+            # representatives, so early registrations cannot monopolise the slots.
+            pool_limit = (
+                self.exemplars_per_proto
+                if self.selection == "first"
+                else self.exemplars_per_proto * self.candidate_pool
+            )
+            if proto.x_p is not None and proto.x_p.size(0) < pool_limit:
                 proto.x_p = torch.cat([proto.x_p, feat_detached.unsqueeze(0)], dim=0)
                 if y_detached is not None:
                     if proto.y_p is not None:
@@ -463,6 +488,8 @@ class PrototypeMemory:
                         proto.raw_x = torch.cat([proto.raw_x, raw_detached], dim=0)
                     else:
                         proto.raw_x = raw_detached.clone()
+                if self.selection != "first" and proto.x_p.size(0) >= pool_limit:
+                    self._reselect_exemplars(proto)
             self._invalidate_cache()
             return proto, work_matrix
 
@@ -594,15 +621,75 @@ class PrototypeMemory:
         self._invalidate_cache()
         return len(self.prototypes)
 
+    def _reselect_exemplars(self, proto: Prototype) -> None:
+        """
+        Replaces the candidate exemplar pool by `exemplars_per_proto` selections.
+
+        kcenter: greedy farthest-point sampling, keeping a cover of the pool.
+        uncertainty: keep the samples farthest from the prototype centre, i.e.
+        the ones closest to the decision boundary.
+        """
+        x = proto.x_p
+        k = min(self.exemplars_per_proto, x.size(0))
+        if k >= x.size(0):
+            return
+        if self.selection == "uncertainty":
+            dist = torch.norm(x - proto.v_p.unsqueeze(0), dim=1)
+            idx = torch.topk(dist, k).indices
+        else:  # kcenter
+            centre = proto.v_p.unsqueeze(0)
+            first = int(torch.argmin(torch.norm(x - centre, dim=1)).item())
+            selected = [first]
+            min_dist = torch.norm(x - x[first].unsqueeze(0), dim=1)
+            for _ in range(k - 1):
+                nxt = int(torch.argmax(min_dist).item())
+                selected.append(nxt)
+                min_dist = torch.minimum(
+                    min_dist, torch.norm(x - x[nxt].unsqueeze(0), dim=1)
+                )
+            idx = torch.tensor(selected, dtype=torch.long)
+        idx = idx.sort().values  # deterministic order
+        proto.x_p = x[idx].clone()
+        if proto.y_p is not None:
+            proto.y_p = proto.y_p[idx].clone()
+        if proto.raw_x is not None and proto.raw_x.size(0) == x.size(0):
+            proto.raw_x = proto.raw_x[idx].clone()
+
     def _prune_or_merge_least_used(self) -> None:
         """
         Evicts the least-used prototype from the most overrepresented group.
         With `max_prototypes_per_class` the group is (task, class), which keeps a
         per-class budget; otherwise it is the task (the original behaviour).
+
+        `eviction="balanced"` never evicts from the newest task present (protect
+        fresh knowledge), and `eviction="reservoir"` picks a uniform victim.
         """
         if not self.prototypes:
             return
         from collections import Counter
+
+        if self.eviction == "reservoir":
+            victim = int(torch.randint(0, len(self.prototypes), (1,)).item())
+            del self.prototypes[victim]
+            self._invalidate_cache()
+            return
+
+        if self.eviction == "balanced" and len(self.prototypes) > 1:
+            newest = max(p.task_id for p in self.prototypes)
+            groups = Counter(p.task_id for p in self.prototypes if p.task_id != newest)
+            if groups:
+                overrepresented_task = max(groups, key=groups.get)
+            else:  # pragma: no cover - only reachable with a single task
+                overrepresented_task = newest
+            candidates = [
+                (i, p.count)
+                for i, p in enumerate(self.prototypes)
+                if p.task_id == overrepresented_task
+            ]
+            min_idx = min(candidates, key=lambda x: x[1])[0]
+            del self.prototypes[min_idx]
+            self._invalidate_cache()
+            return
 
         if self.max_prototypes_per_class is not None:
             groups = Counter((p.task_id, self._label_of(p)) for p in self.prototypes)
@@ -853,6 +940,37 @@ class PrototypeMemory:
                 if proto.x_p is not None and proto.x_p.size(0) > 0:
                     proto.v_p = proto.x_p.mean(dim=0)
         self._invalidate_cache()
+
+    def build_ann_index(self) -> bool:
+        """
+        Builds a FAISS index over the prototype matrix when faiss is installed.
+
+        The exact `torch.cdist` path remains the default; this hook lets
+        production-scale stores (millions of prototypes) switch to ANN search
+        without changing the memory interface. Returns False without faiss.
+        """
+        try:
+            import faiss  # type: ignore
+        except ImportError:
+            return False
+        v_mat = self.get_prototype_matrix(torch.device("cpu"))
+        if v_mat is None or v_mat.numel() == 0:
+            return False
+        arr = v_mat.detach().numpy().astype("float32")
+        index = faiss.IndexFlatL2(arr.shape[1])
+        index.add(arr)
+        self._ann_index = index
+        return True
+
+    def query_ann(
+        self, queries: torch.Tensor, k: int = 8
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
+        """ANN query returning (distances, prototype indices), or None."""
+        index = getattr(self, "_ann_index", None)
+        if index is None:
+            return None
+        dists, idx = index.search(queries.detach().cpu().numpy().astype("float32"), k)
+        return torch.from_numpy(dists), torch.from_numpy(idx)
 
     def estimate_memory_footprint(self) -> dict[str, Any]:
         """

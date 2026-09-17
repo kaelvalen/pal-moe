@@ -79,6 +79,9 @@ class ContinualTrainer:
         ood_every: int = 1,
         ood_mode: str = "entropy",
         ood_margin: float = 1.0,
+        generative_replay: int = 0,
+        generative_replay_mode: str = "gaussian",
+        lambda_generative: float = 1.0,
         router_anchor_margin: float = 0.0,
         router_weight_decay: float = 0.0,
         checkpoint_dir: Optional[str] = None,
@@ -135,6 +138,12 @@ class ContinualTrainer:
             raise ValueError(f"unknown ood_mode {ood_mode!r}")
         self.ood_mode = ood_mode
         self.ood_margin = float(ood_margin)
+        # Latent generative replay: fit a generator on the stored exemplars and
+        # mix synthetic samples into every step. Stores no raw data.
+        self.generative_replay = int(generative_replay)
+        self.generative_replay_mode = generative_replay_mode
+        self.lambda_generative = float(lambda_generative)
+        self._replay_gen = None
         # Owner-contrastive ranking margin added to the router-distillation loss:
         # the owner expert's logit must beat every other expert by >= margin.
         self.router_anchor_margin = float(router_anchor_margin)
@@ -451,6 +460,21 @@ class ContinualTrainer:
         self.model.freeze_historical_experts(leave_unfrozen=1)
         self.optimizer = self._build_optimizer()
 
+        # Fit the latent replay generator once per task (prototype memory is
+        # stable during the training loop).
+        self._replay_gen = None
+        if self.generative_replay > 0 and not self.prototype_memory.is_empty():
+            from ..memory.generative import LatentReplayGenerator
+
+            generator = LatentReplayGenerator(
+                self.prototype_memory.feature_dim,
+                self.model.experts[0].num_classes,
+                mode=self.generative_replay_mode,
+                device=self.device,
+            )
+            if generator.fit(self.prototype_memory):
+                self._replay_gen = generator
+
         # Step 5: Continual Training loop with joint stability loss
 
         # Per-batch losses are accumulated on-device and converted once, instead
@@ -526,6 +550,15 @@ class ContinualTrainer:
                             F.cross_entropy(rep_logits, y_rep) * self.lambda_replay
                         )
                         loss = loss + l_replay
+
+                # Latent generative replay: synthetic exemplars from the fitted
+                # generator (zero raw data).
+                if self._replay_gen is not None and self._replay_gen.is_fitted:
+                    gen_x, gen_y = self._replay_gen.sample(max(1, x.size(0) // 2))
+                    gen_logits = self.model(latent_h=gen_x)
+                    loss = loss + (
+                        F.cross_entropy(gen_logits, gen_y) * self.lambda_generative
+                    )
 
                 loss.backward()
 
