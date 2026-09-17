@@ -432,7 +432,7 @@ class DynamicMoE(nn.Module):
         for exp in self.experts:
             for param in exp.parameters():
                 param.requires_grad = True
-        if self.shared_expert is not None:
+        if self.shared_expert is not None and not getattr(self, "shared_frozen", False):
             for param in self.shared_expert.parameters():
                 param.requires_grad = True
             for param in self.shared_gate.parameters():
@@ -449,7 +449,7 @@ class DynamicMoE(nn.Module):
         for exp in self.experts:
             for param in exp.parameters():
                 param.requires_grad = True
-        if self.shared_expert is not None:
+        if self.shared_expert is not None and not getattr(self, "shared_frozen", False):
             for param in self.shared_expert.parameters():
                 param.requires_grad = True
             for param in self.shared_gate.parameters():

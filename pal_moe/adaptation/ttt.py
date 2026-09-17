@@ -90,6 +90,7 @@ class ContinualTrainer:
         loss_weighting: str = "fixed",
         expansion_action: str = "add",
         widen_by: int = 64,
+        freeze_shared_after: int = -1,
         router_anchor_margin: float = 0.0,
         router_weight_decay: float = 0.0,
         checkpoint_dir: Optional[str] = None,
@@ -172,6 +173,9 @@ class ContinualTrainer:
             raise ValueError(f"unknown expansion_action {expansion_action!r}")
         self.expansion_action = expansion_action
         self.widen_by = int(widen_by)
+        # Optionally freeze the generalist expert after the first N tasks (the
+        # gate stays trainable), turning it into a stable reference pathway.
+        self.freeze_shared_after = int(freeze_shared_after)
         # Owner-contrastive ranking margin added to the router-distillation loss:
         # the owner expert's logit must beat every other expert by >= margin.
         self.router_anchor_margin = float(router_anchor_margin)
@@ -521,6 +525,21 @@ class ContinualTrainer:
             if generator.fit(self.prototype_memory):
                 self._replay_gen = generator
 
+        # Optional freeze of the generalist pathway after the first N tasks.
+        if (
+            self.model.shared_expert is not None
+            and 0 <= self.freeze_shared_after <= task_id
+            and not getattr(self.model, "shared_frozen", False)
+        ):
+            for param in self.model.shared_expert.parameters():
+                param.requires_grad = False
+            self.model.shared_frozen = True
+            self.optimizer = self._build_optimizer()
+            print(
+                "      [shared] generalist expert frozen after task "
+                f"{self.freeze_shared_after - 1}"
+            )
+
         # Pre-task teacher snapshot for LwF distillation.
         self._lwf_teacher = None
         if self.lambda_lwf > 0:
@@ -693,6 +712,11 @@ class ContinualTrainer:
                 h = self.model.get_routing_features(x)
                 g_dist = self.model.router.get_full_distribution(h)
                 all_expert_outs = self.model.get_all_expert_outputs(h)
+                shared_outs = (
+                    self.model.shared_expert(h, track_usage=False)
+                    if getattr(self.model, "shared_expert", None) is not None
+                    else None
+                )
                 self.prototype_memory.register_task_batch(
                     features=h,
                     routing_dists=g_dist,
@@ -701,6 +725,7 @@ class ContinualTrainer:
                     labels=y,
                     raw_inputs=x,
                     owner_expert=task_expert_id,
+                    shared_outputs=shared_outs,
                 )
                 registered_count += x.size(0)
                 if registered_count >= self.proto_samples:
