@@ -196,12 +196,12 @@ class DynamicMoE(nn.Module):
         num_classes = self.experts[0].num_classes
         out = torch.zeros(batch_size, num_classes, device=h.device, dtype=h.dtype)
 
-        # Efficient sparse dispatch: only execute experts selected in the batch
-        unique_experts = torch.unique(topk_idx)
+        # Efficient sparse dispatch: only execute experts selected in the batch.
+        # One host sync for the whole list instead of one .item() per expert.
+        unique_experts = torch.unique(topk_idx).tolist()
         expert_outputs_dict = {}
 
-        for exp_idx_t in unique_experts:
-            exp_idx = exp_idx_t.item()
+        for exp_idx in unique_experts:
             # Find batch samples where this expert is among top-k
             mask = (topk_idx == exp_idx).any(dim=-1)
             if mask.any():
@@ -261,8 +261,9 @@ class DynamicMoE(nn.Module):
             batched_forward = vmap(fmodel, in_dims=(0, 0, None))
             out = batched_forward(params, buffers, h)  # [E, B, C]
             return out.transpose(0, 1)  # [B, E, C]
-        except Exception:
-            # Fallback loop
+        except (RuntimeError, NotImplementedError):
+            # vmap is unavailable or the experts are not stackable; fall back
+            # to the loop. Narrow on purpose: shape/device bugs must surface.
             outputs = []
             for expert in self.experts:
                 outputs.append(expert(h, track_usage=False))

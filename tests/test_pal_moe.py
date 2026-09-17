@@ -1531,6 +1531,60 @@ def test_router_params_have_zero_weight_decay():
     assert router_group and router_group[0]["weight_decay"] == 0.0
 
 
+def test_exemplar_batch_cache_invalidates_on_mutation():
+    """The cached exemplar batch must be rebuilt after memory mutations."""
+    mem = PrototypeMemory(feature_dim=4, store_raw=True)
+    mem.update_or_create_prototype(
+        torch.zeros(4),
+        torch.tensor([1.0]),
+        torch.zeros(1, 2),
+        task_id=0,
+        label=torch.tensor(0),
+    )
+    f1, _ = mem.get_exemplar_batch(torch.device("cpu"))
+    f2, _ = mem.get_exemplar_batch(torch.device("cpu"))
+    assert f1.data_ptr() == f2.data_ptr(), "second call should hit the cache"
+
+    mem.update_or_create_prototype(
+        torch.full((4,), 10.0),
+        torch.tensor([1.0]),
+        torch.zeros(1, 2),
+        task_id=0,
+        label=torch.tensor(1),
+    )
+    f3, _ = mem.get_exemplar_batch(torch.device("cpu"))
+    assert f3.shape[0] > f1.shape[0], "mutation must invalidate the cache"
+
+
+def test_refresh_representations_handles_multiple_prototypes():
+    """Batched refresh must split the encoded rows back to their prototypes."""
+    enc = nn.Linear(6, 6, bias=False)
+    with torch.no_grad():
+        enc.weight.copy_(torch.eye(6))
+    mem = PrototypeMemory(feature_dim=6, store_raw=True, distance_threshold=0.01)
+    raws = [torch.randn(1, 6) * 10 for _ in range(3)]
+    for i, r in enumerate(raws):
+        with torch.no_grad():
+            feat = enc(r[0])
+        mem.update_or_create_prototype(
+            feat,
+            torch.tensor([1.0]),
+            torch.zeros(1, 2),
+            task_id=0,
+            label=torch.tensor(i),
+            raw_input=r,
+        )
+    assert len(mem.prototypes) == 3
+
+    mem.refresh_representations(enc)
+    for proto, r in zip(mem.prototypes, raws):
+        with torch.no_grad():
+            expected = enc(r[0])
+        assert proto.x_p.shape[0] == 1
+        assert torch.allclose(proto.x_p[0], expected, atol=1e-5)
+        assert torch.allclose(proto.v_p, proto.x_p.mean(dim=0), atol=1e-5)
+
+
 def test_icarl_herding_matches_bruteforce():
     """Vectorized herding must select the same exemplars as the greedy scan."""
     from pal_moe.baselines.icarl import ICaRL

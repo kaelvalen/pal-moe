@@ -125,12 +125,34 @@ class ExpertBuilder:
             candidate_expert.parameters(), lr=lr, weight_decay=1e-5
         )
 
-        avg_loss = 0.0
+        # Distillation targets are constant for the whole candidate training
+        # (prototype memory does not change here): fetch them once instead of
+        # rebuilding the [P, D] anchor tensors on every batch.
+        anchor_v = anchor_targets = parent_anchor = None
+        if (
+            prototype_memory is not None
+            and not prototype_memory.is_empty()
+            and parent_expert is not None
+        ):
+            anchors = prototype_memory.get_expert_anchors(
+                parent_expert.expert_id, device
+            )
+            if anchors is not None:
+                anchor_v, anchor_targets = anchors
+                anchor_targets = anchor_targets.detach()
+            else:
+                p_mat = prototype_memory.get_prototype_matrix(device)
+                if p_mat is not None and p_mat.size(0) > 0:
+                    anchor_v = p_mat
+                    with torch.no_grad():
+                        parent_anchor = parent_expert(p_mat, track_usage=False).detach()
+
+        total_loss = torch.zeros((), device=device)
         total_batches = 0
 
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(device), y.to(device)
+                x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
                 optimizer.zero_grad()
 
                 with torch.no_grad():
@@ -144,42 +166,23 @@ class ExpertBuilder:
                 logits = candidate_expert(h, track_usage=False)
                 loss_task = F.cross_entropy(logits, y)
 
-                # Distillation loss on old prototype anchors
+                # Distillation loss on the precomputed prototype anchors
                 loss_distill = torch.tensor(0.0, device=device)
-                if (
-                    prototype_memory is not None
-                    and not prototype_memory.is_empty()
-                    and parent_expert is not None
-                ):
-                    anchors = prototype_memory.get_expert_anchors(
-                        parent_expert.expert_id, device
+                if anchor_v is not None:
+                    cand_anchor = candidate_expert(anchor_v, track_usage=False)
+                    target = (
+                        anchor_targets if anchor_targets is not None else parent_anchor
                     )
-                    if anchors is not None:
-                        v_mat, target_anchors = anchors
-                        cand_anchor = candidate_expert(v_mat, track_usage=False)
-                        loss_distill = (
-                            F.mse_loss(cand_anchor, target_anchors)
-                            * self.distill_lambda
-                        )
-                    else:
-                        p_mat = prototype_memory.get_prototype_matrix(device)
-                        if p_mat is not None and p_mat.size(0) > 0:
-                            with torch.no_grad():
-                                parent_anchor = parent_expert(p_mat, track_usage=False)
-                            cand_anchor = candidate_expert(p_mat, track_usage=False)
-                            loss_distill = (
-                                F.mse_loss(cand_anchor, parent_anchor)
-                                * self.distill_lambda
-                            )
+                    loss_distill = F.mse_loss(cand_anchor, target) * self.distill_lambda
 
                 loss = loss_task + loss_distill
                 loss.backward()
                 optimizer.step()
 
-                avg_loss += loss.item()
+                total_loss += loss.detach()
                 total_batches += 1
 
-        return avg_loss / max(total_batches, 1)
+        return float(total_loss.item()) / max(total_batches, 1)
 
     @staticmethod
     def compute_ece(

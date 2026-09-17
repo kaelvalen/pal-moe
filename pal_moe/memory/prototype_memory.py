@@ -288,7 +288,20 @@ class PrototypeMemory:
         Gathers all stored exemplar feature vectors and labels across all prototypes.
         Returns:
             (all_feats, all_labels) on device, or None if no labeled exemplars exist.
+
+        Cached until the memory mutates: hybrid training calls this on every
+        batch, and rebuilding the concatenated tensor + host-to-device copy each
+        step was pure overhead.
         """
+        if self.is_empty():
+            return None
+        return self._get_cached(
+            ("exemplars", str(device)), lambda: self._build_exemplar_batch(device)
+        )
+
+    def _build_exemplar_batch(
+        self, device: torch.device
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
         feats = []
         labels = []
         for p in self.prototypes:
@@ -486,6 +499,13 @@ class PrototypeMemory:
         """
         if features.size(0) == 0:
             return
+        # Move the whole batch to CPU once: the per-sample registration loop
+        # used to issue one device-to-host copy and one .item() sync per row.
+        features = features.detach().cpu()
+        routing_dists = routing_dists.detach().cpu()
+        all_expert_outs = all_expert_outs.detach().cpu()
+        labels = labels.detach().cpu() if labels is not None else None
+        raw_inputs = raw_inputs.detach().cpu() if raw_inputs is not None else None
         if self.distance_threshold is None:
             # Scale-free calibration (see _auto_threshold): a fixed absolute
             # threshold is meaningless across feature spaces. Measured nearest
@@ -700,18 +720,30 @@ class PrototypeMemory:
         l_router_stab = torch.clamp(kl_router, min=0.0) * lambda_r
 
         # 2. Expert stability loss, vectorized weight/target selection from the
-        #    cached matrices (no per-prototype .item() host syncs).
-        expert_losses = []
+        #    cached matrices (no per-prototype .item() host syncs). Per-expert
+        #    row indices depend only on the (cached) routing matrix, so they are
+        #    cached too instead of being rebuilt on every batch.
         v_mat = self.get_prototype_matrix(device)
         r_mat = self.get_routing_matrix(curr_num_experts, device)
         o_mat = self.get_output_matrix(curr_num_experts, device)
-        for i in range(curr_num_experts):
-            mask = r_mat[:, i] > 0.01
-            if not bool(mask.any()):
+
+        def build_masks():
+            return [
+                (r_mat[:, i] > 0.01).nonzero(as_tuple=False).squeeze(1)
+                for i in range(curr_num_experts)
+            ]
+
+        expert_rows = self._get_cached(
+            ("stab_rows", str(device), curr_num_experts), build_masks
+        )
+
+        expert_losses = []
+        for i, rows in enumerate(expert_rows):
+            if rows.numel() == 0:
                 continue
-            sub_vp = v_mat[mask]
-            target_out = o_mat[mask, i]
-            w_tensor = r_mat[mask, i].unsqueeze(-1)
+            sub_vp = v_mat[rows]
+            target_out = o_mat[rows, i]
+            w_tensor = r_mat[rows, i].unsqueeze(-1)
             e_curr_out = model.experts[i](sub_vp, track_usage=False)  # [M, C]
             num_classes = target_out.size(-1)
             mse_unreduced = F.mse_loss(e_curr_out, target_out, reduction="none")
@@ -789,17 +821,29 @@ class PrototypeMemory:
         """
         If encoder representation changes significantly, refreshes prototype vectors
         and exemplar feature buffers using raw exemplars.
+
+        All raw exemplars are encoded in a single batched forward pass (the old
+        loop issued up to one GPU call per prototype) and then split back per
+        prototype in insertion order.
         """
         device = next(encoder.parameters()).device
         encoder.eval()
-        with torch.no_grad():
+        raw_anchor = self.get_raw_anchor(device)
+        if raw_anchor is not None:
+            raw_rows, _ = raw_anchor
+            with torch.no_grad():
+                new_feats_all = encoder(raw_rows)
+            offset = 0
             for proto in self.prototypes:
                 if proto.raw_x is not None and proto.raw_x.size(0) > 0:
-                    raw_dev = proto.raw_x.to(device)
-                    new_feats = encoder(raw_dev)
+                    n = proto.raw_x.size(0)
+                    new_feats = new_feats_all[offset : offset + n]
                     proto.x_p = new_feats.cpu()
                     proto.v_p = new_feats.mean(dim=0).cpu()
-                elif proto.x_p is not None and proto.x_p.size(0) > 0:
+                    offset += n
+        else:
+            for proto in self.prototypes:
+                if proto.x_p is not None and proto.x_p.size(0) > 0:
                     proto.v_p = proto.x_p.mean(dim=0)
         self._invalidate_cache()
 
