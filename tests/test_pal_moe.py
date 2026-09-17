@@ -1236,6 +1236,32 @@ def test_persistence_roundtrip():
     os.remove(path)
 
 
+def test_persistence_strict_rejects_mismatched_state(tmp_path):
+    """strict=True must refuse a checkpoint from a different architecture."""
+    from pal_moe.persistence import load_checkpoint, save_checkpoint
+
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    model = DynamicMoE(
+        enc,
+        DynamicRouter(input_dim=8, num_experts=1),
+        [MLPExpert(8, 8, 3, 0)],
+        use_ema_encoder=False,
+    )
+    mem = PrototypeMemory(feature_dim=8)
+    path = str(tmp_path / "ckpt.pt")
+    save_checkpoint(path, model, mem, meta={"task_id": 0})
+
+    # Different expert count: the saved routing layer does not fit.
+    other = DynamicMoE(
+        SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8),
+        DynamicRouter(input_dim=8, num_experts=2),
+        [MLPExpert(8, 8, 3, i) for i in range(2)],
+        use_ema_encoder=False,
+    )
+    with pytest.raises(RuntimeError):
+        load_checkpoint(path, other, PrototypeMemory(feature_dim=8))
+
+
 def test_der_erace_agem_smoke():
     """DER++, ER-ACE and AGEM train a full task without error and improve loss."""
     from pal_moe.baselines.agem import AGEM

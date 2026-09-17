@@ -53,10 +53,20 @@ def load_checkpoint(
     model: torch.nn.Module,
     prototype_memory: PrototypeMemory,
     device: torch.device = torch.device("cpu"),
+    strict: bool = True,
+    weights_only: bool = True,
 ) -> dict[str, Any]:
-    """Restores model + prototype memory from `path`. Returns stored meta."""
-    payload = torch.load(path, map_location="cpu", weights_only=False)
-    model.load_state_dict(payload["model_state"], strict=False)
+    """
+    Restores model + prototype memory from `path`. Returns stored meta.
+
+    `strict=True` (default) rejects state dicts that do not match the model
+    exactly instead of silently ignoring missing/unexpected keys, which used to
+    let a checkpoint of a different architecture load with wrong results.
+    `weights_only=True` (default) refuses arbitrary pickled objects; pass
+    `weights_only=False` only for trusted files that need it.
+    """
+    payload = torch.load(path, map_location="cpu", weights_only=weights_only)
+    model.load_state_dict(payload["model_state"], strict=strict)
     model.to(device)
 
     prototype_memory.prototypes = []
