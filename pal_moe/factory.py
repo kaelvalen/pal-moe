@@ -129,9 +129,20 @@ def build_moe(
     router_type: str = "dynamic",
     top_k: int = 1,
     use_ema_encoder: bool = False,
+    shared_expert: bool = False,
     device: Optional[torch.device] = None,
 ) -> DynamicMoE:
     """DynamicMoE factory: router + `num_experts` fresh MLP experts."""
+    generalist = (
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=-1,
+        )
+        if shared_expert
+        else None
+    )
     model = DynamicMoE(
         encoder=encoder,
         router=build_router(router_type, feature_dim, top_k, num_experts=num_experts),
@@ -145,6 +156,7 @@ def build_moe(
             for i in range(num_experts)
         ],
         use_ema_encoder=use_ema_encoder,
+        shared_expert=generalist,
     )
     return model.to(device) if device is not None else model
 

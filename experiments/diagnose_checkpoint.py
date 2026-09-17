@@ -89,6 +89,7 @@ def infer_config(state, dataset):
         "input_dim": INPUT_DIMS[dataset],
         "cached_encoder": cached_encoder,
         "router_kind": router_kind,
+        "has_shared_expert": any(k.startswith("shared_expert.") for k in state),
     }
 
 
@@ -111,6 +112,7 @@ def build_model(cfg, device):
         num_classes=cfg["num_classes"],
         num_experts=cfg["num_experts"],
         router_type=cfg["router_kind"],
+        shared_expert=cfg["has_shared_expert"],
         device=device,
     )
     model.eval()

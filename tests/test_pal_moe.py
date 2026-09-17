@@ -1621,6 +1621,69 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_shared_generalist_expert():
+    """The always-on generalist mixes with the routed expert and stays trainable."""
+    from pal_moe.factory import build_moe
+    from pal_moe.persistence import load_checkpoint, save_checkpoint
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    model = build_moe(enc, 8, 8, 3, num_experts=2, shared_expert=True)
+    assert model.shared_expert is not None
+    x = torch.randn(8, 16)
+    out = model(x)
+    assert out.shape == (8, 3)
+    out.sum().backward()
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0
+        for p in model.shared_expert.parameters()
+    )
+    assert model.shared_gate.weight.grad is not None
+
+    # Freezing history must not freeze the generalist.
+    model.freeze_historical_experts(leave_unfrozen=1)
+    assert all(p.requires_grad for p in model.shared_expert.parameters())
+    assert all(p.requires_grad for p in model.shared_gate.parameters())
+    assert not any(p.requires_grad for p in model.experts[0].parameters())
+
+    # Round-trip through the checkpoint layer.
+    memory = PrototypeMemory(feature_dim=8)
+    path = str(__import__("tempfile").mkdtemp() + "/shared.pt")
+    save_checkpoint(path, model, memory)
+    rebuilt = build_moe(
+        SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8),
+        8,
+        8,
+        3,
+        num_experts=2,
+        shared_expert=True,
+    )
+    load_checkpoint(path, rebuilt, PrototypeMemory(feature_dim=8))
+    assert torch.allclose(rebuilt.shared_gate.bias, model.shared_gate.bias, atol=1e-6)
+
+
+def test_diagnose_infer_config_detects_shared_expert(tmp_path):
+    from experiments.diagnose_checkpoint import build_model, infer_config
+
+    from pal_moe.factory import build_moe
+    from pal_moe.persistence import save_checkpoint
+
+    model = build_moe(
+        SharedEncoder(input_dim=784, hidden_dims=(64,), output_dim=8),
+        8,
+        8,
+        3,
+        num_experts=2,
+        shared_expert=True,
+    )
+    path = str(tmp_path / "shared.pt")
+    save_checkpoint(path, model, PrototypeMemory(feature_dim=8))
+    state = torch.load(path, map_location="cpu", weights_only=True)["model_state"]
+    cfg = infer_config(state, "mnist")
+    assert cfg["has_shared_expert"]
+    build_model(cfg, torch.device("cpu")).load_state_dict(state)
+
+
 def test_prototype_routing_alpha_calibration():
     """Alpha calibration must pick the anchor weight with the best exemplar accuracy."""
     torch.manual_seed(0)
