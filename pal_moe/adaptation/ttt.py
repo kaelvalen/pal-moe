@@ -143,9 +143,7 @@ class ContinualTrainer:
         temporarily unlocked, then the standard lock is restored.
         """
         owned = [
-            p
-            for p in self.prototype_memory.prototypes
-            if p.owner_expert is not None
+            p for p in self.prototype_memory.prototypes if p.owner_expert is not None
         ]
         if not owned or steps <= 0:
             return 0.0
@@ -161,9 +159,7 @@ class ContinualTrainer:
             )
 
         vp = torch.stack([p.v_p for p in owned], dim=0).to(self.device)
-        y_owner = torch.tensor(
-            [int(p.owner_expert) for p in owned], device=self.device
-        )
+        y_owner = torch.tensor([int(p.owner_expert) for p in owned], device=self.device)
         # Unlock all rows for the distillation, restore the lock afterwards.
         self.model.router.lock_historical_routing(0)
         params = [p for p in self.model.router.parameters() if p.requires_grad]

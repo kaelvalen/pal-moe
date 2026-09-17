@@ -33,7 +33,10 @@ def main():
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--dataset", type=str, default="mnist")
     parser.add_argument(
-        "--router_type", type=str, default="dynamic", choices=["dynamic", "distance", "attention"]
+        "--router_type",
+        type=str,
+        default="dynamic",
+        choices=["dynamic", "distance", "attention"],
     )
     parser.add_argument("--lambda_ood", type=float, default=0.0)
     parser.add_argument("--max_proto_drop", type=float, default=None)

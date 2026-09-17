@@ -115,7 +115,9 @@ def build_model(cfg, device):
 
 
 def load_tasks(dataset, batch_size, num_workers):
-    kwargs = dict(batch_size=batch_size, val_split=0.1, seed=42, num_workers=num_workers)
+    kwargs = dict(
+        batch_size=batch_size, val_split=0.1, seed=42, num_workers=num_workers
+    )
     if dataset == "cifar10":
         return get_split_cifar10_tasks(data_dir="./data", **kwargs)
     if dataset == "cifar100":
@@ -225,9 +227,7 @@ def main():
                             continue
                         m = valid & (owners == eid)
                         logits = model.experts[eid](h[m])
-                        correct_owner += (
-                            logits.argmax(dim=1) == y[m]
-                        ).sum().item()
+                        correct_owner += (logits.argmax(dim=1) == y[m]).sum().item()
                     owner_readout[j] = correct_owner / max(total, 1)
 
             for i, expert in enumerate(model.experts):
@@ -241,7 +241,10 @@ def main():
     print("\nExpert accuracy on each task (row = task, col = expert):")
     print(
         tabulate(
-            [[f"Task {j}"] + [f"{acc_mat[j, i]:6.1%}" for i in range(num_experts)] for j in range(n)],
+            [
+                [f"Task {j}"] + [f"{acc_mat[j, i]:6.1%}" for i in range(num_experts)]
+                for j in range(n)
+            ],
             headers=[""] + [f"E{i}" for i in range(num_experts)],
             tablefmt="github",
         )
@@ -249,7 +252,10 @@ def main():
     print("\nRouter top-1 share for each task (row = task, col = expert):")
     print(
         tabulate(
-            [[f"Task {j}"] + [f"{share_mat[j, i]:6.1%}" for i in range(num_experts)] for j in range(n)],
+            [
+                [f"Task {j}"] + [f"{share_mat[j, i]:6.1%}" for i in range(num_experts)]
+                for j in range(n)
+            ],
             headers=[""] + [f"E{i}" for i in range(num_experts)],
             tablefmt="github",
         )
