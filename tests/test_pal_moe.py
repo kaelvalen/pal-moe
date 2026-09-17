@@ -1621,6 +1621,97 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_split_folder_tasks_from_images(tmp_path):
+    """The generic folder splitter builds class-incremental tasks from images."""
+    from PIL import Image
+
+    from pal_moe.data.split_folder import get_split_folder_tasks
+
+    for class_idx, colour in enumerate([(220, 30, 30), (30, 30, 220)]):
+        class_dir = tmp_path / f"class_{class_idx}"
+        class_dir.mkdir()
+        for i in range(10):
+            Image.new("RGB", (8, 8), color=colour).save(class_dir / f"img_{i}.png")
+
+    tasks = get_split_folder_tasks(
+        str(tmp_path), batch_size=4, val_split=0.2, test_split=0.2, classes_per_task=1
+    )
+    assert len(tasks) == 2
+    assert tasks[0].classes == (0,) and tasks[1].classes == (1,)
+    x, y = next(iter(tasks[0].train_loader))
+    assert x.shape[1:] == (3, 32, 32)
+
+    merged = get_split_folder_tasks(
+        str(tmp_path), batch_size=4, classes_per_task=2, num_workers=0
+    )
+    assert len(merged) == 1 and merged[0].classes == (0, 1)
+    with pytest.raises(ValueError):
+        get_split_folder_tasks(str(tmp_path), classes_per_task=3)
+
+
+def test_domain_shift_phase_stream():
+    from types import SimpleNamespace
+
+    import torch.utils.data as tdata
+
+    from pal_moe.data.domain_shift import (
+        apply_phase_shift,
+        permutation_transform,
+        rotation_transform,
+    )
+
+    x = torch.arange(16).float()
+    permuted = permutation_transform(seed=3, input_dim=16)(x)
+    assert sorted(permuted.tolist()) == sorted(x.tolist())
+    assert not torch.allclose(permuted, x)
+
+    grid = x.view(1, 4, 4)
+    assert not torch.allclose(rotation_transform(90)(grid), grid)
+
+    dataset = tdata.TensorDataset(
+        torch.randn(16, 1, 4, 4), torch.zeros(16, dtype=torch.long)
+    )
+    loader = tdata.DataLoader(dataset, batch_size=8, shuffle=False)
+    task = SimpleNamespace(
+        task_id=0,
+        classes=(0,),
+        train_loader=loader,
+        val_loader=loader,
+        test_loader=loader,
+    )
+    shifted = apply_phase_shift(
+        [task, task], [rotation_transform(90), rotation_transform(180)]
+    )
+    assert shifted[0].domain == 0 and shifted[1].domain == 1
+    x0, _ = next(iter(shifted[0].test_loader))
+    x1, _ = next(iter(shifted[1].test_loader))
+    assert not torch.allclose(x0, x1)
+
+
+def test_streaming_task_free_evaluation():
+    from pal_moe.evaluation.task_free import StreamingEvaluator
+
+    torch.manual_seed(0)
+    model = nn.Linear(4, 2)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor([[1.0, 0, 0, 0], [0, 1.0, 0, 0]]))
+        model.bias.zero_()
+
+    evaluator = StreamingEvaluator(
+        model, torch.device("cpu"), window=8, surprise_momentum=0.5
+    )
+    x = torch.randn(16, 4) + torch.tensor([4.0, 0, 0, 0])
+    y = torch.zeros(16, dtype=torch.long)
+    evaluator.update(x[:8], y[:8], domain=torch.zeros(8, dtype=torch.long))
+    evaluator.update(x[8:], y[8:], domain=torch.ones(8, dtype=torch.long))
+    report = evaluator.report()
+    assert report["samples_seen"] == 16
+    assert report["online_accuracy"] > 0.9
+    assert report["recent_accuracy"] > 0.9
+    assert report["surprise"] > 0
+    assert set(report["per_domain_accuracy"]) == {"0", "1"}
+
+
 def test_expert_width_growth_is_function_preserving():
     torch.manual_seed(0)
     expert = MLPExpert(8, 16, 3, 0)
