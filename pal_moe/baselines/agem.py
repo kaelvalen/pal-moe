@@ -80,10 +80,13 @@ class AGEM:
         self, task_id: int, train_loader: Any, epochs: int = 5
     ) -> dict[str, Any]:
         self.model.train()
-        losses = []
+        total_loss = torch.zeros((), device=self.device)
+        n_updates = 0
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, non_blocking=True), y.to(
+                    self.device, non_blocking=True
+                )
 
                 # 1. Gradient on the current batch
                 self.optimizer.zero_grad()
@@ -108,7 +111,11 @@ class AGEM:
                             self._unflatten_grad(projected)
 
                 self.optimizer.step()
-                losses.append(loss.item())
+                total_loss += loss.detach()
+                n_updates += 1
 
         self.update_buffer(train_loader, seen_tasks=task_id + 1)
-        return {"task_id": task_id, "loss": sum(losses) / max(len(losses), 1)}
+        return {
+            "task_id": task_id,
+            "loss": float(total_loss.item()) / max(n_updates, 1),
+        }

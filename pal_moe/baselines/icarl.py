@@ -90,20 +90,26 @@ class ICaRL:
                 self.wrapper.class_means[c] = feats.mean(dim=0)
 
     def _herding_select(self, feats: torch.Tensor, k: int) -> list[int]:
-        """Select k exemplars whose mean best matches the class mean."""
-        mean = feats.mean(dim=0)
-        selected = []
-        current = torch.zeros_like(mean)
-        remaining = list(range(feats.size(0)))
-        for _ in range(min(k, len(remaining))):
-            best = min(
-                remaining, key=lambda i: torch.norm(current + feats[i], p=2).item()
-            )
+        """
+        Select k exemplars whose running-mean best matches the class mean.
+
+        Greedy iCaRL herding. Vectorized so each selection is one
+        matrix-vector product instead of a Python scan with a host sync per
+        candidate: ||s + f_i||^2 = ||s||^2 + 2<s, f_i> + ||f_i||^2 and the
+        first term is constant, so argmin reduces to 2<s, f_i> + ||f_i||^2.
+        """
+        n = min(k, feats.size(0))
+        current_sum = torch.zeros(feats.size(1), dtype=feats.dtype, device=feats.device)
+        feat_sq = (feats * feats).sum(dim=1)
+        available = torch.ones(feats.size(0), dtype=torch.bool, device=feats.device)
+        selected: list[int] = []
+        for _ in range(n):
+            scores = 2.0 * (feats @ current_sum) + feat_sq
+            scores = scores.masked_fill(~available, float("inf"))
+            best = int(scores.argmin().item())
             selected.append(best)
-            remaining.remove(best)
-            current = current + feats[best]
-            if torch.norm(current / (len(selected)) - mean, p=2).item() < 1e-6:
-                pass
+            available[best] = False
+            current_sum = current_sum + feats[best]
         return selected
 
     def update_exemplars(self, train_loader: Any, current_classes: list[int]) -> None:
@@ -112,7 +118,9 @@ class ICaRL:
         class_raw: dict[int, list[torch.Tensor]] = {c: [] for c in current_classes}
         with torch.no_grad():
             for x, y in train_loader:
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, non_blocking=True), y.to(
+                    self.device, non_blocking=True
+                )
                 feats = self.wrapper.extract_features(x)
                 for c in current_classes:
                     mask = y == c
@@ -142,11 +150,14 @@ class ICaRL:
             current_classes = [2 * task_id, 2 * task_id + 1]
         self.seen_classes = sorted(set(self.seen_classes + current_classes))
         self.wrapper.train()
-        losses = []
+        total_loss = torch.zeros((), device=self.device)
+        n_updates = 0
 
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, non_blocking=True), y.to(
+                    self.device, non_blocking=True
+                )
                 self.optimizer.zero_grad()
 
                 logits = self.wrapper.network(x)  # full logits [B, C]
@@ -168,12 +179,16 @@ class ICaRL:
                 loss = ce + self.distil_weight * distil
                 loss.backward()
                 self.optimizer.step()
-                losses.append(loss.item())
+                total_loss += loss.detach()
+                n_updates += 1
 
         # snapshot model for next task's distillation
         self.old_model = copy.deepcopy(self.wrapper).eval()
         self.update_exemplars(train_loader, current_classes)
-        return {"task_id": task_id, "loss": sum(losses) / max(len(losses), 1)}
+        return {
+            "task_id": task_id,
+            "loss": float(total_loss.item()) / max(n_updates, 1),
+        }
 
     # expose wrapper for evaluation
     def eval_model(self) -> ICaRLWrapper:
