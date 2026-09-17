@@ -61,6 +61,31 @@ class MLPExpert(nn.Module):
         adapter_out = self.adapter_up(self.adapter_act(self.adapter_down(h)))
         return base_out + adapter_out
 
+    def widen(self, new_hidden: int) -> bool:
+        """
+        Function-preserving width expansion of the base pathway (Net2Net-style).
+
+        New hidden units start with zero incoming and zero outgoing weights, so
+        `E_after(h) == E_before(h)` exactly; they become trainable capacity.
+        Returns False when the expert already is at least that wide.
+        """
+        if new_hidden <= self.hidden_dim:
+            return False
+        with torch.no_grad():
+            old = self.hidden_dim
+            new_fc1 = nn.Linear(self.input_dim, new_hidden).to(self.fc1.weight.device)
+            new_fc2 = nn.Linear(new_hidden, self.num_classes).to(self.fc2.weight.device)
+            new_fc1.weight[:old] = self.fc1.weight
+            new_fc1.bias[:old] = self.fc1.bias
+            nn.init.zeros_(new_fc1.weight[old:])
+            nn.init.zeros_(new_fc1.bias[old:])
+            new_fc2.weight[:, :old] = self.fc2.weight
+            new_fc2.bias[:] = self.fc2.bias
+            nn.init.zeros_(new_fc2.weight[:, old:])
+        self.fc1, self.fc2 = new_fc1, new_fc2
+        self.hidden_dim = new_hidden
+        return True
+
     def clone_function_preserving(
         self, new_expert_id: int, creation_task: int, freeze_base: bool = False
     ) -> "MLPExpert":

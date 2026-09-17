@@ -376,6 +376,7 @@ def _run_palmoe_variant(
         max_proto_acc_drop=max_proto_acc_drop,
         max_ece=999.0,
         distill_lambda=0.5,
+        freeze_expansion_base=args.freeze_expansion_base,
     )
     trainer = ContinualTrainer(
         model=model,
@@ -410,6 +411,8 @@ def _run_palmoe_variant(
         lwf_temperature=args.lwf_temperature,
         lambda_ema=args.lambda_ema,
         loss_weighting=args.loss_weighting,
+        expansion_action=args.expansion_action,
+        widen_by=args.widen_by,
         router_anchor_margin=args.router_anchor_margin,
         router_weight_decay=args.router_weight_decay,
         device=device,
@@ -1332,6 +1335,31 @@ if __name__ == "__main__":
             "fixed: lambda-weighted sum (published recipes); uncertainty: "
             "learned homoscedastic weights for task/router/expert/ood"
         ),
+    )
+    parser.add_argument(
+        "--freeze_expansion_base",
+        action="store_true",
+        default=False,
+        help=(
+            "Adapter experts: cloned base pathways stay frozen and only the "
+            "zero-initialised residual adapters train"
+        ),
+    )
+    parser.add_argument(
+        "--expansion_action",
+        type=str,
+        default="add",
+        choices=["add", "widen"],
+        help=(
+            "What to do when the validation gate rejects: keep the newest "
+            "expert (add) or widen it in a function-preserving way (widen)"
+        ),
+    )
+    parser.add_argument(
+        "--widen_by",
+        type=int,
+        default=64,
+        help="Hidden units added by --expansion_action widen",
     )
     parser.add_argument(
         "--router_anchor_steps",
