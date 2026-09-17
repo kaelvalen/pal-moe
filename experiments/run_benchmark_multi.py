@@ -107,6 +107,10 @@ def main():
         "--expansion_action", type=str, default="add", choices=["add", "widen"]
     )
     parser.add_argument("--task_free_eval", action="store_true", default=False)
+    parser.add_argument(
+        "--gate_mode", type=str, default="absolute", choices=["absolute", "relative"]
+    )
+    parser.add_argument("--gate_margin", type=float, default=0.10)
     parser.add_argument("--max_experts", type=int, default=6)
     parser.add_argument(
         "--proto_routing_threshold",
@@ -309,6 +313,10 @@ def main():
             cmd += ["--expansion_action", args.expansion_action]
         if args.task_free_eval:
             cmd.append("--task_free_eval")
+        if args.gate_mode != "absolute":
+            cmd += ["--gate_mode", args.gate_mode]
+            if args.gate_margin != 0.10:
+                cmd += ["--gate_margin", str(args.gate_margin)]
         if args.max_experts != 6:
             cmd += ["--max_experts", str(args.max_experts)]
         if args.proto_routing_threshold is not None:

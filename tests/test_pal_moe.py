@@ -2014,6 +2014,57 @@ def test_widen_expansion_action_on_gate_rejection():
     assert moe.experts[-1].hidden_dim == 16
 
 
+def test_relative_gate_relaxes_for_weak_majority():
+    """Relative gate = min(absolute, majority + margin); never stricter."""
+    torch.manual_seed(0)
+    x = torch.randn(50, 8)
+    y = torch.arange(50) % 5  # balanced 5-way -> majority 0.2
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(x, y), batch_size=25
+    )
+
+    absolute = ExpertBuilder(min_acc_threshold=0.45)
+    relative = ExpertBuilder(
+        min_acc_threshold=0.45, gate_mode="relative", gate_margin=0.10
+    )
+    assert absolute.gate_threshold(loader) == (0.45, None)
+    threshold, majority = relative.gate_threshold(loader)
+    assert majority == pytest.approx(0.2)
+    assert threshold == pytest.approx(0.30)
+
+    # A 2-way task (majority 0.5) keeps the absolute bar even in relative mode.
+    y2 = torch.arange(50) % 2
+    loader2 = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(x, y2), batch_size=25
+    )
+    threshold2, majority2 = relative.gate_threshold(loader2)
+    assert majority2 == pytest.approx(0.5)
+    assert threshold2 == pytest.approx(0.45)
+
+    with pytest.raises(ValueError):
+        ExpertBuilder(gate_mode="nope")
+
+
+def test_param_reporting_fields():
+    """total/trainable/active parameter counts must tell the compute story."""
+    from experiments.run_benchmark import _active_params_per_sample
+
+    from pal_moe.factory import build_moe, build_single_head
+
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    baseline = build_single_head(enc, 8, 8, 3)
+    assert _active_params_per_sample(baseline) == sum(
+        p.numel() for p in baseline.parameters()
+    )
+
+    moe = build_moe(enc, 8, 8, 3, num_experts=3, shared_expert=True)
+    total = sum(p.numel() for p in moe.parameters())
+    active = _active_params_per_sample(moe)
+    one_expert = sum(p.numel() for p in moe.experts[0].parameters())
+    assert active < total
+    assert active >= one_expert  # at least one expert is always on the path
+
+
 def test_uncertainty_weighter_formula_and_gradients():
     from pal_moe.adaptation.losses import UncertaintyWeighter
 

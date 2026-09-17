@@ -36,6 +36,8 @@ class ValidationGateResult:
     proto_acc_parent: Optional[float] = None
     proto_acc_cand: Optional[float] = None
     rejection_reason: Optional[str] = None
+    majority_baseline: Optional[float] = None
+    effective_threshold: Optional[float] = None
 
 
 class ExpertBuilder:
@@ -52,6 +54,8 @@ class ExpertBuilder:
         distill_lambda: float = 1.0,
         enable_gate: bool = True,
         freeze_expansion_base: bool = False,
+        gate_mode: str = "absolute",
+        gate_margin: float = 0.10,
     ):
         self.min_acc_threshold = min_acc_threshold
         self.max_proto_drop = max_proto_drop
@@ -62,6 +66,45 @@ class ExpertBuilder:
         # Adapter experts: the cloned base pathway stays frozen and only the
         # zero-initialised residual adapter trains (parameter-efficient growth).
         self.freeze_expansion_base = freeze_expansion_base
+        # Validation gate threshold policy. "absolute" uses min_acc_threshold
+        # as-is (published behaviour). "relative" relaxes it to
+        # min(min_acc_threshold, majority-class baseline + gate_margin), so a
+        # 5-way task at ~35% is not rejected just because the absolute value
+        # was tuned for 2-way tasks (CIFAR-100 problem).
+        if gate_mode not in ("absolute", "relative"):
+            raise ValueError(f"unknown gate_mode {gate_mode!r}")
+        self.gate_mode = gate_mode
+        self.gate_margin = float(gate_margin)
+
+    @staticmethod
+    def _majority_baseline(val_loader: Any, max_batches: int = 8) -> float:
+        """Fraction of the most frequent class in the validation labels."""
+        counts: dict = {}
+        total = 0
+        for batch_idx, batch in enumerate(val_loader):
+            if batch_idx >= max_batches:
+                break
+            labels = batch[1]
+            for label in labels.view(-1).tolist():
+                counts[label] = counts.get(label, 0) + 1
+                total += 1
+        if total == 0:
+            return 0.0
+        return max(counts.values()) / total
+
+    def gate_threshold(self, val_loader: Any) -> tuple[float, Optional[float]]:
+        """
+        Returns (effective_threshold, majority_baseline).
+
+        "absolute": min_acc_threshold as-is.
+        "relative": min(min_acc_threshold, majority + gate_margin), i.e. the
+        policy can only relax the absolute bar for tasks whose majority class is
+        weak (e.g. 5-way CIFAR-100 tasks at ~20%), never make it stricter.
+        """
+        if self.gate_mode == "relative":
+            majority = self._majority_baseline(val_loader)
+            return min(self.min_acc_threshold, majority + self.gate_margin), majority
+        return self.min_acc_threshold, None
 
     def create_candidate_from_parent(
         self,
@@ -351,14 +394,27 @@ class ExpertBuilder:
                 proto_acc_parent=proto_acc_parent,
                 proto_acc_cand=proto_acc_cand,
                 rejection_reason=None,
+                majority_baseline=None,
+                effective_threshold=self.min_acc_threshold,
             )
 
         rejection_reason = None
         passed = True
+        effective_threshold, majority_baseline = self.gate_threshold(val_loader)
 
-        if new_task_acc < self.min_acc_threshold:
+        if new_task_acc < effective_threshold:
             passed = False
-            rejection_reason = f"New task acc ({new_task_acc:.2%}) below threshold ({self.min_acc_threshold:.2%})"
+            rejection_reason = (
+                f"New task acc ({new_task_acc:.2%}) below threshold "
+                f"({effective_threshold:.2%}"
+                + (
+                    f" = min({self.min_acc_threshold:.2%}, majority "
+                    f"{majority_baseline:.2%} + {self.gate_margin:.2%})"
+                    if majority_baseline is not None
+                    else ""
+                )
+                + ")"
+            )
         elif proto_loss_diff > self.max_proto_drop:
             passed = False
             rejection_reason = f"Old prototype output drift ({proto_loss_diff:.3f}) exceeds max allowed ({self.max_proto_drop:.3f})"
@@ -388,6 +444,8 @@ class ExpertBuilder:
             proto_acc_parent=proto_acc_parent,
             proto_acc_cand=proto_acc_cand,
             rejection_reason=rejection_reason,
+            majority_baseline=majority_baseline,
+            effective_threshold=effective_threshold,
         )
 
     def enforce_capacity_control(

@@ -78,10 +78,47 @@ def _banner(title: str) -> None:
     print("=" * 60)
 
 
+def _active_params_per_sample(model: nn.Module) -> int:
+    """
+    Parameters touched by one forward pass.
+
+    For a single-head model that is every parameter. For a DynamicMoE it is the
+    encoder + router + shared expert + the top-k task experts (top-1 in all
+    published recipes), which is the honest per-sample cost even though the
+    frozen experts still occupy memory.
+    """
+    experts = getattr(model, "experts", None)
+    router = getattr(model, "router", None)
+    if experts is None or router is None:
+        return int(sum(p.numel() for p in model.parameters()))
+    active = sum(p.numel() for p in router.parameters())
+    shared = getattr(model, "shared_expert", None)
+    if shared is not None:
+        active += sum(p.numel() for p in shared.parameters())
+    gate = getattr(model, "shared_gate", None)
+    if gate is not None:
+        active += sum(p.numel() for p in gate.parameters())
+    encoder = getattr(model, "encoder", None)
+    if encoder is not None:
+        active += sum(p.numel() for p in encoder.parameters())
+    if experts:
+        k = min(getattr(router, "top_k", 1), len(experts))
+        largest = max(sum(p.numel() for p in e.parameters()) for e in experts)
+        active += k * largest
+    return int(active)
+
+
 def _record_baseline_result(
     model: nn.Module, evaluator: ContinualEvaluator, final_experts: int = 1
 ) -> dict:
-    """Common result payload; `trainable_params` documents the capacity actually used."""
+    """
+    Common result payload.
+
+    `total_params` is the full model size; `trainable_params` is what still
+    receives gradients at the end of training (historical experts are frozen);
+    `active_params` is the per-sample forward cost. Reporting all three avoids
+    the "frozen experts are invisible" trap in compute-matched comparisons.
+    """
     return {
         "acc": evaluator.compute_average_accuracy(),
         "forgetting": evaluator.compute_forgetting(),
@@ -90,9 +127,11 @@ def _record_baseline_result(
         "specialization_mi": float("nan"),
         "utilization": float("nan"),
         "final_experts": final_experts,
+        "total_params": int(sum(p.numel() for p in model.parameters())),
         "trainable_params": int(
             sum(p.numel() for p in model.parameters() if p.requires_grad)
         ),
+        "active_params": _active_params_per_sample(model),
         "fit_seconds": getattr(evaluator, "fit_seconds", None),
         "geometry": getattr(evaluator, "geometry", None),
         "acc_matrix": evaluator.R.tolist(),
@@ -388,6 +427,8 @@ def _run_palmoe_variant(
         max_ece=999.0,
         distill_lambda=0.5,
         freeze_expansion_base=args.freeze_expansion_base,
+        gate_mode=args.gate_mode,
+        gate_margin=args.gate_margin,
     )
     trainer = ContinualTrainer(
         model=model,
@@ -1399,6 +1440,24 @@ if __name__ == "__main__":
             "fixed: lambda-weighted sum (published recipes); uncertainty: "
             "learned homoscedastic weights for task/router/expert/ood"
         ),
+    )
+    parser.add_argument(
+        "--gate_mode",
+        type=str,
+        default="absolute",
+        choices=["absolute", "relative"],
+        help=(
+            "Validation gate threshold: 'absolute' uses min_acc_threshold; "
+            "'relative' relaxes it to min(min_acc_threshold, majority-class "
+            "baseline + gate_margin), which fixes 5-way tasks being rejected by "
+            "a threshold tuned for 2-way tasks"
+        ),
+    )
+    parser.add_argument(
+        "--gate_margin",
+        type=float,
+        default=0.10,
+        help="Margin above the majority-class baseline for --gate_mode relative",
     )
     parser.add_argument(
         "--freeze_expansion_base",
