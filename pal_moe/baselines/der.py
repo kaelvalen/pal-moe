@@ -4,7 +4,7 @@ Dark Experience Replay++ (DER++) and Asymmetric Cross-Entropy Replay (ER-ACE).
 Modern memory-based continual learning baselines:
 - DER (Buzzega et al., 2020): replay of past logits via MSE distillation.
 - DER++: DER + direct labels (CE) on buffered samples.
-- ER-ACE (Arslan et al., 2022): asymmetric cross-entropy — buffered old samples are
+- ER-ACE (Arslan et al., 2022): asymmetric cross-entropy; buffered old samples are
   trained to have low probability on the CURRENT task's classes ("gained" classes),
   preventing interference with past knowledge.
 

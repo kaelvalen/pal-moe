@@ -138,7 +138,7 @@ class ContinualTrainer:
     def _distill_router_anchors(self, steps: int, lr: float) -> float:
         """
         Trains the router to reproduce the explicit prototype owners:
-        P(owner expert | prototype feature) — a direct, cross-task supervised
+        P(owner expert | prototype feature), a direct cross-task supervised
         signal available without any raw exemplars. Historical routing rows are
         temporarily unlocked, then the standard lock is restored.
         """
@@ -367,9 +367,9 @@ class ContinualTrainer:
 
                 # OOD negative-boundary term: the newest expert must stay agnostic
                 # about historical tasks, so its predictions on old prototypes are
-                # pushed toward maximum entropy. This is what the README's "negative
-                # boundaries / OOD penalty" claim refers to: the new expert learns the
-                # boundary of ITS OWN task, not a generalist solution.
+                # pushed toward maximum entropy. This is the OOD penalty described
+                # in the README: the new expert learns the boundary of ITS OWN
+                # task, not a generalist solution.
                 l_ood = torch.tensor(0.0, device=self.device)
                 if (
                     self.lambda_ood > 0

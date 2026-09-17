@@ -465,7 +465,7 @@ class PrototypeMemory:
             return
         if self.distance_threshold is None:
             # Scale-free calibration (see _auto_threshold): a fixed absolute
-            # threshold is meaningless across feature spaces — measured nearest
+            # threshold is meaningless across feature spaces. Measured nearest
             # prototype distances on Split-CIFAR are ~6.5-7.2, so the old 0.5
             # effectively turned every sample into its own prototype.
             self.distance_threshold = self._auto_threshold(features)
@@ -498,8 +498,9 @@ class PrototypeMemory:
         Scale-free threshold calibration: the median nearest-neighbour distance
         inside the registration batch, times `quantile`. Points closer than the
         typical local spacing merge (via EMA chaining), so a dense region
-        collapses to a few centroids while distinct clusters stay apart — unlike
-        a fixed absolute threshold, which is meaningless across feature spaces.
+        collapses to a few centroids while distinct clusters stay apart. A fixed
+        absolute threshold cannot do this, since it is meaningless across
+        feature spaces.
         """
         x = features.detach().float()
         if x.size(0) < 2:

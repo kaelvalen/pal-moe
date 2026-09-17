@@ -3,9 +3,9 @@ Post-hoc diagnostics for a saved PAL-MoE checkpoint.
 
 Separates the two possible causes of catastrophic forgetting:
 
-* **router failure** — the experts still solve their own tasks, but the router
-  never selects them for old inputs (the "recency funnel"), vs.
-* **destructive calibration** — the experts themselves no longer solve their
+* **router failure**: the experts still solve their own tasks, but the router
+  never selects them for old inputs (the "recency funnel").
+* **destructive calibration**: the experts themselves no longer solve their
   tasks because end-of-task joint fine-tuning overwrote them.
 
 For every (task, expert) pair the script reports:
