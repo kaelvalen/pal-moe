@@ -32,10 +32,8 @@ class ReplayTrainer:
         self.buffer_x: list[torch.Tensor] = []
         self.buffer_y: list[torch.Tensor] = []
 
-    def update_buffer(
-        self, train_loader: Any, per_task_budget: Optional[int] = None
-    ) -> None:
-        """Stores random exemplars from current task."""
+    def update_buffer(self, train_loader: Any) -> None:
+        """Stores `buffer_size // 5` random exemplars from the current task."""
         collected_x = []
         collected_y = []
         for x, y in train_loader:
@@ -46,11 +44,7 @@ class ReplayTrainer:
 
         indices = list(range(cat_x.size(0)))
         random.shuffle(indices)
-        budget = (
-            per_task_budget
-            if per_task_budget is not None
-            else max(1, self.buffer_size // 5)
-        )
+        budget = max(1, self.buffer_size // 5)
         selected = indices[:budget]
 
         for idx in selected:

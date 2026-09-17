@@ -647,22 +647,28 @@ class TestTimeAdapter:
     def adapt_and_predict(self, x: torch.Tensor) -> torch.Tensor:
         """
         Performs test-time adaptation on unlabeled batch x and returns predictions.
-        Guarantees that encoder requires_grad and training mode are restored.
+
+        Adaptation is local to this batch: router/expert weights, encoder
+        requires_grad flags and the model's training mode are all restored on
+        exit, so the adapter never permanently modifies the model.
         """
         orig_encoder_grads = [p.requires_grad for p in self.model.encoder.parameters()]
         orig_mode = self.model.training
 
+        trainable_params = list(self.model.router.parameters())
+        for exp in self.model.experts:
+            trainable_params.extend(list(exp.parameters()))
+        snapshot = [p.detach().clone() for p in trainable_params]
+
         try:
-            # Ensure encoder is frozen during test-time adaptation
-            self.model.encoder.eval()
+            # Adaptation is inference: run in eval mode (no dropout/noise, and
+            # expert usage counters must not be touched by test-time forwards)
+            # and keep the encoder frozen.
+            self.model.eval()
             for p in self.model.encoder.parameters():
                 p.requires_grad = False
 
             # Make router and experts adaptable
-            trainable_params = list(self.model.router.parameters())
-            for exp in self.model.experts:
-                trainable_params.extend(list(exp.parameters()))
-
             optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
 
             for _ in range(self.steps):
@@ -694,7 +700,10 @@ class TestTimeAdapter:
             return final_logits
 
         finally:
-            # Restore original encoder requires_grad flags and training mode
+            # Restore adapted weights, encoder requires_grad flags and mode
+            with torch.no_grad():
+                for p, saved in zip(trainable_params, snapshot):
+                    p.copy_(saved)
             for p, req in zip(self.model.encoder.parameters(), orig_encoder_grads):
                 p.requires_grad = req
             self.model.train(orig_mode)
