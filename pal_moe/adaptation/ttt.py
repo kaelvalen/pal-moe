@@ -98,17 +98,30 @@ class ContinualTrainer:
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
         encoder_params = [p for p in self.model.encoder.parameters() if p.requires_grad]
-        other_params = [
+        router_params = [
             p
             for n, p in self.model.named_parameters()
-            if not n.startswith("encoder.") and p.requires_grad
+            if n.startswith("router.") and p.requires_grad
+        ]
+        expert_params = [
+            p
+            for n, p in self.model.named_parameters()
+            if not n.startswith(("encoder.", "router.")) and p.requires_grad
         ]
         param_groups = []
         if encoder_params:
             enc_lr = self.encoder_lr if self.encoder_lr is not None else self.lr
             param_groups.append({"params": encoder_params, "lr": enc_lr})
-        if other_params:
-            param_groups.append({"params": other_params, "lr": self.lr})
+        if expert_params:
+            param_groups.append({"params": expert_params, "lr": self.lr})
+        if router_params:
+            # Zero weight decay for the router: locked historical rows are held
+            # fixed by backward hooks, but Adam's decoupled L2 term is added
+            # inside step() and would still shrink them a little every update.
+            # With weight_decay=0 the historical-routing lock is exact.
+            param_groups.append(
+                {"params": router_params, "lr": self.lr, "weight_decay": 0.0}
+            )
         if not param_groups:
             param_groups = [
                 {"params": [torch.nn.Parameter(torch.zeros(1))], "lr": self.lr}
@@ -184,6 +197,21 @@ class ContinualTrainer:
         self.optimizer = self._build_optimizer()
         return last_loss
 
+    def _enter_training_mode(self) -> None:
+        """
+        Puts the model in training mode (frozen encoders stay in eval so their
+        BatchNorm running statistics cannot drift).
+
+        Trigger evaluation and the validation gate run under eval() and could
+        otherwise leak that mode into the training loop, disabling BatchNorm
+        updates for trainable encoders and activating prototype-anchored
+        routing during training. Called at the start of every task and again
+        after the expansion block.
+        """
+        self.model.train()
+        if not any(p.requires_grad for p in self.model.encoder.parameters()):
+            self.model.encoder.eval()
+
     def train_task(
         self,
         task_id: int,
@@ -196,11 +224,7 @@ class ContinualTrainer:
         """
         Trains the DynamicMoE model on a given task.
         """
-        self.model.train()
-        # A frozen encoder must not drift through BatchNorm running statistics
-        # either: keep it in eval mode for the whole task phase.
-        if not any(p.requires_grad for p in self.model.encoder.parameters()):
-            self.model.encoder.eval()
+        self._enter_training_mode()
         history = {
             "loss_total": [],
             "loss_task": [],
@@ -307,6 +331,10 @@ class ContinualTrainer:
                     print(
                         f"      [Validation Gate] Rejected! Reason: {gate_result.rejection_reason}"
                     )
+
+        # Expansion helpers run under eval(); restore training mode before the
+        # task's training loop starts.
+        self._enter_training_mode()
 
         # Step 4.5: If task 0, align router's initial expert with task 0 representation
         if task_id == 0 and len(self.model.experts) >= 1:

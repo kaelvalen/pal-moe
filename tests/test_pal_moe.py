@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from pal_moe.adaptation.ttt import TestTimeAdapter
+from pal_moe.adaptation.ttt import ContinualTrainer, TestTimeAdapter
 from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.evaluation.metrics import ContinualEvaluator
 from pal_moe.memory.prototype_memory import PrototypeMemory
@@ -1420,6 +1420,89 @@ def test_prototype_routing_confidence_uses_task_margin():
         model.set_prototype_routing(mem_single, alpha=1.0)
         _, conf_single = model._prototype_routing_anchor(torch.tensor([[1.0, 0, 0, 0]]))
         assert conf_single.item() == 1.0
+
+
+def test_inference_paths_restore_training_mode():
+    """Trigger and gate are inference-only: they must not leak eval() mode."""
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    enc.unfreeze()  # trainable encoder
+    router = DynamicRouter(input_dim=8, num_experts=1)
+    moe = DynamicMoE(enc, router, [MLPExpert(8, 8, 3)], use_ema_encoder=False)
+    moe.train()
+
+    x = torch.randn(16, 16)
+    y = torch.randint(0, 3, (16,))
+
+    trigger = QuantitativeTrigger(threshold_tau=1e9)
+    trigger.evaluate(moe, x, y, None)
+    assert moe.training and enc.training
+
+    builder = ExpertBuilder()
+    child = builder.create_candidate_from_parent(moe.experts[0], 1, 1)
+    loader = [(x, y)]
+    builder.train_candidate(child, enc, loader, epochs=1, device=torch.device("cpu"))
+    assert enc.training, "train_candidate must restore the encoder mode"
+    builder.validate_candidate(child, moe.experts[0], enc, loader, None)
+    assert (
+        enc.training and moe.experts[0].training and child.training
+    ), "validate_candidate must restore all module modes"
+
+
+def test_train_task_runs_in_training_mode_after_expansion():
+    """Regression: for task_id > 0 the training loop used to run in eval()."""
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    enc.unfreeze()
+    router = DynamicRouter(input_dim=8, num_experts=1)
+    moe = DynamicMoE(enc, router, [MLPExpert(8, 8, 3)], use_ema_encoder=False)
+
+    # Trigger everything so the expansion path (candidate train + gate) runs.
+    trigger = QuantitativeTrigger(threshold_tau=-1e9)
+    memory = PrototypeMemory(feature_dim=8)
+    trainer = ContinualTrainer(
+        model=moe,
+        prototype_memory=memory,
+        trigger=trigger,
+        builder=ExpertBuilder(min_acc_threshold=0.0, enable_gate=False),
+        device=torch.device("cpu"),
+    )
+
+    modes = []
+    # model.forward is only used by the training loop (and joint calibration),
+    # never by the trigger/gate inference paths.
+    hook = moe.register_forward_hook(lambda m, i, o: modes.append(m.training))
+    try:
+        x = torch.randn(16, 16)
+        y = torch.randint(0, 3, (16,))
+        loader = [(x, y)]
+        trainer.train_task(task_id=1, train_loader=loader, val_loader=loader, epochs=1)
+    finally:
+        hook.remove()
+
+    assert modes, "model forward was never recorded"
+    assert all(modes), "training forwards must run in training mode"
+
+
+def test_router_params_have_zero_weight_decay():
+    """Adam's L2 term must not decay locked historical routing rows."""
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2)
+    moe = DynamicMoE(enc, router, [MLPExpert(8, 8, 3, i) for i in range(2)])
+
+    trainer = ContinualTrainer(
+        model=moe,
+        prototype_memory=PrototypeMemory(feature_dim=8),
+        trigger=QuantitativeTrigger(),
+        builder=ExpertBuilder(),
+        device=torch.device("cpu"),
+    )
+    router_param_ids = {id(p) for p in router.parameters()}
+    router_group = [
+        g
+        for g in trainer.optimizer.param_groups
+        if any(id(p) in router_param_ids for p in g["params"])
+    ]
+    assert router_group and router_group[0]["weight_decay"] == 0.0
 
 
 def test_config_validation_and_precedence(tmp_path):
