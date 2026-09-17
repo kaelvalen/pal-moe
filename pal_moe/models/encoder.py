@@ -89,12 +89,27 @@ class SharedEncoder(nn.Module):
                     x = x.view(-1, 3, 32, 32)
             return self.net(x)
 
+    def train(self, mode: bool = True) -> "SharedEncoder":
+        """
+        A frozen encoder ignores ``train()`` entirely (it stays in eval mode), so
+        BatchNorm running statistics cannot drift when a wrapper calls
+        ``model.train()``. Measured artifact: the baselines' replay features
+        drifted this way, costing DER++ ~11 accuracy points on Split-CIFAR-10.
+        """
+        if getattr(self, "_frozen", False):
+            super().train(False)
+            return self
+        super().train(mode)
+        return self
+
     def freeze(self) -> None:
+        self._frozen = True
         for param in self.parameters():
             param.requires_grad = False
         self.eval()
 
     def unfreeze(self) -> None:
+        self._frozen = False
         for param in self.parameters():
             param.requires_grad = True
         self.train()

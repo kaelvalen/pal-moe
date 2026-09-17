@@ -373,12 +373,31 @@ class PrototypeMemory:
         if work_matrix is None or work_matrix.size(0) != len(self.prototypes):
             work_matrix = torch.stack([p.v_p for p in self.prototypes], dim=0)
 
-        # Find closest existing prototype against the caller-maintained matrix
-        dists = torch.norm(work_matrix - feat_detached.unsqueeze(0), p=2, dim=1)
-        min_dist, closest_idx = torch.min(dists, dim=0)
-        closest = int(closest_idx.item())
+        # Owner-aware merging: never merge across owners. A merged centroid keeps
+        # a single owner_expert, so merging prototypes from two tasks would make
+        # the router distillation route one task to the other's expert (measured:
+        # auto-threshold without this restriction lost 2-8 points of accuracy).
+        if owner_expert is None:
+            candidate_idx = list(range(len(self.prototypes)))
+        else:
+            candidate_idx = [
+                i
+                for i, p in enumerate(self.prototypes)
+                if p.owner_expert == owner_expert
+            ]
 
-        if min_dist.item() <= self.distance_threshold:
+        if candidate_idx:
+            cand = torch.tensor(candidate_idx, dtype=torch.long)
+            dists = torch.norm(
+                work_matrix[cand] - feat_detached.unsqueeze(0), p=2, dim=1
+            )
+            min_dist, arg = torch.min(dists, dim=0)
+            closest = candidate_idx[int(arg.item())]
+        else:
+            min_dist = torch.tensor(float("inf"))
+            closest = -1
+
+        if closest >= 0 and min_dist.item() <= self.distance_threshold:
             # Update existing prototype with EMA
             proto = self.prototypes[closest]
             proto.v_p = (
