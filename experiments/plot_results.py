@@ -10,15 +10,20 @@ import numpy as np
 
 
 def plot_benchmark_results(
-    results_file="results/benchmark_results.json",
+    results_file="results/benchmark_multi.json",
     output_path="results/benchmark_comparison.png",
 ):
     if not os.path.exists(results_file):
-        print(f"Results file {results_file} not found.")
+        print(
+            f"Results file {results_file} not found. Run "
+            "experiments/run_benchmark_multi.py (or run_benchmark.py and pass "
+            "--results_file) first."
+        )
         return
 
     with open(results_file) as f:
         data = json.load(f)
+    dataset = str(data.get("config", {}).get("dataset", "continual learning"))
 
     # Multi-seed format: results/benchmark_multi.json -> {"aggregated": {method: {...}}}
     if isinstance(data, dict) and "aggregated" in data:
@@ -69,8 +74,8 @@ def plot_benchmark_results(
 
     ax.set_ylabel("Percentage (%)", fontsize=12)
     ax.set_title(
-        f"Continual Learning Benchmark on Split-MNIST (5 Tasks"
-        f"{f', {len(accs)} seeds mean±std' if multi_seed else ''})",
+        f"Continual Learning Benchmark on {dataset.upper()}"
+        f"{f' ({len(accs)} seeds mean±std)' if multi_seed else ''}",
         fontsize=14,
         fontweight="bold",
     )

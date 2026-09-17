@@ -1621,6 +1621,23 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_test_time_adapter_restores_model_weights():
+    """Test-time adaptation must not permanently modify router/expert weights."""
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2)
+    moe = DynamicMoE(
+        enc, router, [MLPExpert(8, 8, 3, i) for i in range(2)], use_ema_encoder=False
+    )
+    before = {k: v.clone() for k, v in moe.state_dict().items()}
+
+    adapter = TestTimeAdapter(moe, steps=2, lr=1e-2)
+    adapter.adapt_and_predict(torch.randn(8, 16))
+
+    for key, value in moe.state_dict().items():
+        assert torch.allclose(value, before[key]), f"{key} changed permanently"
+
+
 def test_factory_builds_consistent_models():
     """The shared factory must construct every router/model variant."""
     from pal_moe.factory import (

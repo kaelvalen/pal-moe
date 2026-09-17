@@ -127,10 +127,17 @@ class PrototypeMemory:
                 rp = p.r_p.to(device)
                 n = rp.size(0)
                 if n < num_experts:
-                    pad = torch.full(
-                        (num_experts - n,), 1e-4 / num_experts, device=device
+                    # Same rescaling as get_router_anchor_matrices: the padded
+                    # row stays a valid distribution instead of summing to > 1.
+                    pad_size = num_experts - n
+                    eps = 1e-4 / num_experts
+                    rp = torch.cat(
+                        [
+                            rp * (1.0 - eps * pad_size),
+                            torch.full((pad_size,), eps, device=device),
+                        ],
+                        dim=0,
                     )
-                    rp = torch.cat([rp, pad], dim=0)
                 else:
                     rp = rp[:num_experts]
                     rp = rp / (rp.sum() + 1e-9)
