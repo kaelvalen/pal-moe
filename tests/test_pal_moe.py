@@ -200,7 +200,7 @@ def test_rejected_expansion_owner_is_newest_expert():
     """
     Regression: when the validation gate rejects expansion, the task's
     prototypes must be owned by the *newest* expert (the one the task phase
-    trained), not by the trigger's best parent — anchoring to the parent
+    trained), not by the trigger's best parent. Anchoring to the parent
     conflated two tasks on one expert and collapsed the rejected task
     (MNIST hybrid 81.1% -> 71.1% before the fix).
     """

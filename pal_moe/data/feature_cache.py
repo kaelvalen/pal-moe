@@ -2,9 +2,9 @@
 Frozen-encoder feature caching.
 
 With a frozen encoder and deterministic input transforms (the benchmark CIFAR/MNIST
-pipelines are normalize-only), every stage of the continual pipeline — task
+pipelines are normalize-only), every stage of the continual pipeline (task
 training, candidate training, trigger evaluation, prototype registration, joint
-calibration, router distillation and evaluation — only ever needs ``h(x)``, never
+calibration, router distillation and evaluation) only ever needs ``h(x)``, never
 ``x`` itself. Precomputing ``h`` once per split removes the encoder from the
 training loop entirely:
 
