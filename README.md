@@ -50,24 +50,24 @@ All methods share the same pretrained encoder and matched head capacity.
 
 ### 2. Split-CIFAR-10 (5 Tasks, Wide CNN Encoder, Frozen)
 
-*Current code, single seed (42), same geometry and schedule for every method: conv encoder 64/128/256 → 256-dim latents (150 SimCLR epochs), experts hidden 512, 5 epochs/task, `--freeze_encoder`, multi-seed pending. PAL-MoE additionally distills its router onto the prototype owners at each task end (`--router_anchor_steps 300`, zero raw replay).*
+*Current code, single seed (42), same geometry and schedule for every method: conv encoder 64/128/256 → 256-dim latents (50 SimCLR epochs), experts hidden 512, 5 epochs/task, frozen encoder with `--feature_cache`; PAL-MoE additionally distills its router onto the prototype owners at each task end (`--router_anchor_steps 300`, zero raw replay).*
 
 | Method | Avg Acc (↑) | Forgetting (↓) | Raw exemplars |
 | :--- | :---: | :---: | :---: |
-| Naive Fine-tuning | 17.24% | 83.41% | – |
-| EWC | 17.31% | 83.59% | – |
-| Standard MoE (4 experts) | 17.17% | 82.31% | – |
-| ER-ACE (P=250) | 19.64% | 75.33% | 250 |
-| Experience Replay (P=250) | 20.63% | 76.96% | 250 |
-| DER++ (P=250) | 21.61% | 68.50% | 250 |
-| AGEM (P=250) | 23.00% | 74.35% | 250 |
-| iCaRL (k=25) | 8.55% | 15.90% | 250 |
-| **PAL-MoE (pure)** | **37.52%** | **23.54%** | **0 (latent only)** |
-| PAL-MoE + Replay (Hybrid, P=250) | 37.85% | 25.89% | 250 |
+| Naive Fine-tuning | 17.21% | 83.84% | – |
+| EWC | 17.17% | 83.89% | – |
+| Standard MoE (4 experts) | 17.23% | 82.10% | – |
+| ER-ACE (P=250) | 25.27% | 70.75% | 250 |
+| Experience Replay (P=250) | 25.37% | 73.13% | 250 |
+| iCaRL (k=25) | 26.09% | 16.23% | 250 |
+| AGEM (P=250) | 28.27% | 69.03% | 250 |
+| DER++ (P=250) | 32.82% | 60.49% | 250 + logits |
+| **PAL-MoE (pure)** | **35.50%** | **24.05%** | **0 (latent only)** |
+| PAL-MoE + Replay (Hybrid, P=250) | 36.92% | 22.06% | 250 |
 
-*(Honest reading: **the pure variant, which stores no raw inputs at all (latent prototypes + task ids only), beats every replay-based baseline by ~14.5 points on average accuracy while forgetting far less than ER/DER++/AGEM.** The hybrid adds little at this geometry — the latent anchors carry the readout. At the longer 15-epoch schedule the same recipe reaches **37.35 ± 0.56% pure / 38.87 ± 0.47% hybrid across 5 seeds** (forgetting 24.3 ± 0.5 / 23.2 ± 0.6, routing utilization entropy 0.998). Remaining gap is per-expert quality (oracle 66.9%), not routing.)*
+*(Honest reading: **the pure variant, which stores no raw inputs at all (latent prototypes + task ids only), beats the strongest baseline — DER++, which stores 250 raw images and its logits — by 2.7 accuracy points while forgetting 2.5x less (24.1% vs 60.5%).** The hybrid leads by another 1.4 points. An earlier revision of this table showed a ~14-point gap; that was a baseline-side BatchNorm artifact (the "frozen" encoder drifted during the baselines' own training loops) and is corrected here — see BENCHMARK.md fact 14. Remaining gap to the per-expert oracle (~67%) is representation/expert quality, not routing.)*
 
-*Note: the encoder fine-tuning regime is harder for the replay baselines on CIFAR-10 from scratch — with an unfrozen encoder the earlier pure/hybrid runs scored 17.75% / 25.54%, so the frozen-representation setting is part of the method's design, not a free lunch. Split-CIFAR-100 (20 tasks × 5 classes) support is implemented — `pal_moe/data/split_cifar100.py`, `--dataset cifar100` — pending a full benchmark run.*
+*Note: the encoder fine-tuning regime is harder on CIFAR-10 from scratch — with an unfrozen encoder the earlier pure/hybrid runs scored 17.75% / 25.54%, so the frozen-representation setting is part of the method's design, not a free lunch. At the longer 15-epoch schedule the calibrated recipe reaches **37.35 ± 0.56% pure / 38.87 ± 0.47% hybrid across 5 seeds** (forgetting 24.3 ± 0.5 / 23.2 ± 0.6; the feature cache was verified neutral on seed 42: 37.60% vs 36.72%). Split-CIFAR-100 (20 tasks × 5 classes) support is implemented — `pal_moe/data/split_cifar100.py`, `--dataset cifar100` — pending a full benchmark run.*
 
 ---
 
