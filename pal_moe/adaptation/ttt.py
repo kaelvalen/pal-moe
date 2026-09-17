@@ -282,7 +282,10 @@ class ContinualTrainer:
         temporarily unlocked, then the standard lock is restored.
         """
         owned = [
-            p for p in self.prototype_memory.prototypes if p.owner_expert is not None
+            p
+            for p in self.prototype_memory.prototypes
+            if p.owner_expert is not None
+            and 0 <= p.owner_expert < self.model.num_experts
         ]
         if not owned or steps <= 0:
             return 0.0
@@ -453,12 +456,18 @@ class ContinualTrainer:
                         null_space_basis=null_basis,
                     )
                     task_expert_id = new_id
-                    # Enforce capacity control if exceeded (with prototype memory synchronization)
-                    self.builder.enforce_capacity_control(
+                    # Enforce capacity control if exceeded (with prototype memory
+                    # synchronization). The tracked id is remapped through any
+                    # prune/merge so prototype owners stay valid.
+                    capacity = self.builder.enforce_capacity_control(
                         self.model,
                         prototype_memory=self.prototype_memory,
                         max_experts=self.max_experts,
+                        track_expert=task_expert_id,
                     )
+                    task_expert_id = capacity.get("tracked_expert")
+                    if task_expert_id is None:
+                        task_expert_id = self.model.num_experts - 1
                     # Refresh optimizer parameters to include new expert and expanded router
                     self.optimizer = self._build_optimizer()
                 else:
