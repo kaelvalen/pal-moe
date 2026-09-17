@@ -34,18 +34,15 @@ from tabulate import tabulate
 from pal_moe.data.split_cifar import get_split_cifar10_tasks
 from pal_moe.data.split_cifar100 import get_split_cifar100_tasks
 from pal_moe.data.split_mnist import get_split_mnist_tasks
+from pal_moe.factory import build_cached_encoder, build_encoder, build_moe
 from pal_moe.memory.prototype_memory import PrototypeMemory
-from pal_moe.models.encoder import SharedEncoder
-from pal_moe.models.expert import MLPExpert
-from pal_moe.models.moe import DynamicMoE
-from pal_moe.models.router import DistanceRouter, DynamicRouter
 from pal_moe.persistence import load_checkpoint
 
 INPUT_DIMS = {"mnist": 784, "cifar10": 3072, "cifar100": 3072}
 
 
 def infer_config(state, dataset):
-    """Recover model geometry from a checkpoint's state dict."""
+    """Recover model geometry (encoder arch, router kind, sizes) from a state dict."""
     expert_ids = sorted(
         {int(k.split(".")[1]) for k in state if k.startswith("experts.")}
     )
@@ -53,12 +50,16 @@ def infer_config(state, dataset):
     expert_hidden, feature_dim = state["experts.0.fc1.weight"].shape
     num_classes = state["experts.0.fc2.weight"].shape[0]
 
+    cached_encoder = "encoder._device_probe" in state
     conv_ws = sorted(
         (int(k.split(".")[2]), v.shape[0])
         for k, v in state.items()
         if k.startswith("encoder.net.") and k.endswith(".weight") and v.dim() == 4
     )
-    if conv_ws:
+    if cached_encoder:
+        arch, hidden_dims = "cached", None
+        conv_channels = (32, 64, 128)
+    elif conv_ws:
         arch, hidden_dims = "conv", None
         conv_channels = tuple(ch for _, ch in conv_ws)
     else:
@@ -70,6 +71,13 @@ def infer_config(state, dataset):
         arch, hidden_dims = "mlp", tuple(ch for _, ch in lin_ws[:-1])
         conv_channels = (32, 64, 128)  # unused for the MLP architecture
 
+    if any(k.startswith("router.centroids") for k in state):
+        router_kind = "distance"
+    elif any(k.startswith("router.keys") for k in state):
+        router_kind = "attention"
+    else:
+        router_kind = "dynamic"
+
     return {
         "num_experts": num_experts,
         "feature_dim": int(feature_dim),
@@ -79,37 +87,32 @@ def infer_config(state, dataset):
         "hidden_dims": hidden_dims,
         "conv_channels": conv_channels,
         "input_dim": INPUT_DIMS[dataset],
-        "is_distance_router": any(k.startswith("router.centroids") for k in state),
+        "cached_encoder": cached_encoder,
+        "router_kind": router_kind,
     }
 
 
 def build_model(cfg, device):
-    encoder = SharedEncoder(
-        input_dim=cfg["input_dim"],
-        hidden_dims=cfg["hidden_dims"],
-        output_dim=cfg["feature_dim"],
-        arch=cfg["arch"],
-        conv_channels=cfg["conv_channels"],
-    )
-    if cfg["is_distance_router"]:
-        router = DistanceRouter(
-            input_dim=cfg["feature_dim"], num_experts=cfg["num_experts"], top_k=1
-        )
+    """Rebuilds the exact architecture that produced a checkpoint."""
+    if cfg["cached_encoder"]:
+        encoder = build_cached_encoder(cfg["feature_dim"])
     else:
-        router = DynamicRouter(
-            input_dim=cfg["feature_dim"], num_experts=cfg["num_experts"], top_k=1
+        encoder = build_encoder(
+            cfg["input_dim"],
+            cfg["feature_dim"],
+            arch=cfg["arch"],
+            hidden_dims=cfg["hidden_dims"],
+            conv_channels=cfg["conv_channels"],
         )
-    experts = [
-        MLPExpert(
-            input_dim=cfg["feature_dim"],
-            hidden_dim=cfg["expert_hidden"],
-            num_classes=cfg["num_classes"],
-            expert_id=i,
-        )
-        for i in range(cfg["num_experts"])
-    ]
-    model = DynamicMoE(encoder=encoder, router=router, experts=experts)
-    model.to(device)
+    model = build_moe(
+        encoder,
+        feature_dim=cfg["feature_dim"],
+        expert_hidden=cfg["expert_hidden"],
+        num_classes=cfg["num_classes"],
+        num_experts=cfg["num_experts"],
+        router_type=cfg["router_kind"],
+        device=device,
+    )
     model.eval()
     return model
 
@@ -148,8 +151,14 @@ def main():
     print(
         f"[Diagnose] experts={cfg['num_experts']} feature_dim={cfg['feature_dim']} "
         f"expert_hidden={cfg['expert_hidden']} arch={cfg['arch']} "
-        f"conv_channels={cfg['conv_channels']}"
+        f"router={cfg['router_kind']} conv_channels={cfg['conv_channels']}"
     )
+    if cfg["cached_encoder"]:
+        raise SystemExit(
+            "[Diagnose] this checkpoint was trained on cached frozen features; the "
+            "original encoder is not stored, so the model cannot be evaluated on "
+            "raw images. Re-run the benchmark without --feature_cache to diagnose it."
+        )
 
     model = build_model(cfg, device)
     memory = PrototypeMemory(feature_dim=cfg["feature_dim"], store_raw=False)

@@ -1605,10 +1605,12 @@ def test_pretrain_cache_roundtrip(tmp_path):
 
 def test_runner_baseline_helpers():
     """Factory/record helpers used by the benchmark runner."""
-    from experiments.run_benchmark import _make_single_head, _record_baseline_result
+    from experiments.run_benchmark import _record_baseline_result
+
+    from pal_moe.factory import build_single_head
 
     enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
-    model = _make_single_head(enc, 8, 8, 3, torch.device("cpu"))
+    model = build_single_head(enc, 8, 8, 3, torch.device("cpu"))
     evaluator = ContinualEvaluator(num_tasks=2)
     evaluator.R[1, :2] = 0.5
     res = _record_baseline_result(model, evaluator)
@@ -1617,6 +1619,61 @@ def test_runner_baseline_helpers():
         p.numel() for p in model.parameters() if p.requires_grad
     )
     assert res["acc"] == pytest.approx(0.5)
+
+
+def test_factory_builds_consistent_models():
+    """The shared factory must construct every router/model variant."""
+    from pal_moe.factory import (
+        build_moe,
+        build_prototype_memory,
+        build_router,
+        build_single_head,
+    )
+
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    for router_type in ("dynamic", "distance", "attention"):
+        router = build_router(router_type, 8, top_k=1, num_experts=2)
+        assert router.num_experts == 2
+        model = build_moe(enc, 8, 8, 3, num_experts=2, router_type=router_type)
+        assert model.num_experts == 2
+        assert model.router.num_experts == 2
+    with pytest.raises(ValueError):
+        build_router("nope", 8)
+
+    head = build_single_head(enc, 8, 8, 3)
+    assert isinstance(head, nn.Sequential) and len(head) == 2
+
+    memory = build_prototype_memory(8, distance_threshold=None, max_prototypes=7)
+    assert memory.distance_threshold is None
+    assert memory.max_prototypes == 7
+
+
+def test_diagnose_infer_config_rebuilds_every_router_and_cached_encoder(tmp_path):
+    """diagnose_checkpoint must rebuild all router kinds and cached encoders."""
+    from experiments.diagnose_checkpoint import build_model, infer_config
+
+    from pal_moe.factory import build_cached_encoder, build_moe
+    from pal_moe.persistence import save_checkpoint
+
+    enc = SharedEncoder(input_dim=784, hidden_dims=(64,), output_dim=8)
+    for router_type in ("dynamic", "distance", "attention"):
+        model = build_moe(enc, 8, 8, 3, num_experts=2, router_type=router_type)
+        path = str(tmp_path / f"{router_type}.pt")
+        save_checkpoint(path, model, PrototypeMemory(feature_dim=8))
+        state = torch.load(path, map_location="cpu", weights_only=True)["model_state"]
+        cfg = infer_config(state, "mnist")
+        assert cfg["router_kind"] == router_type
+        assert cfg["arch"] == "mlp"
+        rebuilt = build_model(cfg, torch.device("cpu"))
+        rebuilt.load_state_dict(state)  # strict: architecture must match exactly
+
+    cached = build_moe(build_cached_encoder(8), 8, 8, 3, num_experts=1)
+    path = str(tmp_path / "cached.pt")
+    save_checkpoint(path, cached, PrototypeMemory(feature_dim=8))
+    state = torch.load(path, map_location="cpu", weights_only=True)["model_state"]
+    cfg = infer_config(state, "mnist")
+    assert cfg["arch"] == "cached" and cfg["cached_encoder"]
+    build_model(cfg, torch.device("cpu")).load_state_dict(state)
 
 
 def test_runner_baseline_loop_forwards_per_task_kwargs():

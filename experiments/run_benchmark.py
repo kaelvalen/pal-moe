@@ -38,11 +38,15 @@ from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.config import ConfigError, apply_config
 from pal_moe.data.split_mnist import get_split_mnist_tasks
 from pal_moe.evaluation.metrics import ContinualEvaluator
-from pal_moe.memory.prototype_memory import PrototypeMemory
+from pal_moe.factory import (
+    build_prototype_memory,
+    build_router,
+    build_single_head,
+)
 from pal_moe.models.encoder import SharedEncoder
 from pal_moe.models.expert import MLPExpert
 from pal_moe.models.moe import DynamicMoE
-from pal_moe.models.router import AttentionRouter, DistanceRouter, DynamicRouter
+from pal_moe.models.router import DynamicRouter
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
 
 
@@ -61,62 +65,10 @@ def _git_commit() -> str:
         return "unknown"
 
 
-def _build_router(router_type: str, feature_dim: int, top_k: int, device):
-    """Router factory shared by the two PAL-MoE blocks."""
-    if router_type == "distance":
-        return DistanceRouter(
-            input_dim=feature_dim, num_experts=1, top_k=top_k, temperature=0.05
-        ).to(device)
-    if router_type == "attention":
-        return AttentionRouter(
-            input_dim=feature_dim, num_experts=1, top_k=top_k, temperature=0.1
-        ).to(device)
-    return DynamicRouter(
-        input_dim=feature_dim, num_experts=1, top_k=top_k, temperature=1.0
-    ).to(device)
-
-
-def _build_prototype_memory(
-    feature_dim: int,
-    proto_threshold,
-    proto_size: int,
-    per_class,
-    store_raw: bool,
-) -> PrototypeMemory:
-    """Prototype memory factory shared by the two PAL-MoE blocks."""
-    return PrototypeMemory(
-        feature_dim=feature_dim,
-        distance_threshold=proto_threshold,
-        ema_alpha=0.9,
-        max_prototypes=proto_size,
-        max_prototypes_per_class=per_class,
-        store_raw=store_raw,
-    )
-
-
 def _banner(title: str) -> None:
     print("\n" + "=" * 60)
     print(title)
     print("=" * 60)
-
-
-def _make_single_head(
-    encoder: nn.Module,
-    feature_dim: int,
-    expert_hidden: int,
-    num_classes: int,
-    device: torch.device,
-) -> nn.Sequential:
-    """Baseline model: a deep copy of the shared encoder + one matched MLP head."""
-    return nn.Sequential(
-        copy.deepcopy(encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
 
 
 def _record_baseline_result(
@@ -325,7 +277,7 @@ def _run_palmoe_variant(
     set_seed(args.seed)
     model = DynamicMoE(
         encoder=copy.deepcopy(base_encoder),
-        router=_build_router(args.router_type, feature_dim, args.top_k, device),
+        router=build_router(args.router_type, feature_dim, args.top_k, device=device),
         experts=[
             MLPExpert(
                 input_dim=feature_dim,
@@ -336,7 +288,7 @@ def _run_palmoe_variant(
         ],
         use_ema_encoder=False,
     ).to(device)
-    memory = _build_prototype_memory(
+    memory = build_prototype_memory(
         feature_dim,
         proto_threshold,
         args.proto_size,
@@ -652,7 +604,7 @@ def run_benchmark(
     if run("naive"):
         _banner("Running Baseline 1: Naive Sequential Fine-tuning")
         set_seed(args.seed)
-        naive_net = _make_single_head(
+        naive_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         naive_trainer = NaiveFineTuning(naive_net, lr=1e-3, device=device)
@@ -670,7 +622,7 @@ def run_benchmark(
     if run("ewc"):
         _banner("Running Baseline 2: Elastic Weight Consolidation (EWC)")
         set_seed(args.seed)
-        ewc_net = _make_single_head(
+        ewc_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         ewc_trainer = EWC(ewc_net, ewc_lambda=1000.0, lr=1e-3, device=device)
@@ -684,7 +636,7 @@ def run_benchmark(
     if run("replay60"):
         _banner("Running Baseline 3: Experience Replay (Budgeted P=60)")
         set_seed(args.seed)
-        replay_net_budget = _make_single_head(
+        replay_net_budget = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         replay_trainer_budget = ReplayTrainer(
@@ -708,7 +660,7 @@ def run_benchmark(
     if run("replay360"):
         _banner("Running Baseline 4: Experience Replay (Budgeted P=360)")
         set_seed(args.seed)
-        replay_net_360 = _make_single_head(
+        replay_net_360 = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         replay_trainer_360 = ReplayTrainer(
@@ -732,7 +684,7 @@ def run_benchmark(
     if run("replay250"):
         _banner("Running Baseline 5: Experience Replay (Buffer=250)")
         set_seed(args.seed)
-        replay_net = _make_single_head(
+        replay_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         replay_trainer = ReplayTrainer(
@@ -752,7 +704,7 @@ def run_benchmark(
     if run("derpp"):
         _banner("Running Baseline 6: DER++ (Dark Experience Replay++, P=250)")
         set_seed(args.seed)
-        der_net = _make_single_head(
+        der_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         der_trainer = DERPP(der_net, buffer_size=250, lr=1e-3, device=device)
@@ -766,7 +718,7 @@ def run_benchmark(
     if run("erace"):
         _banner("Running Baseline 7: ER-ACE (Asymmetric Cross-Entropy Replay, P=250)")
         set_seed(args.seed)
-        erace_net = _make_single_head(
+        erace_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         erace_trainer = ERACE(erace_net, buffer_size=250, lr=1e-3, device=device)
@@ -787,7 +739,7 @@ def run_benchmark(
     if run("agem"):
         _banner("Running Baseline 8: AGEM (Average Gradient Episodic Memory, P=250)")
         set_seed(args.seed)
-        agem_net = _make_single_head(
+        agem_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         agem_trainer = AGEM(agem_net, buffer_size=250, lr=1e-3, device=device)
@@ -805,7 +757,7 @@ def run_benchmark(
             "Running Baseline 9: iCaRL (Incremental Classifier & Representation Learning)"
         )
         set_seed(args.seed)
-        icarl_net = _make_single_head(
+        icarl_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         icarl_trainer = ICaRL(

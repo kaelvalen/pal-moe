@@ -31,11 +31,8 @@ from pal_moe.adaptation.ttt import ContinualTrainer
 from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.data.split_mnist import get_split_mnist_tasks
 from pal_moe.evaluation.metrics import ContinualEvaluator
-from pal_moe.memory.prototype_memory import PrototypeMemory
+from pal_moe.factory import build_moe, build_prototype_memory
 from pal_moe.models.encoder import SharedEncoder
-from pal_moe.models.expert import MLPExpert
-from pal_moe.models.moe import DynamicMoE
-from pal_moe.models.router import DistanceRouter, DynamicRouter
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
 
 
@@ -53,30 +50,19 @@ def run_variant(name, base_encoder, tasks, num_tasks, device, args, replay=False
     print("=" * 60)
     set_seed(args.seed)
     enc = copy.deepcopy(base_encoder)
-    if args.router_type == "distance":
-        router = DistanceRouter(
-            input_dim=args.feature_dim, num_experts=1, top_k=1, temperature=0.05
-        ).to(device)
-    else:
-        router = DynamicRouter(
-            input_dim=args.feature_dim, num_experts=1, top_k=1, temperature=1.0
-        ).to(device)
-    initial_experts = [
-        MLPExpert(
-            input_dim=args.feature_dim,
-            hidden_dim=args.expert_hidden,
-            num_classes=10,
-            expert_id=0,
-        ).to(device)
-    ]
-    model = DynamicMoE(
-        encoder=enc, router=router, experts=initial_experts, use_ema_encoder=False
-    ).to(device)
-
-    proto_mem = PrototypeMemory(
+    model = build_moe(
+        enc,
         feature_dim=args.feature_dim,
+        expert_hidden=args.expert_hidden,
+        num_classes=10,
+        num_experts=1,
+        router_type=args.router_type,
+        device=device,
+    )
+
+    proto_mem = build_prototype_memory(
+        args.feature_dim,
         distance_threshold=0.5,
-        ema_alpha=0.9,
         max_prototypes=250,
         store_raw=replay,
     )
