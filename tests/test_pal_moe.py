@@ -1621,6 +1621,108 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_expert_width_growth_is_function_preserving():
+    torch.manual_seed(0)
+    expert = MLPExpert(8, 16, 3, 0)
+    h = torch.randn(5, 8)
+    before = expert(h).detach()
+    assert expert.widen(32)
+    after = expert(h).detach()
+    assert expert.hidden_dim == 32
+    assert torch.allclose(before, after, atol=1e-6)
+    # The new units are trainable capacity.
+    expert(h).sum().backward()
+    assert any(
+        p.grad is not None and p.grad.abs().sum() > 0 for p in expert.fc1.parameters()
+    )
+    assert not expert.widen(16), "widening to a smaller size must be a no-op"
+
+
+def test_adapter_experts_freeze_the_base_pathway():
+    torch.manual_seed(0)
+    parent = MLPExpert(8, 16, 3, 0)
+    child = parent.clone_function_preserving(1, 1, freeze_base=True)
+    assert not any(p.requires_grad for p in child.fc1.parameters())
+    assert not any(p.requires_grad for p in child.fc2.parameters())
+    assert all(p.requires_grad for p in child.adapter_down.parameters())
+    assert all(p.requires_grad for p in child.adapter_up.parameters())
+    # Function preserving: identical outputs at creation.
+    h = torch.randn(4, 8)
+    assert torch.allclose(parent(h), child(h), atol=1e-6)
+
+
+def test_model_merging_utilities():
+    from pal_moe.merge import model_soup, task_arithmetic, ties_merge
+
+    torch.manual_seed(0)
+    experts = [MLPExpert(8, 16, 3, i) for i in range(3)]
+
+    soup = model_soup(experts)
+    expected = {
+        name: torch.stack(
+            [dict(e.named_parameters())[name].detach() for e in experts]
+        ).mean(dim=0)
+        for name, _ in soup.named_parameters()
+    }
+    for name, param in soup.named_parameters():
+        assert torch.allclose(param, expected[name], atol=1e-6)
+
+    ties = ties_merge(experts, top_k=0.5)
+    assert ties.hidden_dim == 16 and ties.num_classes == 3
+    arithmetic = task_arithmetic(experts, scaling=0.5)
+    assert arithmetic.hidden_dim == 16
+    # task arithmetic with scaling 1 relative to the first expert reproduces
+    # the sum of deltas.
+    names = [n for n, _ in arithmetic.named_parameters()]
+    base = dict(experts[0].named_parameters())
+    manual = {
+        n: base[n] + 0.5 * sum(dict(e.named_parameters())[n] - base[n] for e in experts)
+        for n in names
+    }
+    for name, param in arithmetic.named_parameters():
+        assert torch.allclose(param, manual[name], atol=1e-6)
+
+
+def test_widen_expansion_action_on_gate_rejection():
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=1)
+    experts = [MLPExpert(8, 8, 3, 0)]
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+
+    memory = PrototypeMemory(feature_dim=8)
+    memory.update_or_create_prototype(
+        torch.randn(8),
+        torch.tensor([1.0]),
+        torch.randn(1, 3),
+        task_id=0,
+        owner_expert=0,
+    )
+    # Strict gate always rejects.
+    trainer = ContinualTrainer(
+        model=moe,
+        prototype_memory=memory,
+        trigger=QuantitativeTrigger(threshold_tau=-1e9),
+        builder=ExpertBuilder(min_acc_threshold=0.99),
+        expansion_action="widen",
+        widen_by=8,
+        joint_calib_epochs=0,
+        device=torch.device("cpu"),
+    )
+    x = torch.randn(16, 16)
+    y = torch.randint(0, 3, (16,))
+    hist = trainer.train_task(
+        task_id=1,
+        train_loader=[(x, y)],
+        val_loader=[(x, y)],
+        epochs=1,
+        enable_expansion=True,
+    )
+    assert hist["gate_rejections"] == 1
+    assert hist["width_growths"] == 1
+    assert moe.experts[-1].hidden_dim == 16
+
+
 def test_uncertainty_weighter_formula_and_gradients():
     from pal_moe.adaptation.losses import UncertaintyWeighter
 

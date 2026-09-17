@@ -51,6 +51,7 @@ class ExpertBuilder:
         max_ece: float = 0.25,
         distill_lambda: float = 1.0,
         enable_gate: bool = True,
+        freeze_expansion_base: bool = False,
     ):
         self.min_acc_threshold = min_acc_threshold
         self.max_proto_drop = max_proto_drop
@@ -58,6 +59,9 @@ class ExpertBuilder:
         self.max_ece = max_ece
         self.distill_lambda = distill_lambda
         self.enable_gate = enable_gate
+        # Adapter experts: the cloned base pathway stays frozen and only the
+        # zero-initialised residual adapter trains (parameter-efficient growth).
+        self.freeze_expansion_base = freeze_expansion_base
 
     def create_candidate_from_parent(
         self,
@@ -72,6 +76,7 @@ class ExpertBuilder:
         return parent_expert.clone_function_preserving(
             new_expert_id=new_expert_id,
             creation_task=creation_task,
+            freeze_base=self.freeze_expansion_base,
         )
 
     def train_candidate(

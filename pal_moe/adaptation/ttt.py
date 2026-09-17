@@ -88,6 +88,8 @@ class ContinualTrainer:
         lwf_temperature: float = 2.0,
         lambda_ema: float = 0.0,
         loss_weighting: str = "fixed",
+        expansion_action: str = "add",
+        widen_by: int = 64,
         router_anchor_margin: float = 0.0,
         router_weight_decay: float = 0.0,
         checkpoint_dir: Optional[str] = None,
@@ -163,6 +165,13 @@ class ContinualTrainer:
         self.loss_weighter = (
             UncertaintyWeighter() if loss_weighting == "uncertainty" else None
         )
+        # When the validation gate rejects an expansion: "add" (original) simply
+        # keeps the previous expert, "widen" grows the newest expert's hidden
+        # width in a function-preserving way instead.
+        if expansion_action not in ("add", "widen"):
+            raise ValueError(f"unknown expansion_action {expansion_action!r}")
+        self.expansion_action = expansion_action
+        self.widen_by = int(widen_by)
         # Owner-contrastive ranking margin added to the router-distillation loss:
         # the owner expert's logit must beat every other expert by >= margin.
         self.router_anchor_margin = float(router_anchor_margin)
@@ -360,6 +369,7 @@ class ContinualTrainer:
             "trigger_events": 0,
             "experts_added": 0,
             "gate_rejections": 0,
+            "width_growths": 0,
             "router_anchor_loss": 0.0,
         }
         # Expert that ends up responsible for this task (explicit prototype anchor)
@@ -455,6 +465,15 @@ class ContinualTrainer:
                     # Anchoring the task's prototypes to it keeps the router
                     # distillation consistent with the model's real allocation.
                     task_expert_id = self.model.num_experts - 1
+                    if self.expansion_action == "widen":
+                        newest = self.model.experts[-1]
+                        if newest.widen(newest.hidden_dim + self.widen_by):
+                            history["width_growths"] += 1
+                            self.optimizer = self._build_optimizer()
+                            print(
+                                "      [Validation Gate] Rejected; widened the "
+                                f"newest expert to hidden={newest.hidden_dim}"
+                            )
                     print(
                         f"      [Validation Gate] Rejected! Reason: {gate_result.rejection_reason}"
                     )
