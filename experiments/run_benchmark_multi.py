@@ -94,6 +94,16 @@ def main():
         help="Comma-separated method ids (empty = all); forwarded to run_benchmark.py",
     )
     parser.add_argument("--output_dir", type=str, default="./results")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help=(
+            "JSON config forwarded to every seed (run_benchmark validates it); "
+            "when given, only --methods/--seeds/--device/--output_dir are also "
+            "forwarded, so the config file defines the recipe"
+        ),
+    )
     args = parser.parse_args()
 
     seeds = [int(s) for s in args.seeds.split()]
@@ -107,18 +117,35 @@ def main():
         cmd = [
             sys.executable,
             str(RUNNER),
-            "--epochs",
-            str(args.epochs),
+            "--seed",
+            str(s),
             "--device",
             args.device,
+            "--output_dir",
+            seed_dir,
+        ]
+        if args.config:
+            # Config-driven run: the file defines dataset/epochs/every knob.
+            cmd += ["--config", args.config]
+            if args.methods:
+                cmd += ["--methods", args.methods]
+            print(f"\n########## Seed {s} (config={args.config}) ##########")
+            subprocess.run(cmd, check=True)
+            json_path = os.path.join(seed_dir, f"benchmark_results_seed{s}.json")
+            with open(json_path) as f:
+                per_seed[s] = json.load(f)
+            meta_path = os.path.join(seed_dir, f"benchmark_meta_seed{s}.json")
+            if os.path.exists(meta_path):
+                with open(meta_path) as f:
+                    seeds_meta[str(s)] = json.load(f)
+            continue
+        cmd += [
+            "--epochs",
+            str(args.epochs),
             "--dataset",
             args.dataset,
             "--router_type",
             args.router_type,
-            "--seed",
-            str(s),
-            "--output_dir",
-            seed_dir,
             "--lambda_ood",
             str(args.lambda_ood),
             "--feature_dim",

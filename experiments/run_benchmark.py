@@ -268,6 +268,8 @@ def _run_palmoe_variant(
     output_dir: str,
     checkpoint_subdir: str,
     replay: bool,
+    max_proto_drop: float,
+    max_proto_acc_drop: float,
 ) -> dict:
     """
     Runs one PAL-MoE variant (pure or hybrid). Configuration is identical to
@@ -300,8 +302,8 @@ def _run_palmoe_variant(
     )
     builder = ExpertBuilder(
         min_acc_threshold=0.45 if dataset in ("cifar10", "cifar100") else 0.60,
-        max_proto_drop=args.max_proto_drop,
-        max_proto_acc_drop=args.max_proto_acc_drop,
+        max_proto_drop=max_proto_drop,
+        max_proto_acc_drop=max_proto_acc_drop,
         max_ece=999.0,
         distill_lambda=0.5,
     )
@@ -392,6 +394,7 @@ def set_seed(seed: int = 42):
 
 
 def run_benchmark(
+    args: argparse.Namespace,
     epochs_per_task: int = 3,
     device_str: str = "auto",
     output_dir: str = "./results",
@@ -405,12 +408,22 @@ def run_benchmark(
         device = torch.device(device_str)
     print(f"[Benchmark] Using compute device: {device}")
 
-    if args.max_proto_drop is None:
-        args.max_proto_drop = 999.0 if dataset in ("cifar10", "cifar100") else 2.0
-    if args.max_proto_acc_drop is None:
-        args.max_proto_acc_drop = 999.0
-    if args.pretrain_epochs is None:
-        args.pretrain_epochs = 50 if dataset in ("cifar10", "cifar100") else 1
+    # Resolve dataset-dependent defaults into locals instead of mutating `args`
+    # (the caller may reuse the namespace, and mutation made the function hard
+    # to call programmatically).
+    max_proto_drop = (
+        args.max_proto_drop
+        if args.max_proto_drop is not None
+        else (999.0 if dataset in ("cifar10", "cifar100") else 2.0)
+    )
+    max_proto_acc_drop = (
+        args.max_proto_acc_drop if args.max_proto_acc_drop is not None else 999.0
+    )
+    pretrain_epochs = (
+        args.pretrain_epochs
+        if args.pretrain_epochs is not None
+        else (50 if dataset in ("cifar10", "cifar100") else 1)
+    )
     num_classes = 100 if dataset == "cifar100" else 10
 
     feature_dim = args.feature_dim
@@ -487,7 +500,7 @@ def run_benchmark(
             dataset=dataset,
             mode="simclr",
             seed=args.seed,
-            epochs=args.pretrain_epochs,
+            epochs=pretrain_epochs,
             feature_dim=feature_dim,
             conv_channels=conv_channels,
             use_cache=args.pretrain_cache,
@@ -527,7 +540,7 @@ def run_benchmark(
             dataset=dataset,
             mode="simclr",
             seed=args.seed,
-            epochs=args.pretrain_epochs,
+            epochs=pretrain_epochs,
             feature_dim=feature_dim,
             conv_channels=conv_channels,
             use_cache=args.pretrain_cache,
@@ -564,7 +577,7 @@ def run_benchmark(
             dataset=dataset,
             mode="ae",
             seed=args.seed,
-            epochs=args.pretrain_epochs if args.pretrain_epochs is not None else 1,
+            epochs=pretrain_epochs,
             feature_dim=feature_dim,
             conv_channels=conv_channels,
             use_cache=args.pretrain_cache,
@@ -852,6 +865,8 @@ def run_benchmark(
             output_dir=output_dir,
             checkpoint_subdir="checkpoints_palmoe",
             replay=False,
+            max_proto_drop=max_proto_drop,
+            max_proto_acc_drop=max_proto_acc_drop,
         )
 
     # -------------------------------------------------------------
@@ -874,6 +889,8 @@ def run_benchmark(
             output_dir=output_dir,
             checkpoint_subdir="checkpoints_hybrid",
             replay=True,
+            max_proto_drop=max_proto_drop,
+            max_proto_acc_drop=max_proto_acc_drop,
         )
 
     # Drop skipped methods so the table/JSON only contain what actually ran.
@@ -1244,6 +1261,7 @@ if __name__ == "__main__":
         )
 
     run_benchmark(
+        args,
         epochs_per_task=args.epochs,
         device_str=args.device,
         output_dir=args.output_dir,

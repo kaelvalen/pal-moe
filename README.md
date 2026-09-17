@@ -9,13 +9,13 @@ Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for e
 ## Method
 
 1. **OOD negative-boundary loss.**
-   While a new expert trains on a new task, its predictions on historical prototypes are pushed toward maximum entropy (`lambda_ood * H`). The new expert learns the boundary of its own task and stays agnostic about old tasks, so the router has no incentive to divert old-task inputs to it. On Split-MNIST this lifted pure zero-replay accuracy from 49.85% to 76.60% (see `BENCHMARK.md`, design fact 1).
+   While a new expert trains on a new task, its predictions on historical prototypes are pushed toward maximum entropy (`lambda_ood * H`). The new expert learns the boundary of its own task and stays agnostic about old tasks, so the router has no incentive to divert old-task inputs to it. In the controlled ablation this lifted pure zero-replay accuracy from 49.85% to 76.60% (see `BENCHMARK.md`, design fact 1); the current Split-MNIST recipe reaches 79.36 ± 1.16% (design fact 15).
 
 2. **Latent replay and end-of-task joint calibration.**
    PAL-MoE stores lightweight 128-dimensional latent vectors (prototype centroids and exemplars) instead of raw pixels. At the end of each task, all experts are jointly calibrated on these latent exemplars, temporarily unfreezing all experts and then re-locking history. The full 5-task model occupies approximately 284 KB.
 
 3. **Expert freezing and routing protection.**
-   Older experts are locked after their task concludes; during a new task only the newest expert and routing row adapt. Fully freezing the router during joint calibration is harmful (pure 49.85 to 43.16, hybrid 82.23 to 66.94), and null-space row orthogonalization at initialization is harmful with weakly separated latents (49.85 to 22.87). Routing protection is instead enforced by the stability losses, the validation gate and the OOD term, all verified by controlled ablation.
+   Older experts are locked after their task concludes; during a new task only the newest expert and routing row adapt. The lock is exact: the router sits in a zero weight-decay parameter group, so Adam's decoupled L2 term cannot shrink the locked historical rows (it used to, and that implicit decay was part of the older numbers — see `BENCHMARK.md`, design fact 15). Fully freezing the router during joint calibration is harmful (pure 49.85 to 43.16, hybrid 82.23 to 66.94), and null-space row orthogonalization at initialization is harmful with weakly separated latents (49.85 to 22.87). Routing protection comes from the stability losses, the validation gate, the OOD term and the zero-replay prototype-owner router distillation (`--router_anchor_steps`), all verified by controlled ablation.
 
 4. **Contrastive pretraining and dynamic capacity growth.**
    CIFAR uses a 50-epoch SimCLR-pretrained conv encoder (fine-tuned adaptively); MNIST uses a 1-epoch autoencoder (frozen). When the quantitative trigger `S(x)` detects a domain shift, a new expert is spawned via function-preserving expansion, gated by a validation gate (new-task accuracy, prototype drift, historical prototype-accuracy drop).
@@ -25,9 +25,12 @@ Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for e
 ## Benchmark Results
 
 The headline table is produced by
-`python experiments/run_benchmark_multi.py --seeds "42 1 2 3 4" --epochs 3 --device cuda`
-(single-seed 42 via `run_benchmark.py`; full methodology in [`BENCHMARK.md`](BENCHMARK.md)).
-All methods share the same pretrained encoder and matched head capacity.
+`python experiments/run_benchmark_multi.py --seeds "42 1 2 3 4" --config configs/mnist_default.json --device cuda`
+(single-seed 42 via `run_benchmark.py --config configs/mnist_default.json`; full methodology in [`BENCHMARK.md`](BENCHMARK.md)).
+All methods share the same pretrained encoder and the same head width
+(`hidden_dim=256` per head); PAL-MoE grows to one head per spawned expert, so
+its total head parameter count scales with the number of experts and is
+recorded as `trainable_params` in every result JSON.
 
 ### 1. Split-MNIST (5 tasks, mean ± std over 5 seeds: 42 1 2 3 4)
 
@@ -36,21 +39,40 @@ All methods share the same pretrained encoder and matched head capacity.
 | Standard MoE (Fixed 4 Experts) | 16.53 ± 2.65% | 95.56 ± 2.24% | -95.56% | 4 | raw buffer |
 | Naive Fine-tuning | 19.28 ± 0.07% | 98.66 ± 0.13% | -98.66% | 1 | none |
 | EWC | 19.36 ± 0.02% | 98.70 ± 0.07% | -98.70% | 1 | none |
-| AGEM (P=250) | 34.14 ± 5.70% | 80.04 ± 7.17% | -80.04% | 1 | raw buffer |
+| AGEM (P=250) | 31.38 ± 4.01% | 83.54 ± 4.94% | -83.54% | 1 | raw buffer |
 | iCaRL (k=25) | 59.15 ± 2.13% | 10.68 ± 1.93% | -10.68% | 1 | exemplars |
-| ER-ACE (P=250) | 62.19 ± 5.55% | 42.17 ± 6.97% | -42.17% | 1 | raw buffer |
-| Experience Replay (P=60) | 65.13 ± 1.60% | 40.39 ± 2.13% | -40.39% | 1 | raw buffer |
-| **PAL-MoE (pure, zero raw replay)** | **78.06 ± 1.40%** | **6.16 ± 0.69%** | **-6.16%** | **5** | **~284 KB latents, no images** |
-| **PAL-MoE + Replay (Hybrid, P=250)** | **82.96 ± 0.53%** | **3.50 ± 0.76%** | **-3.50%** | **4** | latent + raw exemplars |
-| Experience Replay (Buffer=250) | 81.26 ± 1.25% | 18.91 ± 1.77% | -18.91% | 1 | raw buffer |
-| Experience Replay (P=360) | 83.54 ± 1.03% | 15.83 ± 1.73% | -15.83% | 1 | raw buffer |
-| DER++ (P=250) | 87.08 ± 1.12% | 6.81 ± 1.14% | -6.81% | 1 | raw buffer + logits |
+| ER-ACE (P=250) | 60.14 ± 7.14% | 44.92 ± 8.95% | -44.92% | 1 | raw buffer |
+| Experience Replay (P=60) | 67.97 ± 0.98% | 36.89 ± 1.12% | -36.89% | 1 | raw buffer |
+| **PAL-MoE (pure, zero raw replay)** | **79.36 ± 1.16%** | **7.91 ± 1.24%** | **-7.62%** | **5** | **~284 KB latents, no images** |
+| **PAL-MoE + Replay (Hybrid, P=250)** | **80.05 ± 1.08%** | **5.61 ± 1.12%** | **-5.24%** | **5** | latent + raw exemplars |
+| Experience Replay (Buffer=250) | 82.50 ± 1.10% | 17.42 ± 1.54% | -17.42% | 1 | raw buffer |
+| Experience Replay (P=360) | 83.80 ± 0.69% | 15.51 ± 1.09% | -15.51% | 1 | raw buffer |
+| DER++ (P=250) | 86.93 ± 0.91% | 7.31 ± 1.06% | -7.31% | 1 | raw buffer + logits |
 
-Note: The hybrid variant improves on classic Experience Replay at the same 250-item budget (82.96% vs 81.26%) with roughly one quarter of the forgetting (3.50% vs 18.91%), and the pure variant reaches 78.06% without any raw exemplars, ahead of iCaRL, ER-ACE, ER(P=60), AGEM, EWC, naive fine-tuning and Standard-MoE, with forgetting comparable to DER++. DER++ remains the accuracy leader at 87.08%. The gains come from prototype-owner router distillation, a zero-replay mechanism that sharpens cross-task routing (see `BENCHMARK.md`, design fact 11).
+Note: The pure variant reaches 79.36% without any raw exemplars — ahead of
+iCaRL, ER-ACE, ER(P=60), AGEM, EWC, naive fine-tuning and Standard-MoE — and its
+7.91% forgetting is the second lowest in the table after DER++ (7.31%) despite
+storing only ~284 KB of latents. The hybrid variant stores the same latents plus
+250 raw exemplars and has the lowest forgetting overall (5.61%) at that budget,
+and it matches the accuracy of Experience Replay with the same 250-item budget
+(80.05% vs 82.50%) while forgetting roughly three times less (5.61% vs 17.42%).
+DER++ remains the accuracy leader at 86.93%. The gains come from prototype-owner
+router distillation, a zero-replay mechanism that sharpens cross-task routing
+(see `BENCHMARK.md`, design facts 11 and 15).
+
+**Provenance note (2026-09):** this table was regenerated end-to-end on the
+current code after the historical-routing lock fix (design fact 15). Earlier
+revisions reported pure 78.06 ± 1.40% / hybrid 82.96 ± 0.53%; the fix removes an
+implicit weight-decay artifact and the recovery recipe in
+`configs/mnist_default.json` restores the pure result above that level, while
+some baseline numbers moved by 1-3 points. Any table cited from before the fix
+should be re-run.
 
 ### 2. Split-CIFAR-10 (5 tasks, wide CNN encoder, frozen)
 
 All methods use the same geometry and schedule (single seed 42): conv encoder 64/128/256 with 256-dimensional latents (50 SimCLR epochs), experts with hidden size 512, 5 epochs per task, and a frozen encoder with `--feature_cache`. PAL-MoE additionally distills its router onto the prototype owners at each task end (`--router_anchor_steps 300`, zero raw replay).
+
+> **Provenance caveat:** the CIFAR-10 rows below predate the historical-routing lock fix (design fact 15). They should be re-run with the current code before being cited; the Split-MNIST table above has already been regenerated.
 
 | Method | Avg Acc (↑) | Forgetting (↓) | Raw exemplars |
 | :--- | :---: | :---: | :---: |
@@ -106,7 +128,7 @@ pal-moe/
 │   └── plot_results.py         # Figure generation (single + multi-seed JSON)
 ├── configs/                    # JSON configs (mnist_default, cifar10_default, ...)
 ├── BENCHMARK.md                # Methodology, protocol and measured design facts
-└── tests/test_pal_moe.py       # PyTest suite (47 tests)
+└── tests/test_pal_moe.py       # PyTest suite (64 tests)
 ```
 
 ---
@@ -117,17 +139,18 @@ pal-moe/
 source .venv/bin/activate
 export PYTHONPATH=.
 
-# Full benchmark, single seed (MNIST)
-python experiments/run_benchmark.py --epochs 3 --device cuda
+# Full benchmark, single seed (MNIST, current recipe)
+python experiments/run_benchmark.py --config configs/mnist_default.json --device cuda
 
 # Multi-seed results (5 seeds, mean ± std)
-python experiments/run_benchmark_multi.py --seeds "42 1 2 3 4" --epochs 3 --device cuda
+python experiments/run_benchmark_multi.py --seeds "42 1 2 3 4" \
+  --config configs/mnist_default.json --device cuda
 
 # CIFAR-10 / CIFAR-100
 python experiments/run_benchmark.py --dataset cifar10 --device cuda
 python experiments/run_benchmark.py --dataset cifar100 --device cuda
 
-# Config-driven run
+# Config-driven run (same as above, explicit)
 python experiments/run_benchmark.py --config configs/mnist_default.json --device cuda
 
 # Big CIFAR-10 run (wide encoder, 15 epochs/task, frozen encoder; see BENCHMARK.md)
@@ -140,9 +163,12 @@ python experiments/run_benchmark.py --config configs/cifar10_big_frozen.json \
 # Run only a subset of methods (fast iteration)
 python experiments/run_benchmark.py --dataset cifar10 --methods palmoe,hybrid --device cuda
 
-# Diagnose forgetting from the per-task checkpoints written by every run
+# Diagnose forgetting from per-task checkpoints (written with --save_checkpoints;
+# not available for --feature_cache runs, the encoder is not stored there)
+python experiments/run_benchmark.py --config configs/mnist_default.json \
+  --save_checkpoints --device cuda
 python experiments/diagnose_checkpoint.py \
-  --checkpoint results/cifar10_big_frozen/checkpoints_palmoe/task_4.pt
+  --checkpoint results/checkpoints_palmoe/task_4.pt --dataset mnist
 
 # Controlled ablation (shared pretrained encoder per seed)
 python experiments/run_ablation.py --seeds 42 1 2 --configs "OOD" --device cuda
