@@ -923,6 +923,7 @@ def run_benchmark(
         "duration_sec": round(time.time() - _t_start, 1),
         "git_commit": _git_commit(),
         "torch": torch.__version__,
+        "python": sys.version.split()[0],
         "args": vars(args),
     }
     with open(meta_path, "w") as f:

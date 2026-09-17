@@ -476,6 +476,56 @@ def test_refresh_anchors_updates_targets():
     assert torch.allclose(memory.prototypes[0].r_p, expected_rp.cpu(), atol=1e-5)
 
 
+def test_owner_aware_merging_never_crosses_tasks():
+    """Nearby prototypes with different owners must stay separate (router anchors)."""
+    memory = PrototypeMemory(feature_dim=4, distance_threshold=1e9, store_raw=False)
+    base = torch.zeros(1, 4)
+    routing = torch.softmax(torch.randn(1, 2), dim=-1)
+    outs = torch.randn(1, 2, 4)
+
+    memory.register_task_batch(
+        features=base, routing_dists=routing, all_expert_outs=outs,
+        task_id=0, labels=torch.tensor([0]), owner_expert=0,
+    )
+    memory.register_task_batch(
+        features=base, routing_dists=routing, all_expert_outs=outs,
+        task_id=1, labels=torch.tensor([1]), owner_expert=1,
+    )
+    # Identical features, different owners -> two prototypes (no cross-task merge)
+    assert len(memory.prototypes) == 2
+    assert sorted(p.owner_expert for p in memory.prototypes) == [0, 1]
+
+    # Same owner within the merge radius -> merges into the existing prototype
+    memory.register_task_batch(
+        features=base + 1e-6, routing_dists=routing, all_expert_outs=outs,
+        task_id=0, labels=torch.tensor([0]), owner_expert=0,
+    )
+    assert len(memory.prototypes) == 2
+    assert memory.prototypes[0].count == 2
+
+
+def test_frozen_encoder_stays_in_eval_mode():
+    """freeze() must survive a later model.train() so BN statistics cannot drift."""
+    enc = SharedEncoder(
+        input_dim=3072, hidden_dims=None, output_dim=8, arch="conv"
+    )
+    enc.freeze()
+    x = torch.randn(4, 3, 32, 32)
+    with torch.no_grad():
+        before = enc(x)
+    enc.train()  # e.g. a baseline calling model.train()
+    assert not enc.training
+    assert all(not m.training for m in enc.modules())
+    with torch.no_grad():
+        after = enc(x)
+    assert torch.allclose(before, after, atol=1e-6)
+
+    enc.unfreeze()
+    assert enc._frozen is False
+    enc.train()
+    assert enc.training
+
+
 def test_conv_encoder_channels_and_feature_dim():
     default = SharedEncoder(input_dim=3072, hidden_dims=None, output_dim=128, arch="conv")
     # Default channels must reproduce the original 3-stage layout exactly
