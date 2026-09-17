@@ -51,25 +51,30 @@ def run_variant(name, base_encoder, tasks, num_tasks, device, args, replay=False
     print("\n" + "=" * 60)
     print(f"Running {name}")
     print("=" * 60)
-    set_seed(42)
+    set_seed(args.seed)
     enc = copy.deepcopy(base_encoder)
     if args.router_type == "distance":
         router = DistanceRouter(
-            input_dim=128, num_experts=1, top_k=1, temperature=0.05
+            input_dim=args.feature_dim, num_experts=1, top_k=1, temperature=0.05
         ).to(device)
     else:
         router = DynamicRouter(
-            input_dim=128, num_experts=1, top_k=1, temperature=1.0
+            input_dim=args.feature_dim, num_experts=1, top_k=1, temperature=1.0
         ).to(device)
     initial_experts = [
-        MLPExpert(input_dim=128, hidden_dim=256, num_classes=10, expert_id=0).to(device)
+        MLPExpert(
+            input_dim=args.feature_dim,
+            hidden_dim=args.expert_hidden,
+            num_classes=10,
+            expert_id=0,
+        ).to(device)
     ]
     model = DynamicMoE(
         encoder=enc, router=router, experts=initial_experts, use_ema_encoder=False
     ).to(device)
 
     proto_mem = PrototypeMemory(
-        feature_dim=128,
+        feature_dim=args.feature_dim,
         distance_threshold=0.5,
         ema_alpha=0.9,
         max_prototypes=250,
@@ -154,9 +159,11 @@ def main():
     )
     parser.add_argument("--lambda_r", type=float, default=0.5)
     parser.add_argument(
-        "--no_anchor", action="store_true", help="Disable null-space routing anchoring"
+        "--anchor", action="store_true", help="Enable null-space routing anchoring"
     )
     parser.add_argument("--lambda_e", type=float, default=2.5)
+    parser.add_argument("--feature_dim", type=int, default=128)
+    parser.add_argument("--expert_hidden", type=int, default=256)
     parser.add_argument("--output_dir", type=str, default="/tmp/pal-moe-explore")
     args = parser.parse_args()
 
@@ -183,7 +190,10 @@ def main():
         mnist_train, batch_size=256, shuffle=True
     )
     base_encoder = SharedEncoder(
-        input_dim=784, hidden_dims=(256, 128), output_dim=128, arch="mlp"
+        input_dim=784,
+        hidden_dims=(256, 128),
+        output_dim=args.feature_dim,
+        arch="mlp",
     ).to(device)
     if args.pretrain_mode == "simclr":
         base_encoder.pretrain_contrastive(

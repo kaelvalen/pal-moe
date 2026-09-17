@@ -41,6 +41,15 @@ def main():
     parser.add_argument("--max_proto_acc_drop", type=float, default=None)
     parser.add_argument("--joint_freeze_router", action="store_true", default=False)
     parser.add_argument("--joint_keep_routing_lock", action="store_true")
+    parser.add_argument("--lambda_r", type=float, default=0.5)
+    parser.add_argument("--lambda_e", type=float, default=2.5)
+    parser.add_argument("--max_experts", type=int, default=6)
+    parser.add_argument(
+        "--proto_routing_threshold",
+        type=float,
+        default=None,
+        help="Max prototype distance for inference anchoring (None = memory threshold)",
+    )
     parser.add_argument(
         "--num_workers",
         type=int,
@@ -150,6 +159,17 @@ def main():
             cmd.append("--joint_freeze_router")
         if args.num_workers:
             cmd += ["--num_workers", str(args.num_workers)]
+        if args.lambda_r != 0.5:
+            cmd += ["--lambda_r", str(args.lambda_r)]
+        if args.lambda_e != 2.5:
+            cmd += ["--lambda_e", str(args.lambda_e)]
+        if args.max_experts != 6:
+            cmd += ["--max_experts", str(args.max_experts)]
+        if args.proto_routing_threshold is not None:
+            cmd += [
+                "--proto_routing_threshold",
+                str(args.proto_routing_threshold),
+            ]
 
         print(f"\n########## Seed {s} ##########")
         subprocess.run(cmd, check=True)
@@ -171,6 +191,26 @@ def main():
         fgts = [per_seed[s][m]["forgetting"] for s in seeds]
         bwts = [per_seed[s][m]["bwt"] for s in seeds]
         experts = [per_seed[s][m]["final_experts"] for s in seeds]
+
+        # Optional metrics are NaN for methods without routing/expert statistics
+        # (naive, EWC, replay, ...); nan-aware aggregation keeps them out of the
+        # way instead of poisoning the mean.
+        def _opt(method, key):
+            vals = [
+                (
+                    float("nan")
+                    if per_seed[s][method].get(key) is None
+                    else per_seed[s][method][key]
+                )
+                for s in seeds
+            ]
+            if all(np.isnan(v) for v in vals):
+                return float("nan"), float("nan")
+            return float(np.nanmean(vals)), float(np.nanstd(vals))
+
+        kl_mean, kl_std = _opt(m, "router_stability_kl")
+        mi_mean, mi_std = _opt(m, "specialization_mi")
+        util_mean, util_std = _opt(m, "utilization")
         agg[m] = {
             "acc_mean": float(np.mean(accs)),
             "acc_std": float(np.std(accs)),
@@ -178,6 +218,12 @@ def main():
             "forgetting_std": float(np.std(fgts)),
             "bwt_mean": float(np.mean(bwts)),
             "bwt_std": float(np.std(bwts)),
+            "router_stability_kl_mean": kl_mean,
+            "router_stability_kl_std": kl_std,
+            "specialization_mi_mean": mi_mean,
+            "specialization_mi_std": mi_std,
+            "utilization_mean": util_mean,
+            "utilization_std": util_std,
             "final_experts": int(round(float(np.mean(experts)))),
         }
 
@@ -210,6 +256,10 @@ def main():
             "joint_calib_epochs": args.joint_calib_epochs,
             "refresh_anchors_after_calib": args.refresh_anchors_after_calib,
             "keep_optimizer_state": args.keep_optimizer_state,
+            "lambda_r": args.lambda_r,
+            "lambda_e": args.lambda_e,
+            "max_experts": args.max_experts,
+            "proto_routing_threshold": args.proto_routing_threshold,
         },
         "per_seed": per_seed,
         "aggregated": agg,
