@@ -30,19 +30,32 @@ def build_router(
     top_k: int = 1,
     num_experts: int = 1,
     device: Optional[torch.device] = None,
+    learn_temperature: bool = False,
 ):
     """Router factory shared by every runner."""
     if router_type == "distance":
         router = DistanceRouter(
-            input_dim=input_dim, num_experts=num_experts, top_k=top_k, temperature=0.05
+            input_dim=input_dim,
+            num_experts=num_experts,
+            top_k=top_k,
+            temperature=0.05,
+            learn_temperature=learn_temperature,
         )
     elif router_type == "attention":
         router = AttentionRouter(
-            input_dim=input_dim, num_experts=num_experts, top_k=top_k, temperature=0.1
+            input_dim=input_dim,
+            num_experts=num_experts,
+            top_k=top_k,
+            temperature=0.1,
+            learn_temperature=learn_temperature,
         )
     elif router_type == "dynamic":
         router = DynamicRouter(
-            input_dim=input_dim, num_experts=num_experts, top_k=top_k, temperature=1.0
+            input_dim=input_dim,
+            num_experts=num_experts,
+            top_k=top_k,
+            temperature=1.0,
+            learn_temperature=learn_temperature,
         )
     else:
         raise ValueError(
