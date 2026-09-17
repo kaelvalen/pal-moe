@@ -396,12 +396,19 @@ class ExpertBuilder:
         prototype_memory: Optional[PrototypeMemory] = None,
         max_experts: int = 8,
         min_usage_threshold: int = 10,
+        track_expert: Optional[int] = None,
     ) -> dict[str, Any]:
         """
         Maintains expert capacity budget with prototype synchronization:
         - If model.num_experts > max_experts:
           1. Prune completely unused expert if usage < min_usage_threshold.
           2. Otherwise, find most similar expert pair and merge them.
+
+        `track_expert` (e.g. the expert just spawned for the current task) is
+        remapped through every prune/merge, because the experts are re-indexed;
+        the returned dict carries the new id as `tracked_expert`. Without this
+        the trainer registered prototypes with a stale owner index, which later
+        crashed the router distillation on an out-of-range target.
         """
         actions_taken = []
 
@@ -413,6 +420,11 @@ class ExpertBuilder:
 
             if min_usage < min_usage_threshold and len(model.experts) > 1:
                 actions_taken.append(f"Pruned expert {min_idx} with usage {min_usage}")
+                if track_expert is not None:
+                    if min_idx == track_expert:
+                        track_expert = None
+                    elif min_idx < track_expert:
+                        track_expert -= 1
                 model.prune_expert(min_idx, prototype_memory=prototype_memory)
                 continue
 
@@ -435,6 +447,15 @@ class ExpertBuilder:
             actions_taken.append(
                 f"Merged expert {j} into {i} (similarity {best_sim:.3f})"
             )
+            if track_expert is not None:
+                if track_expert == j:
+                    track_expert = i
+                elif track_expert > j:
+                    track_expert -= 1
             model.merge_experts(i, j, prototype_memory=prototype_memory)
 
-        return {"actions": actions_taken, "final_num_experts": model.num_experts}
+        return {
+            "actions": actions_taken,
+            "final_num_experts": model.num_experts,
+            "tracked_expert": track_expert,
+        }

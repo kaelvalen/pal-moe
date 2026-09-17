@@ -57,6 +57,56 @@ def main():
     )
     parser.add_argument("--router_anchor_margin", type=float, default=0.0)
     parser.add_argument("--router_weight_decay", type=float, default=0.0)
+    parser.add_argument("--generative_replay", type=int, default=0)
+    parser.add_argument(
+        "--generative_replay_mode",
+        type=str,
+        default="gaussian",
+        choices=["gaussian", "vae"],
+    )
+    parser.add_argument(
+        "--proto_selection",
+        type=str,
+        default="first",
+        choices=["first", "kcenter", "uncertainty"],
+    )
+    parser.add_argument(
+        "--proto_eviction",
+        type=str,
+        default="task",
+        choices=["task", "balanced", "reservoir"],
+    )
+    parser.add_argument("--shared_expert", action="store_true", default=False)
+    parser.add_argument("--freeze_shared_after", type=int, default=-1)
+    parser.add_argument("--lambda_lwf", type=float, default=0.0)
+    parser.add_argument("--lambda_ema", type=float, default=0.0)
+    parser.add_argument("--ema_encoder", action="store_true", default=False)
+    parser.add_argument(
+        "--loss_weighting",
+        type=str,
+        default="fixed",
+        choices=["fixed", "uncertainty"],
+    )
+    parser.add_argument(
+        "--eval_head", type=str, default="moe", choices=["moe", "ncm", "bias"]
+    )
+    parser.add_argument(
+        "--ood_mode", type=str, default="entropy", choices=["entropy", "energy"]
+    )
+    parser.add_argument("--ood_margin", type=float, default=1.0)
+    parser.add_argument(
+        "--trigger", type=str, default="composite", choices=["composite", "energy"]
+    )
+    parser.add_argument("--energy_threshold", type=float, default=3.0)
+    parser.add_argument("--proto_routing_auto", action="store_true", default=False)
+    parser.add_argument(
+        "--expert_temperature_calib", action="store_true", default=False
+    )
+    parser.add_argument("--freeze_expansion_base", action="store_true", default=False)
+    parser.add_argument(
+        "--expansion_action", type=str, default="add", choices=["add", "widen"]
+    )
+    parser.add_argument("--task_free_eval", action="store_true", default=False)
     parser.add_argument("--max_experts", type=int, default=6)
     parser.add_argument(
         "--proto_routing_threshold",
@@ -218,6 +268,47 @@ def main():
             cmd += ["--router_anchor_margin", str(args.router_anchor_margin)]
         if args.router_weight_decay:
             cmd += ["--router_weight_decay", str(args.router_weight_decay)]
+        if args.generative_replay:
+            cmd += ["--generative_replay", str(args.generative_replay)]
+            if args.generative_replay_mode != "gaussian":
+                cmd += ["--generative_replay_mode", args.generative_replay_mode]
+        if args.proto_selection != "first":
+            cmd += ["--proto_selection", args.proto_selection]
+        if args.proto_eviction != "task":
+            cmd += ["--proto_eviction", args.proto_eviction]
+        if args.shared_expert:
+            cmd.append("--shared_expert")
+        if args.freeze_shared_after >= 0:
+            cmd += ["--freeze_shared_after", str(args.freeze_shared_after)]
+        if args.lambda_lwf:
+            cmd += ["--lambda_lwf", str(args.lambda_lwf)]
+        if args.lambda_ema:
+            cmd += ["--lambda_ema", str(args.lambda_ema)]
+        if args.ema_encoder:
+            cmd.append("--ema_encoder")
+        if args.loss_weighting != "fixed":
+            cmd += ["--loss_weighting", args.loss_weighting]
+        if args.eval_head != "moe":
+            cmd += ["--eval_head", args.eval_head]
+        if args.ood_mode != "entropy":
+            cmd += ["--ood_mode", args.ood_mode, "--ood_margin", str(args.ood_margin)]
+        if args.trigger != "composite":
+            cmd += [
+                "--trigger",
+                args.trigger,
+                "--energy_threshold",
+                str(args.energy_threshold),
+            ]
+        if args.proto_routing_auto:
+            cmd.append("--proto_routing_auto")
+        if args.expert_temperature_calib:
+            cmd.append("--expert_temperature_calib")
+        if args.freeze_expansion_base:
+            cmd.append("--freeze_expansion_base")
+        if args.expansion_action != "add":
+            cmd += ["--expansion_action", args.expansion_action]
+        if args.task_free_eval:
+            cmd.append("--task_free_eval")
         if args.max_experts != 6:
             cmd += ["--max_experts", str(args.max_experts)]
         if args.proto_routing_threshold is not None:

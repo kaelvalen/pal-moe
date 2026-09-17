@@ -229,9 +229,9 @@ epochs, `configs/mnist_default.json`; base = 79.69% / 6.85% forgetting):
 | Variant | Avg Acc | Forgetting | Verdict |
 | :-- | :--: | :--: | :--- |
 | `--router_anchor_margin 1.0` | 80.77% | 6.51% | looked best on seed 42, but a controlled 3-seed check (42 1 2: 79.40 ± 1.29 / 7.10 ± 0.30) is statistically indistinguishable from the base recipe (79.54 ± 1.30 / 6.97 ± 0.27): not adopted |
-| `--generative_replay 64` | 77.77% | 5.35% | trades ~2 accuracy for ~1.5 less forgetting |
+| `--generative_replay 64` | 79.29 ± 1.20% | 8.02 ± 1.25% | 5-seed validation: statistically identical to the base recipe (79.36 ± 1.16 / 7.91 ± 1.24); neutral on MNIST, worth retesting when the exemplar budget is tighter |
 | `--eval_head ncm` | 76.89% | 10.11% | worse here (top-1 routing already recovers the classes) |
-| `--shared_expert` | 45.16% | 63.99% | harmful as configured: the always-on expert is never frozen, so it drifts into the newest task and the gate lets it dominate. Needs a stability penalty or a freeze schedule; staged. |
+| `--shared_expert` | 78.06% / 7.84 | −1.9 vs base | first measurement without anchoring was catastrophic (45.16% / 63.99) because the always-on pathway drifted into the newest task. With the prototype anchor now added it is stable but still trails the base recipe (CPU base 80.14% / 7.09; `--freeze_shared_after 1`: 78.26% / 7.73). Kept as an opt-in for domain-shift streams where a shared pathway is expected to pay off. |
 | shared + margin + ncm + generative | 77.64% | 9.07% | combination does not rescue the shared-expert drift |
 
 These are single-seed measurements to guide the next validation round, not
@@ -463,7 +463,10 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     **35.5% / 24.1% forgetting** and the hybrid **36.9% / 22.1%**. The corrected
     margin over the best baseline is therefore ~2.7 accuracy points with ~2.5x
     less forgetting; the earlier ~14-point gap was a baseline-side BatchNorm
-    drift artifact.
+    drift artifact. The PAL-MoE rows were later re-run with the exact routing
+    lock (design fact 15) and reach **37.03% / 23.9% forgetting** pure and
+    **39.11% / 23.3%** hybrid (`results/cifar10_lockfix`), i.e. the lock fix
+    improved CIFAR-10 as well.
 
 15. **The historical-routing lock must exclude optimizer weight decay.** Router
     rows of frozen experts are protected by backward hooks that zero their task
@@ -495,9 +498,10 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     3.66% forgetting on seed 42 (pure: 78.78% / 8.78%), because its raw replay
     already supplies the boundary signal.
 
-    **Provenance caveat:** every table produced before this commit (including
-    the CIFAR-10 tables below) ran with the implicit decay in place; re-run
-    them with the fixed lock before citing them.
+    **Provenance:** the Split-MNIST and Split-CIFAR-10 tables have been re-run
+    with the fixed lock (results in this document); other tables produced
+    before the fix should be re-run before citing them. Split-CIFAR-100 runs a
+    scaled 20-task protocol on the fixed code (`results/cifar100_20task`).
 
 ## Ablations
 
@@ -512,7 +516,7 @@ ablation). Config selection supports case-insensitive substring filters
 
 `.github/workflows/ci.yml`:
 - **lint**: `ruff check` + `black --check` (versions pinned).
-- **test**: pytest (88 tests) on Python 3.10-3.12, with coverage.
+- **test**: pytest (90 tests) on Python 3.10-3.12, with coverage.
 - **benchmark-verify**: CPU smoke of the full 12-method benchmark (1 epoch)
   asserting it completes and that PAL-MoE hybrid ≥ 50% + pure ≥ 25%
   (sanity bounds, not state-of-the-art checks).

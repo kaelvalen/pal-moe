@@ -78,7 +78,11 @@ should be re-run.
 
 All methods use the same geometry and schedule (single seed 42): conv encoder 64/128/256 with 256-dimensional latents (50 SimCLR epochs), experts with hidden size 512, 5 epochs per task, and a frozen encoder with `--feature_cache`. PAL-MoE additionally distills its router onto the prototype owners at each task end (`--router_anchor_steps 300`, zero raw replay).
 
-> **Provenance caveat:** the CIFAR-10 rows below predate the historical-routing lock fix (design fact 15). They should be re-run with the current code before being cited; the Split-MNIST table above has already been regenerated.
+> The PAL-MoE rows were re-run with the current code (exact routing lock and
+> the recipe from design fact 15; `results/cifar10_lockfix`) and **improved**:
+> pure 37.03% / 23.90% forgetting and hybrid 39.11% / 23.26%. Baseline rows are
+> from the earlier run; their code paths were verified unchanged (buffer,
+> herding and chunking edits are numerically equivalent and covered by tests).
 
 | Method | Avg Acc (↑) | Forgetting (↓) | Raw exemplars |
 | :--- | :---: | :---: | :---: |
@@ -90,10 +94,10 @@ All methods use the same geometry and schedule (single seed 42): conv encoder 64
 | iCaRL (k=25) | 26.09% | 16.23% | 250 |
 | AGEM (P=250) | 28.27% | 69.03% | 250 |
 | DER++ (P=250) | 32.82% | 60.49% | 250 + logits |
-| **PAL-MoE (pure)** | **35.50%** | **24.05%** | **0 (latent only)** |
-| PAL-MoE + Replay (Hybrid, P=250) | 36.92% | 22.06% | 250 |
+| **PAL-MoE (pure)** | **37.03%** | **23.90%** | **0 (latent only)** |
+| PAL-MoE + Replay (Hybrid) | **39.11%** | **23.26%** | 0 raw (latent replay; `--feature_cache` stores no images) |
 
-Note: The pure variant stores no raw inputs (latent prototypes and task ids only) and reaches 35.50%, ahead of the strongest baseline DER++ (32.82%) by 2.7 accuracy points with 2.5 times less forgetting (24.05% vs 60.49%). The hybrid variant leads by another 1.4 points. An earlier revision of this table showed an approximately 14-point gap; that measurement was affected by a baseline-side BatchNorm artifact (the "frozen" encoder drifted during the baselines' own training loops) and has been corrected here (see `BENCHMARK.md`, design fact 14). The remaining gap to the per-expert oracle (~67%) reflects expert and representation quality rather than routing.
+Note: The pure variant stores no raw inputs (latent prototypes and task ids only) and reaches 37.03%, ahead of the strongest baseline DER++ (32.82%) by 4.2 accuracy points with 2.5 times less forgetting (23.90% vs 60.49%). The hybrid variant leads by another 2.1 points. With `--feature_cache` the "hybrid" replay samples latents only (no raw exemplars can be stored), which the table's last column now reflects. An earlier revision of this table showed an approximately 14-point gap; that measurement was affected by a baseline-side BatchNorm artifact (the "frozen" encoder drifted during the baselines' own training loops) and has been corrected here (see `BENCHMARK.md`, design fact 14). The remaining gap to the per-expert oracle (~67%) reflects expert and representation quality rather than routing.
 
 Note on the training regime: the frozen-representation setting is part of the method's design on CIFAR-10; with an unfrozen encoder, the earlier pure/hybrid runs scored 17.75% / 25.54%. At the longer 15-epoch schedule the calibrated recipe reaches 37.35 ± 0.56% pure and 38.87 ± 0.47% hybrid across 5 seeds (forgetting 24.3 ± 0.5 and 23.2 ± 0.6; the feature cache was verified neutral on seed 42: 37.60% vs 36.72%). Split-CIFAR-100 (20 tasks of 5 classes) is implemented in `pal_moe/data/split_cifar100.py` and selected with `--dataset cifar100`; a full benchmark run is pending.
 
@@ -134,7 +138,7 @@ pal-moe/
 │   └── plot_results.py         # Figure generation (single + multi-seed JSON)
 ├── configs/                    # JSON configs (mnist_default, cifar10_default, ...)
 ├── BENCHMARK.md                # Methodology, protocol and measured design facts
-└── tests/test_pal_moe.py       # PyTest suite (88 tests)
+└── tests/test_pal_moe.py       # PyTest suite (90 tests)
 ```
 
 ---
@@ -191,7 +195,7 @@ If you use **PAL-MoE** in your research or benchmarks, please cite:
 
 ```bibtex
 @software{pal_moe2026,
-  author = {Valen, Kael},
+  author = {Hakbilen, Mehmet Arda},
   title = {PAL-MoE: Prototype-Anchored Lifelong Mixture of Experts},
   url = {https://github.com/kaelvalen/pal-moe},
   version = {0.1.0},

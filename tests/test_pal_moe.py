@@ -1712,6 +1712,78 @@ def test_streaming_task_free_evaluation():
     assert set(report["per_domain_accuracy"]) == {"0", "1"}
 
 
+def test_capacity_control_remaps_tracked_expert():
+    """Prune/merge re-indexes experts; the tracked (new) expert must follow."""
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=3)
+    experts = [MLPExpert(8, 8, 3, i) for i in range(3)]
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+    mem = PrototypeMemory(feature_dim=8)
+
+    # Merge path: experts 0 and 1 are identical (similarity 1), expert 2 differs.
+    with torch.no_grad():
+        experts[1].fc2.weight.copy_(experts[0].fc2.weight)
+        experts[1].fc2.bias.copy_(experts[0].fc2.bias)
+        for e in experts:
+            e.usage_count.fill_(100)
+    result = ExpertBuilder().enforce_capacity_control(
+        moe, prototype_memory=mem, max_experts=2, track_expert=2
+    )
+    assert moe.num_experts == 2
+    assert result["tracked_expert"] == 1  # index 1 was merged away, so it shifts down
+
+    # Prune path: the least-used expert is removed, track_expert follows it.
+    torch.manual_seed(0)
+    moe2 = DynamicMoE(
+        SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8),
+        DynamicRouter(input_dim=8, num_experts=3),
+        [MLPExpert(8, 8, 3, i) for i in range(3)],
+        use_ema_encoder=False,
+    )
+    with torch.no_grad():
+        for i, e in enumerate(moe2.experts):
+            e.usage_count.fill_(100 if i != 1 else 0)
+    result = ExpertBuilder().enforce_capacity_control(
+        moe2,
+        prototype_memory=PrototypeMemory(feature_dim=8),
+        max_experts=2,
+        track_expert=2,
+    )
+    assert moe2.num_experts == 2
+    assert result["tracked_expert"] == 1
+
+
+def test_distill_skips_out_of_range_owners():
+    """Stale owner indices must be ignored, not crash the distillation."""
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    moe = DynamicMoE(
+        enc,
+        DynamicRouter(input_dim=8, num_experts=2),
+        [MLPExpert(8, 8, 3, i) for i in range(2)],
+        use_ema_encoder=False,
+    )
+    memory = PrototypeMemory(feature_dim=8)
+    memory.update_or_create_prototype(
+        torch.randn(8),
+        torch.tensor([1.0, 0.0]),
+        torch.randn(2, 3),
+        task_id=0,
+        owner_expert=0,
+    )
+    memory.prototypes[0].owner_expert = 7  # stale index
+    trainer = ContinualTrainer(
+        model=moe,
+        prototype_memory=memory,
+        trigger=QuantitativeTrigger(),
+        builder=ExpertBuilder(),
+        device=torch.device("cpu"),
+    )
+    loss = trainer._distill_router_anchors(steps=5, lr=1e-2)
+    assert loss == 0.0
+
+
 def test_shared_expert_stability_anchor():
     """The always-on expert is anchored to its registration-time outputs."""
     from pal_moe.factory import build_moe
