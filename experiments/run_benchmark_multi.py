@@ -104,6 +104,12 @@ def main():
     )
     parser.add_argument("--freeze_expansion_base", action="store_true", default=False)
     parser.add_argument(
+        "--pretrain_cache",
+        action="store_true",
+        default=False,
+        help="Reuse the cached unsupervised pretraining per seed/config",
+    )
+    parser.add_argument(
         "--expansion_action", type=str, default="add", choices=["add", "widen"]
     )
     parser.add_argument("--task_free_eval", action="store_true", default=False)
@@ -309,6 +315,8 @@ def main():
             cmd.append("--expert_temperature_calib")
         if args.freeze_expansion_base:
             cmd.append("--freeze_expansion_base")
+        if args.pretrain_cache:
+            cmd.append("--pretrain_cache")
         if args.expansion_action != "add":
             cmd += ["--expansion_action", args.expansion_action]
         if args.task_free_eval:

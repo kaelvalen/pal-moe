@@ -224,7 +224,8 @@ more stable, more accurate" without forking the code.
 | Strong backbones | `--encoder_arch {resnet18,resnet34,resnet50} --encoder_weights imagenet` | frozen ImageNet ResNet features (1-channel adaptation for MNIST built in), no pretraining needed |
 | Domain-shift streams | `--domain_shift {permute,rotate}` | class-shared phase stream wired into the runner for stability stress tests |
 | Ready recipes | `experiments/recipes/*.sh` | CIFAR-100 full, CIFAR-10 ResNet-18 frozen, MNIST domain-shift + shared expert |
-| Compute reporting | `trainable_params`, `fit_seconds`, `geometry` | compute-matched comparisons per run |
+| Relative validation gate | `--gate_mode relative --gate_margin` | effective threshold `min(absolute, majority + margin)`: relaxes the bar for weak-majority tasks (5-way CIFAR-100) without changing 2-way behaviour |
+| Compute reporting | `total_params`, `trainable_params`, `active_params`, `fit_seconds`, `geometry` | full size, gradient-receiving size and per-sample forward cost per run |
 
 First single-seed measurements of the new knobs (Split-MNIST, seed 42, 3
 epochs, `configs/mnist_default.json`; base = 79.69% / 6.85% forgetting):
