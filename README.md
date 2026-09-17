@@ -49,6 +49,12 @@ recorded as `trainable_params` in every result JSON.
 | Experience Replay (P=360) | 83.80 ± 0.69% | 15.51 ± 1.09% | -15.51% | 1 | raw buffer |
 | DER++ (P=250) | 86.93 ± 0.91% | 7.31 ± 1.06% | -7.31% | 1 | raw buffer + logits |
 
+All research knobs added in this revision (shared generalist expert, generative
+latent replay, NCM/bias read-outs, energy OOD/trigger, auto anchoring, adapter
+experts, width growth, merging, uncertainty weighting, task-free metrics, ...)
+are opt-in, tested and documented in the research-toolkit table of
+[`BENCHMARK.md`](BENCHMARK.md).
+
 Note: The pure variant reaches 79.36% without any raw exemplars — ahead of
 iCaRL, ER-ACE, ER(P=60), AGEM, EWC, naive fine-tuning and Standard-MoE — and its
 7.91% forgetting is the second lowest in the table after DER++ (7.31%) despite
@@ -128,7 +134,7 @@ pal-moe/
 │   └── plot_results.py         # Figure generation (single + multi-seed JSON)
 ├── configs/                    # JSON configs (mnist_default, cifar10_default, ...)
 ├── BENCHMARK.md                # Methodology, protocol and measured design facts
-└── tests/test_pal_moe.py       # PyTest suite (64 tests)
+└── tests/test_pal_moe.py       # PyTest suite (88 tests)
 ```
 
 ---

@@ -583,6 +583,16 @@ def run_benchmark(
     }
 
     pin_memory = device.type == "cuda"
+    external_encoder_state = None
+    if args.encoder_checkpoint:
+        # Anchor for foundation-model features: any state dict matching the
+        # SharedEncoder architecture (e.g. an exported DINOv2/CLIP backbone
+        # projected to `feature_dim`) can replace the built-in pretraining.
+        external_encoder_state = torch.load(
+            args.encoder_checkpoint, map_location="cpu", weights_only=True
+        )
+        print(f"  [encoder] loading external weights from {args.encoder_checkpoint}")
+
     if dataset == "cifar10":
         from pal_moe.data.split_cifar import get_split_cifar10_tasks
 
@@ -612,18 +622,19 @@ def run_benchmark(
             arch="conv",
             conv_channels=conv_channels,
         ).to(device)
-        _pretrain_encoder(
-            base_encoder,
-            unlabeled_loader,
-            device,
-            dataset=dataset,
-            mode="simclr",
-            seed=args.seed,
-            epochs=pretrain_epochs,
-            feature_dim=feature_dim,
-            conv_channels=conv_channels,
-            use_cache=args.pretrain_cache,
-        )
+        if external_encoder_state is None:
+            _pretrain_encoder(
+                base_encoder,
+                unlabeled_loader,
+                device,
+                dataset=dataset,
+                mode="simclr",
+                seed=args.seed,
+                epochs=pretrain_epochs,
+                feature_dim=feature_dim,
+                conv_channels=conv_channels,
+                use_cache=args.pretrain_cache,
+            )
         # unfreezing happens implicitly
     elif dataset == "cifar100":
         from pal_moe.data.split_cifar100 import get_split_cifar100_tasks
@@ -652,18 +663,19 @@ def run_benchmark(
             arch="conv",
             conv_channels=conv_channels,
         ).to(device)
-        _pretrain_encoder(
-            base_encoder,
-            unlabeled_loader,
-            device,
-            dataset=dataset,
-            mode="simclr",
-            seed=args.seed,
-            epochs=pretrain_epochs,
-            feature_dim=feature_dim,
-            conv_channels=conv_channels,
-            use_cache=args.pretrain_cache,
-        )
+        if external_encoder_state is None:
+            _pretrain_encoder(
+                base_encoder,
+                unlabeled_loader,
+                device,
+                dataset=dataset,
+                mode="simclr",
+                seed=args.seed,
+                epochs=pretrain_epochs,
+                feature_dim=feature_dim,
+                conv_channels=conv_channels,
+                use_cache=args.pretrain_cache,
+            )
         # encoder stays unfrozen (adapts online)
     else:
         tasks = get_split_mnist_tasks(
@@ -689,19 +701,23 @@ def run_benchmark(
             output_dim=feature_dim,
             arch="mlp",
         ).to(device)
-        _pretrain_encoder(
-            base_encoder,
-            unlabeled_loader,
-            device,
-            dataset=dataset,
-            mode="ae",
-            seed=args.seed,
-            epochs=pretrain_epochs,
-            feature_dim=feature_dim,
-            conv_channels=conv_channels,
-            use_cache=args.pretrain_cache,
-        )
+        if external_encoder_state is None:
+            _pretrain_encoder(
+                base_encoder,
+                unlabeled_loader,
+                device,
+                dataset=dataset,
+                mode="ae",
+                seed=args.seed,
+                epochs=pretrain_epochs,
+                feature_dim=feature_dim,
+                conv_channels=conv_channels,
+                use_cache=args.pretrain_cache,
+            )
         base_encoder.freeze()
+
+    if external_encoder_state is not None:
+        base_encoder.load_state_dict(external_encoder_state, strict=True)
 
     if args.freeze_encoder:
         base_encoder.freeze()
@@ -1360,6 +1376,15 @@ if __name__ == "__main__":
         type=int,
         default=64,
         help="Hidden units added by --expansion_action widen",
+    )
+    parser.add_argument(
+        "--encoder_checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Load SharedEncoder-compatible weights (e.g. an exported foundation "
+            "backbone) instead of running the built-in pretraining"
+        ),
     )
     parser.add_argument(
         "--router_anchor_steps",
