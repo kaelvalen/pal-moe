@@ -240,7 +240,11 @@ def run_benchmark(
             output_dim=feature_dim,
             arch="mlp",
         ).to(device)
-        base_encoder.pretrain_unsupervised(unlabeled_loader, device=device, epochs=1)
+        base_encoder.pretrain_unsupervised(
+            unlabeled_loader,
+            device=device,
+            epochs=args.pretrain_epochs if args.pretrain_epochs is not None else 1,
+        )
         base_encoder.freeze()
 
     if args.freeze_encoder:
@@ -744,7 +748,7 @@ def run_benchmark(
         lambda_enc=0.5 if encoder_ft else 0.0,
         encoder_lr=1e-4 if encoder_ft else None,
         lr=1e-3,
-        max_experts=6,
+        max_experts=args.max_experts,
         joint_keep_routing_lock=args.joint_keep_routing_lock,
         joint_freeze_router=args.joint_freeze_router,
         lambda_ood=args.lambda_ood,
@@ -859,7 +863,7 @@ def run_benchmark(
         replay_exemplars=True,
         lambda_replay=1.0,
         lr=1e-3,
-        max_experts=6,
+        max_experts=args.max_experts,
         joint_keep_routing_lock=args.joint_keep_routing_lock,
         joint_freeze_router=args.joint_freeze_router,
         lambda_ood=args.lambda_ood,
@@ -919,9 +923,8 @@ def run_benchmark(
     }
 
     # Drop skipped methods so the table/JSON only contain what actually ran.
-    if selected is not None:
-        kept = {name for mid, name in method_keys.items() if run(mid)}
-        results = {k: v for k, v in results.items() if k in kept}
+    kept = {name for mid, name in method_keys.items() if run(mid)}
+    results = {k: v for k, v in results.items() if k in kept}
 
     # -------------------------------------------------------------
     # Summary Table
@@ -1007,7 +1010,13 @@ if __name__ == "__main__":
         "--pretrain_epochs",
         type=int,
         default=None,
-        help="Encoder pretraining epochs (None = dataset default)",
+        help="Encoder pretraining epochs (None = dataset default: 1 for MNIST)",
+    )
+    parser.add_argument(
+        "--max_experts",
+        type=int,
+        default=6,
+        help="Expert pool budget; expansion beyond it triggers prune/merge",
     )
     parser.add_argument(
         "--feature_dim",
@@ -1046,7 +1055,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--freeze_encoder",
         action="store_true",
-        help="Keep the pretrained encoder fixed (recommended for prototype-anchored CIFAR runs)",
+        help=(
+            "Keep the pretrained encoder fixed (recommended for prototype-anchored "
+            "CIFAR runs; MNIST is always frozen)"
+        ),
     )
     parser.add_argument(
         "--proto_routing_alpha",
