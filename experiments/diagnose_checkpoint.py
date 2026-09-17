@@ -142,7 +142,7 @@ def main():
         device = torch.device(args.device)
     print(f"[Diagnose] device={device} checkpoint={args.checkpoint}")
 
-    payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    payload = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
     state = payload["model_state"]
     cfg = infer_config(state, args.dataset)
     print(
