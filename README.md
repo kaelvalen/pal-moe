@@ -145,6 +145,14 @@ more forgetting than iCaRL but 5× less than DER++. Router distillation reaches
 76.7% owner-routing accuracy across the 6 experts; the negative prototype
 margin (−0.13) shows the 256-d representation is still the limiting factor.
 
+> **Validation-gate note:** the table above uses the absolute gate
+> (`min_acc_threshold=0.45`), which rejected 7 of 20 expansions. With the new
+> relative gate (`--gate_mode relative`, now the config default; threshold =
+> `min(absolute, majority + 0.10)`) a single-seed check gives pure 9.05% /
+> 26.65% forgetting and hybrid 9.13% / 12.77% (`results/cifar100_relgate`) — a
+> mixed trade-off, so the 3-seed verdict is queued in
+> `experiments/recipes/cifar100_gate_ablation.sh`.
+
 ### 5. Class-shared domain shift (Split-MNIST with rotating phases)
 
 Every task keeps the same 10 classes but rotates the inputs 90°·k

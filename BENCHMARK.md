@@ -247,10 +247,16 @@ PAL-MoE pure 8.31% / 17.06% forgetting; hybrid 9.83% / 13.68%; DER++ 5.76% /
 63.19%; ER 6.43% / 62.91%; iCaRL 10.18% / 11.05%. Pure beats every replay
 baseline by 2-5 points with ~4× less forgetting and zero raw storage; the
 validation gate rejected 7 of 20 expansions because `min_acc_threshold=0.45`
-is too strict for 5-way CIFAR-100 tasks (a dataset-aware/relative threshold is
-the next tuning item). Router distillation reaches 76.7% owner-routing accuracy
-over 6 experts; the negative prototype margin (−0.13) again points at the
-representation as the limiting factor.
+is too strict for 5-way CIFAR-100 tasks. The relative gate
+(`min(absolute, majority + margin)`, now the config default) accepts more
+expansions; a single-seed check gives pure 9.05% / 26.65% forgetting and hybrid
+9.13% / 12.77% (`results/cifar100_relgate`) - mixed, so the 3-seed ablation in
+`experiments/recipes/cifar100_gate_ablation.sh` is the next step. Router
+distillation reaches 76.7% owner-routing accuracy over 6 experts; the negative
+prototype margin (−0.13) again points at the representation as the limiting
+factor. Parameters are reported three ways now: total (1.65M across 6 experts),
+trainable (275k after freezing history) and active per sample (275k, one
+expert).
 
 **Strong-backbone CIFAR-10** (`configs/cifar10_resnet18_frozen.json`,
 ImageNet ResNet-18, frozen, feature cache): pure **47.53%** / 22.95% forgetting
