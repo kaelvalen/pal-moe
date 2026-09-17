@@ -4,6 +4,8 @@ Verifies all mathematical formulations, loss computations, function-preserving e
 trigger thresholds, validation gate, and TTT.
 """
 
+import os
+
 import numpy as np
 import pytest
 import torch
@@ -1574,6 +1576,82 @@ def test_periodic_stability_and_ood_knobs():
     assert hist["loss_router_stab"][1] == 0.0
     assert hist["loss_router_stab"][2] > 0.0
     assert hist["loss_router_stab"][3] == 0.0
+
+
+def test_pretrain_cache_roundtrip(tmp_path):
+    """The pretraining cache is content-addressed and restores exact weights."""
+    from experiments.run_benchmark import (
+        _load_pretrained_encoder,
+        _pretrain_cache_path,
+        _save_pretrained_encoder,
+    )
+
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    path = _pretrain_cache_path(str(tmp_path), "mnist", "ae", 42, 1, 8, (32, 64, 128))
+    assert not os.path.exists(path)
+
+    _save_pretrained_encoder(enc, path)
+    other = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    assert _load_pretrained_encoder(other, path)
+    for k, v in enc.state_dict().items():
+        assert torch.allclose(v, other.state_dict()[k], atol=1e-6)
+
+    # Different seed or architecture -> different cache slot
+    assert (
+        _pretrain_cache_path(str(tmp_path), "mnist", "ae", 43, 1, 8, (32, 64, 128))
+        != path
+    )
+
+
+def test_runner_baseline_helpers():
+    """Factory/record helpers used by the benchmark runner."""
+    from experiments.run_benchmark import _make_single_head, _record_baseline_result
+
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    model = _make_single_head(enc, 8, 8, 3, torch.device("cpu"))
+    evaluator = ContinualEvaluator(num_tasks=2)
+    evaluator.R[1, :2] = 0.5
+    res = _record_baseline_result(model, evaluator)
+    assert res["final_experts"] == 1
+    assert res["trainable_params"] == sum(
+        p.numel() for p in model.parameters() if p.requires_grad
+    )
+    assert res["acc"] == pytest.approx(0.5)
+
+
+def test_runner_baseline_loop_forwards_per_task_kwargs():
+    """The shared baseline loop forwards per-task kwargs and evaluates each step."""
+    from experiments.run_benchmark import _run_baseline_loop
+
+    recorded = []
+
+    class FakeTrainer:
+        def train_task(self, task_id, loader, epochs=1, **kwargs):
+            recorded.append((task_id, epochs, kwargs))
+
+    class FakeEvaluator:
+        def evaluate_all_seen_tasks(self, model, t_idx, tasks):
+            assert tasks is TASKS
+            return [1.0]
+
+    class FakeTask:
+        classes = (0, 1)
+        train_loader = [1]
+        test_loader = [1]
+
+    TASKS = [FakeTask(), FakeTask()]
+    _run_baseline_loop(
+        FakeTrainer(),
+        model=None,
+        evaluator=FakeEvaluator(),
+        tasks=TASKS,
+        epochs_per_task=2,
+        per_task_kwargs=lambda task: {"current_classes": list(task.classes)},
+    )
+    assert recorded == [
+        (0, 2, {"current_classes": [0, 1]}),
+        (1, 2, {"current_classes": [0, 1]}),
+    ]
 
 
 def test_exemplar_batch_cache_invalidates_on_mutation():

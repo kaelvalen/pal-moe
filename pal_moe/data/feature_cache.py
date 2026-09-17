@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, default_collate
 
 
 class CachedFeatureEncoder(nn.Module):
@@ -67,7 +67,13 @@ class FeatureTensorDataset(Dataset):
         return self.features.size(0)
 
     def __getitem__(self, index: int):
-        return self.features[index].float(), self.labels[index]
+        return self.features[index], self.labels[index]
+
+
+def _collate_features(batch):
+    """Batches the stored (possibly half-precision) features and casts once."""
+    feats, labels = default_collate(batch)
+    return feats.float(), labels
 
 
 @dataclass
@@ -110,6 +116,7 @@ def build_feature_cache(
     dtype: torch.dtype = torch.float16,
     batch_size: int = 128,
     num_workers: int = 0,
+    pin_memory: bool = False,
     verbose: bool = True,
 ) -> FeatureCache:
     """
@@ -136,16 +143,25 @@ def build_feature_cache(
                     batch_size=batch_size,
                     shuffle=True,
                     drop_last=True,
+                    num_workers=num_workers,
+                    pin_memory=pin_memory,
+                    collate_fn=_collate_features,
                 ),
                 val_loader=DataLoader(
                     FeatureTensorDataset(va_f, va_y),
                     batch_size=batch_size,
                     shuffle=False,
+                    num_workers=num_workers,
+                    pin_memory=pin_memory,
+                    collate_fn=_collate_features,
                 ),
                 test_loader=DataLoader(
                     FeatureTensorDataset(te_f, te_y),
                     batch_size=batch_size,
                     shuffle=False,
+                    num_workers=num_workers,
+                    pin_memory=pin_memory,
+                    collate_fn=_collate_features,
                 ),
             )
         )

@@ -17,8 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import argparse
 import copy
 import datetime
+import hashlib
 import json
 import time
+from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
@@ -92,6 +94,343 @@ def _build_prototype_memory(
     )
 
 
+def _banner(title: str) -> None:
+    print("\n" + "=" * 60)
+    print(title)
+    print("=" * 60)
+
+
+def _make_single_head(
+    encoder: nn.Module,
+    feature_dim: int,
+    expert_hidden: int,
+    num_classes: int,
+    device: torch.device,
+) -> nn.Sequential:
+    """Baseline model: a deep copy of the shared encoder + one matched MLP head."""
+    return nn.Sequential(
+        copy.deepcopy(encoder),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
+    ).to(device)
+
+
+def _record_baseline_result(
+    model: nn.Module, evaluator: ContinualEvaluator, final_experts: int = 1
+) -> dict:
+    """Common result payload; `trainable_params` documents the capacity actually used."""
+    return {
+        "acc": evaluator.compute_average_accuracy(),
+        "forgetting": evaluator.compute_forgetting(),
+        "bwt": evaluator.compute_backward_transfer(),
+        "router_stability_kl": float("nan"),
+        "specialization_mi": float("nan"),
+        "utilization": float("nan"),
+        "final_experts": final_experts,
+        "trainable_params": int(
+            sum(p.numel() for p in model.parameters() if p.requires_grad)
+        ),
+        "acc_matrix": evaluator.R.tolist(),
+    }
+
+
+def _run_baseline_loop(
+    trainer: Any,
+    model: nn.Module,
+    evaluator: ContinualEvaluator,
+    tasks: list,
+    epochs_per_task: int,
+    per_task_kwargs: Optional[Callable] = None,
+    eval_model: Optional[Callable] = None,
+) -> None:
+    """Shared per-task training/evaluation loop for the single-head baselines."""
+    for t_idx, task in enumerate(tasks):
+        print(f"  Training Task {t_idx} (classes {task.classes})...")
+        kwargs = per_task_kwargs(task) if per_task_kwargs is not None else {}
+        trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task, **kwargs)
+        eval_net = eval_model() if eval_model is not None else model
+        accs = evaluator.evaluate_all_seen_tasks(eval_net, t_idx, tasks)
+        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
+
+
+def _pretrain_cache_path(
+    cache_dir: str,
+    dataset: str,
+    mode: str,
+    seed: int,
+    epochs: int,
+    feature_dim: int,
+    conv_channels: tuple,
+) -> str:
+    """Content-addressed path for a cached unsupervised pretraining result."""
+    key = (
+        f"v1|{dataset}|{mode}|seed={seed}|epochs={epochs}|fd={feature_dim}|"
+        f"ch={conv_channels}|torch={torch.__version__}"
+    )
+    digest = hashlib.sha1(key.encode()).hexdigest()[:16]
+    return os.path.join(cache_dir, f"pretrain_{dataset}_{mode}_{digest}.pt")
+
+
+def _load_pretrained_encoder(encoder: nn.Module, path: str) -> bool:
+    if not os.path.exists(path):
+        return False
+    state = torch.load(path, map_location="cpu", weights_only=True)
+    encoder.load_state_dict(state, strict=True)
+    return True
+
+
+def _save_pretrained_encoder(encoder: nn.Module, path: str) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    torch.save({k: v.detach().cpu() for k, v in encoder.state_dict().items()}, path)
+
+
+def _pretrain_encoder(
+    encoder: nn.Module,
+    loader: Any,
+    device: torch.device,
+    *,
+    dataset: str,
+    mode: str,
+    seed: int,
+    epochs: int,
+    feature_dim: int,
+    conv_channels: tuple,
+    use_cache: bool,
+    cache_dir: str = "./data/pretrain_cache",
+) -> None:
+    """
+    Pretrains the shared encoder, optionally reusing a cached state dict.
+
+    A cache hit skips the RNG consumed by pretraining, so cached runs are seeded
+    immediately before and after the (possibly skipped) pretraining to stay
+    internally reproducible. They are distributionally equivalent to uncached
+    runs, not bit-identical (same caveat as the feature cache).
+    """
+    if not use_cache:
+        if mode == "simclr":
+            encoder.pretrain_contrastive(loader, device=device, epochs=epochs)
+        else:
+            encoder.pretrain_unsupervised(loader, device=device, epochs=epochs)
+        return
+
+    set_seed(seed)
+    path = _pretrain_cache_path(
+        cache_dir, dataset, mode, seed, epochs, feature_dim, conv_channels
+    )
+    if _load_pretrained_encoder(encoder, path):
+        print(f"  [pretrain-cache] loaded {path}")
+    else:
+        if mode == "simclr":
+            encoder.pretrain_contrastive(loader, device=device, epochs=epochs)
+        else:
+            encoder.pretrain_unsupervised(loader, device=device, epochs=epochs)
+        _save_pretrained_encoder(encoder, path)
+        print(f"  [pretrain-cache] saved {path}")
+    set_seed(seed)
+
+
+def _run_standard_moe(
+    base_encoder: nn.Module,
+    tasks: list,
+    device: torch.device,
+    seed: int,
+    epochs_per_task: int,
+    feature_dim: int,
+    expert_hidden: int,
+    num_classes: int,
+    num_tasks: int,
+) -> dict:
+    """Fixed 4-expert MoE with the Switch load-balancing loss (no stability)."""
+    set_seed(seed)
+    std_moe = DynamicMoE(
+        encoder=copy.deepcopy(base_encoder),
+        router=DynamicRouter(input_dim=feature_dim, num_experts=4, top_k=1).to(device),
+        experts=[
+            MLPExpert(
+                input_dim=feature_dim,
+                hidden_dim=expert_hidden,
+                num_classes=num_classes,
+                expert_id=i,
+            ).to(device)
+            for i in range(4)
+        ],
+        use_ema_encoder=False,
+    ).to(device)
+    opt_std = torch.optim.Adam(std_moe.parameters(), lr=1e-3)
+    evaluator = ContinualEvaluator(num_tasks=num_tasks, device=device)
+
+    for t_idx, task in enumerate(tasks):
+        print(f"  Training Task {t_idx} (classes {task.classes})...")
+        std_moe.train()
+        for _ in range(epochs_per_task):
+            for x, y in task.train_loader:
+                x = x.to(device, non_blocking=True)
+                y = y.to(device, non_blocking=True)
+                opt_std.zero_grad()
+                feats = std_moe.encoder(x)
+                logits = std_moe(x)
+                loss_ce = nn.functional.cross_entropy(logits, y)
+
+                # Switch Transformer auxiliary load-balancing loss: L_balance = N * sum_i f_i * P_i
+                dense_probs = std_moe.router.get_full_distribution(feats)
+                _, topk_idx, _ = std_moe.router(feats)
+                f_i = torch.bincount(topk_idx.flatten(), minlength=4).float() / x.size(
+                    0
+                )
+                P_i = dense_probs.mean(dim=0)
+                loss_balance = 4.0 * torch.sum(f_i * P_i)
+
+                loss = loss_ce + 0.1 * loss_balance
+                loss.backward()
+                opt_std.step()
+
+        accs = evaluator.evaluate_all_seen_tasks(std_moe, t_idx, tasks)
+        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
+
+    mi, util = ContinualEvaluator.compute_expert_specialization_and_utilization(
+        std_moe, tasks, device
+    )
+    result = _record_baseline_result(std_moe, evaluator, final_experts=4)
+    result["specialization_mi"] = mi
+    result["utilization"] = util
+    return result
+
+
+def _run_palmoe_variant(
+    base_encoder: nn.Module,
+    tasks: list,
+    device: torch.device,
+    args: argparse.Namespace,
+    *,
+    dataset: str,
+    feature_dim: int,
+    expert_hidden: int,
+    num_classes: int,
+    proto_threshold: Optional[float],
+    encoder_ft: bool,
+    epochs_per_task: int,
+    output_dir: str,
+    checkpoint_subdir: str,
+    replay: bool,
+) -> dict:
+    """
+    Runs one PAL-MoE variant (pure or hybrid). Configuration is identical to
+    the published recipe except for the replay/latent-store switches, so the
+    two variants cannot drift apart in this file.
+    """
+    set_seed(args.seed)
+    model = DynamicMoE(
+        encoder=copy.deepcopy(base_encoder),
+        router=_build_router(args.router_type, feature_dim, args.top_k, device),
+        experts=[
+            MLPExpert(
+                input_dim=feature_dim,
+                hidden_dim=expert_hidden,
+                num_classes=num_classes,
+                expert_id=0,
+            ).to(device)
+        ],
+        use_ema_encoder=False,
+    ).to(device)
+    memory = _build_prototype_memory(
+        feature_dim,
+        proto_threshold,
+        args.proto_size,
+        args.proto_per_class,
+        (not args.feature_cache) if replay else False,
+    )
+    trigger = QuantitativeTrigger(
+        alpha=1.0, beta=0.4, gamma=0.6, delta=0.5, threshold_tau=0.5
+    )
+    builder = ExpertBuilder(
+        min_acc_threshold=0.45 if dataset in ("cifar10", "cifar100") else 0.60,
+        max_proto_drop=args.max_proto_drop,
+        max_proto_acc_drop=args.max_proto_acc_drop,
+        max_ece=999.0,
+        distill_lambda=0.5,
+    )
+    trainer = ContinualTrainer(
+        model=model,
+        prototype_memory=memory,
+        trigger=trigger,
+        builder=builder,
+        lambda_r=args.lambda_r,
+        lambda_e=args.lambda_e,
+        lambda_enc=0.5 if encoder_ft else 0.0,
+        encoder_lr=1e-4 if encoder_ft else None,
+        replay_exemplars=replay,
+        lambda_replay=1.0,
+        lr=1e-3,
+        max_experts=args.max_experts,
+        joint_keep_routing_lock=args.joint_keep_routing_lock,
+        joint_freeze_router=args.joint_freeze_router,
+        lambda_ood=args.lambda_ood,
+        router_anchor_steps=args.router_anchor_steps,
+        router_anchor_lr=args.router_anchor_lr,
+        joint_calib_epochs=args.joint_calib_epochs,
+        proto_samples=args.proto_samples,
+        refresh_anchors_after_calib=args.refresh_anchors_after_calib,
+        keep_optimizer_state=args.keep_optimizer_state,
+        stability_every=args.stability_every,
+        ood_every=args.ood_every,
+        device=device,
+        checkpoint_dir=(
+            os.path.join(output_dir, checkpoint_subdir)
+            if args.save_checkpoints
+            else None
+        ),
+    )
+    evaluator = ContinualEvaluator(num_tasks=len(tasks), device=device)
+    if args.proto_routing_alpha > 0:
+        model.set_prototype_routing(
+            memory,
+            alpha=args.proto_routing_alpha,
+            threshold=args.proto_routing_threshold,
+        )
+
+    for t_idx, task in enumerate(tasks):
+        print(
+            f"  Training Task {t_idx} (classes {task.classes})... "
+            f"Experts before: {model.num_experts}"
+        )
+        hist = trainer.train_task(
+            task_id=t_idx,
+            train_loader=task.train_loader,
+            val_loader=task.val_loader,
+            epochs=epochs_per_task,
+            enable_expansion=True,
+            enable_anchor=args.anchor,
+        )
+        print(
+            f"    Triggers: {hist['trigger_events']} | Experts added: "
+            f"{hist['experts_added']} | Gate rejects: {hist['gate_rejections']} | "
+            f"Total experts: {model.num_experts}"
+        )
+        accs = evaluator.evaluate_all_seen_tasks(model, t_idx, tasks)
+        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
+
+    router_kl = ContinualEvaluator.compute_router_stability(model, memory, device)
+    mi, util = ContinualEvaluator.compute_expert_specialization_and_utilization(
+        model, tasks, device
+    )
+    footprint = memory.estimate_memory_footprint()
+    print(
+        f"  Prototype Memory Footprint: {footprint['num_prototypes']} prototypes, "
+        f"{footprint['total_elements']} floats ({footprint['size_kb']:.1f} KB)"
+    )
+
+    result = _record_baseline_result(model, evaluator, final_experts=model.num_experts)
+    result["router_stability_kl"] = router_kl
+    result["specialization_mi"] = mi
+    result["utilization"] = util
+    result["prototype_elements"] = footprint["total_elements"]
+    return result
+
+
 def set_seed(seed: int = 42):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -159,6 +498,7 @@ def run_benchmark(
         "hybrid": "PAL-MoE + Replay (Hybrid, P=250)",
     }
 
+    pin_memory = device.type == "cuda"
     if dataset == "cifar10":
         from pal_moe.data.split_cifar import get_split_cifar10_tasks
 
@@ -168,7 +508,7 @@ def run_benchmark(
             val_split=0.1,
             seed=args.seed,
             num_workers=args.num_workers,
-            pin_memory=args.num_workers > 0 and device.type == "cuda",
+            pin_memory=pin_memory,
         )
         num_tasks = len(tasks)
         input_dim = 3072
@@ -179,7 +519,7 @@ def run_benchmark(
             batch_size=256,
             shuffle=True,
             num_workers=args.num_workers,
-            pin_memory=args.num_workers > 0 and device.type == "cuda",
+            pin_memory=pin_memory,
         )
         base_encoder = SharedEncoder(
             input_dim=input_dim,
@@ -188,8 +528,17 @@ def run_benchmark(
             arch="conv",
             conv_channels=conv_channels,
         ).to(device)
-        base_encoder.pretrain_contrastive(
-            unlabeled_loader, device=device, epochs=args.pretrain_epochs
+        _pretrain_encoder(
+            base_encoder,
+            unlabeled_loader,
+            device,
+            dataset=dataset,
+            mode="simclr",
+            seed=args.seed,
+            epochs=args.pretrain_epochs,
+            feature_dim=feature_dim,
+            conv_channels=conv_channels,
+            use_cache=args.pretrain_cache,
         )
         # unfreezing happens implicitly
     elif dataset == "cifar100":
@@ -201,7 +550,7 @@ def run_benchmark(
             val_split=0.1,
             seed=args.seed,
             num_workers=args.num_workers,
-            pin_memory=args.num_workers > 0 and device.type == "cuda",
+            pin_memory=pin_memory,
         )
         num_tasks = len(tasks)
         input_dim = 3072
@@ -210,7 +559,7 @@ def run_benchmark(
             batch_size=256,
             shuffle=True,
             num_workers=args.num_workers,
-            pin_memory=args.num_workers > 0 and device.type == "cuda",
+            pin_memory=pin_memory,
         )
         base_encoder = SharedEncoder(
             input_dim=input_dim,
@@ -219,13 +568,27 @@ def run_benchmark(
             arch="conv",
             conv_channels=conv_channels,
         ).to(device)
-        base_encoder.pretrain_contrastive(
-            unlabeled_loader, device=device, epochs=args.pretrain_epochs
+        _pretrain_encoder(
+            base_encoder,
+            unlabeled_loader,
+            device,
+            dataset=dataset,
+            mode="simclr",
+            seed=args.seed,
+            epochs=args.pretrain_epochs,
+            feature_dim=feature_dim,
+            conv_channels=conv_channels,
+            use_cache=args.pretrain_cache,
         )
         # encoder stays unfrozen (adapts online)
     else:
         tasks = get_split_mnist_tasks(
-            data_dir="./data", batch_size=128, val_split=0.1, seed=args.seed
+            data_dir="./data",
+            batch_size=128,
+            val_split=0.1,
+            seed=args.seed,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
         )
         num_tasks = len(tasks)
         input_dim = 784
@@ -233,6 +596,8 @@ def run_benchmark(
             tasks[0].train_loader.dataset.dataset,
             batch_size=256,
             shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
         )
         base_encoder = SharedEncoder(
             input_dim=input_dim,
@@ -240,10 +605,17 @@ def run_benchmark(
             output_dim=feature_dim,
             arch="mlp",
         ).to(device)
-        base_encoder.pretrain_unsupervised(
+        _pretrain_encoder(
+            base_encoder,
             unlabeled_loader,
-            device=device,
+            device,
+            dataset=dataset,
+            mode="ae",
+            seed=args.seed,
             epochs=args.pretrain_epochs if args.pretrain_epochs is not None else 1,
+            feature_dim=feature_dim,
+            conv_channels=conv_channels,
+            use_cache=args.pretrain_cache,
         )
         base_encoder.freeze()
 
@@ -263,6 +635,7 @@ def run_benchmark(
             device,
             dtype=torch.float16 if device.type == "cuda" else torch.float32,
             num_workers=args.num_workers,
+            pin_memory=pin_memory,
         )
         tasks = cache.tasks
         base_encoder = cache.encoder
@@ -276,655 +649,248 @@ def run_benchmark(
     # -------------------------------------------------------------
     # 1. Baseline: Naive Sequential Fine-tuning
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Baseline 1: Naive Sequential Fine-tuning")
-    print("=" * 60)
-    set_seed(args.seed)
-    naive_net = nn.Sequential(
-        copy.deepcopy(base_encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
-    naive_trainer = NaiveFineTuning(naive_net, lr=1e-3, device=device)
-    evaluator_naive = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("naive") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        naive_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
-        accs = evaluator_naive.evaluate_all_seen_tasks(naive_net, t_idx, tasks)
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    results["Naive Fine-tuning"] = {
-        "acc": evaluator_naive.compute_average_accuracy(),
-        "forgetting": evaluator_naive.compute_forgetting(),
-        "bwt": evaluator_naive.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": float("nan"),
-        "utilization": float("nan"),
-        "final_experts": 1,
-        "acc_matrix": evaluator_naive.R.tolist(),
-    }
+    if run("naive"):
+        _banner("Running Baseline 1: Naive Sequential Fine-tuning")
+        set_seed(args.seed)
+        naive_net = _make_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
+        )
+        naive_trainer = NaiveFineTuning(naive_net, lr=1e-3, device=device)
+        evaluator_naive = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(
+            naive_trainer, naive_net, evaluator_naive, tasks, epochs_per_task
+        )
+        results["Naive Fine-tuning"] = _record_baseline_result(
+            naive_net, evaluator_naive
+        )
 
     # -------------------------------------------------------------
     # 2. Baseline: Elastic Weight Consolidation (EWC)
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Baseline 2: Elastic Weight Consolidation (EWC)")
-    print("=" * 60)
-    set_seed(args.seed)
-    ewc_net = nn.Sequential(
-        copy.deepcopy(base_encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
-    ewc_trainer = EWC(ewc_net, ewc_lambda=1000.0, lr=1e-3, device=device)
-    evaluator_ewc = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("ewc") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        ewc_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
-        accs = evaluator_ewc.evaluate_all_seen_tasks(ewc_net, t_idx, tasks)
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    results["EWC"] = {
-        "acc": evaluator_ewc.compute_average_accuracy(),
-        "forgetting": evaluator_ewc.compute_forgetting(),
-        "bwt": evaluator_ewc.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": float("nan"),
-        "utilization": float("nan"),
-        "final_experts": 1,
-        "acc_matrix": evaluator_ewc.R.tolist(),
-    }
-
-    # -------------------------------------------------------------
-    # 3. Baseline: Experience Replay (Budgeted P=60, matching prototype memory)
-    # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Baseline 3: Experience Replay (Budgeted P=60)")
-    print("=" * 60)
-    set_seed(args.seed)
-    replay_net_budget = nn.Sequential(
-        copy.deepcopy(base_encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
-    replay_trainer_budget = ReplayTrainer(
-        replay_net_budget, buffer_size=60, lr=1e-3, device=device
-    )
-    evaluator_replay_budget = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("replay60") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        replay_trainer_budget.train_task(
-            t_idx, task.train_loader, epochs=epochs_per_task
+    if run("ewc"):
+        _banner("Running Baseline 2: Elastic Weight Consolidation (EWC)")
+        set_seed(args.seed)
+        ewc_net = _make_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
         )
-        accs = evaluator_replay_budget.evaluate_all_seen_tasks(
-            replay_net_budget, t_idx, tasks
-        )
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    results["Replay (P=60)"] = {
-        "acc": evaluator_replay_budget.compute_average_accuracy(),
-        "forgetting": evaluator_replay_budget.compute_forgetting(),
-        "bwt": evaluator_replay_budget.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": float("nan"),
-        "utilization": float("nan"),
-        "final_experts": 1,
-        "acc_matrix": evaluator_replay_budget.R.tolist(),
-    }
+        ewc_trainer = EWC(ewc_net, ewc_lambda=1000.0, lr=1e-3, device=device)
+        evaluator_ewc = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(ewc_trainer, ewc_net, evaluator_ewc, tasks, epochs_per_task)
+        results["EWC"] = _record_baseline_result(ewc_net, evaluator_ewc)
 
     # -------------------------------------------------------------
-    # 4. Baseline: Experience Replay (Budgeted P=360, theoretical raw memory)
+    # 3. Baseline: Experience Replay (Budgeted P=60)
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Baseline 4: Experience Replay (Budgeted P=360)")
-    print("=" * 60)
-    set_seed(args.seed)
-    replay_net_360 = nn.Sequential(
-        copy.deepcopy(base_encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
-    replay_trainer_360 = ReplayTrainer(
-        replay_net_360, buffer_size=360, lr=1e-3, device=device
-    )
-    evaluator_replay_360 = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("replay360") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        replay_trainer_360.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
-        accs = evaluator_replay_360.evaluate_all_seen_tasks(
-            replay_net_360, t_idx, tasks
+    if run("replay60"):
+        _banner("Running Baseline 3: Experience Replay (Budgeted P=60)")
+        set_seed(args.seed)
+        replay_net_budget = _make_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
         )
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
+        replay_trainer_budget = ReplayTrainer(
+            replay_net_budget, buffer_size=60, lr=1e-3, device=device
+        )
+        evaluator_replay_budget = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(
+            replay_trainer_budget,
+            replay_net_budget,
+            evaluator_replay_budget,
+            tasks,
+            epochs_per_task,
+        )
+        results["Replay (P=60)"] = _record_baseline_result(
+            replay_net_budget, evaluator_replay_budget
+        )
 
-    results["Replay (P=360)"] = {
-        "acc": evaluator_replay_360.compute_average_accuracy(),
-        "forgetting": evaluator_replay_360.compute_forgetting(),
-        "bwt": evaluator_replay_360.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": float("nan"),
-        "utilization": float("nan"),
-        "final_experts": 1,
-        "acc_matrix": evaluator_replay_360.R.tolist(),
-    }
+    # -------------------------------------------------------------
+    # 4. Baseline: Experience Replay (Budgeted P=360)
+    # -------------------------------------------------------------
+    if run("replay360"):
+        _banner("Running Baseline 4: Experience Replay (Budgeted P=360)")
+        set_seed(args.seed)
+        replay_net_360 = _make_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
+        )
+        replay_trainer_360 = ReplayTrainer(
+            replay_net_360, buffer_size=360, lr=1e-3, device=device
+        )
+        evaluator_replay_360 = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(
+            replay_trainer_360,
+            replay_net_360,
+            evaluator_replay_360,
+            tasks,
+            epochs_per_task,
+        )
+        results["Replay (P=360)"] = _record_baseline_result(
+            replay_net_360, evaluator_replay_360
+        )
 
     # -------------------------------------------------------------
     # 5. Baseline: Experience Replay (Buffer=250)
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Baseline 5: Experience Replay (Buffer=250)")
-    print("=" * 60)
-    set_seed(args.seed)
-    replay_net = nn.Sequential(
-        copy.deepcopy(base_encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
-    replay_trainer = ReplayTrainer(replay_net, buffer_size=250, lr=1e-3, device=device)
-    evaluator_replay = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("replay250") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        replay_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
-        accs = evaluator_replay.evaluate_all_seen_tasks(replay_net, t_idx, tasks)
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    results["Experience Replay (Buffer=250)"] = {
-        "acc": evaluator_replay.compute_average_accuracy(),
-        "forgetting": evaluator_replay.compute_forgetting(),
-        "bwt": evaluator_replay.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": float("nan"),
-        "utilization": float("nan"),
-        "final_experts": 1,
-        "acc_matrix": evaluator_replay.R.tolist(),
-    }
+    if run("replay250"):
+        _banner("Running Baseline 5: Experience Replay (Buffer=250)")
+        set_seed(args.seed)
+        replay_net = _make_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
+        )
+        replay_trainer = ReplayTrainer(
+            replay_net, buffer_size=250, lr=1e-3, device=device
+        )
+        evaluator_replay = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(
+            replay_trainer, replay_net, evaluator_replay, tasks, epochs_per_task
+        )
+        results["Experience Replay (Buffer=250)"] = _record_baseline_result(
+            replay_net, evaluator_replay
+        )
 
     # -------------------------------------------------------------
     # 6. Baseline: DER++ (Dark Experience Replay++, P=250)
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Baseline 6: DER++ (Dark Experience Replay++, P=250)")
-    print("=" * 60)
-    set_seed(args.seed)
-    der_net = nn.Sequential(
-        copy.deepcopy(base_encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
-    der_trainer = DERPP(der_net, buffer_size=250, lr=1e-3, device=device)
-    evaluator_der = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("derpp") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        der_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
-        accs = evaluator_der.evaluate_all_seen_tasks(der_net, t_idx, tasks)
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    results["DER++ (P=250)"] = {
-        "acc": evaluator_der.compute_average_accuracy(),
-        "forgetting": evaluator_der.compute_forgetting(),
-        "bwt": evaluator_der.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": float("nan"),
-        "utilization": float("nan"),
-        "final_experts": 1,
-        "acc_matrix": evaluator_der.R.tolist(),
-    }
+    if run("derpp"):
+        _banner("Running Baseline 6: DER++ (Dark Experience Replay++, P=250)")
+        set_seed(args.seed)
+        der_net = _make_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
+        )
+        der_trainer = DERPP(der_net, buffer_size=250, lr=1e-3, device=device)
+        evaluator_der = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(der_trainer, der_net, evaluator_der, tasks, epochs_per_task)
+        results["DER++ (P=250)"] = _record_baseline_result(der_net, evaluator_der)
 
     # -------------------------------------------------------------
     # 7. Baseline: ER-ACE (Asymmetric Cross-Entropy Replay, P=250)
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Baseline 7: ER-ACE (Asymmetric Cross-Entropy Replay, P=250)")
-    print("=" * 60)
-    set_seed(args.seed)
-    erace_net = nn.Sequential(
-        copy.deepcopy(base_encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
-    erace_trainer = ERACE(erace_net, buffer_size=250, lr=1e-3, device=device)
-    evaluator_erace = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("erace") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        erace_trainer.train_task(
-            t_idx,
-            task.train_loader,
-            epochs=epochs_per_task,
-            current_classes=list(task.classes),
+    if run("erace"):
+        _banner("Running Baseline 7: ER-ACE (Asymmetric Cross-Entropy Replay, P=250)")
+        set_seed(args.seed)
+        erace_net = _make_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
         )
-        accs = evaluator_erace.evaluate_all_seen_tasks(erace_net, t_idx, tasks)
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    results["ER-ACE (P=250)"] = {
-        "acc": evaluator_erace.compute_average_accuracy(),
-        "forgetting": evaluator_erace.compute_forgetting(),
-        "bwt": evaluator_erace.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": float("nan"),
-        "utilization": float("nan"),
-        "final_experts": 1,
-        "acc_matrix": evaluator_erace.R.tolist(),
-    }
+        erace_trainer = ERACE(erace_net, buffer_size=250, lr=1e-3, device=device)
+        evaluator_erace = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(
+            erace_trainer,
+            erace_net,
+            evaluator_erace,
+            tasks,
+            epochs_per_task,
+            per_task_kwargs=lambda task: {"current_classes": list(task.classes)},
+        )
+        results["ER-ACE (P=250)"] = _record_baseline_result(erace_net, evaluator_erace)
 
     # -------------------------------------------------------------
     # 8. Baseline: AGEM (Average Gradient Episodic Memory, P=250)
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Baseline 8: AGEM (Average Gradient Episodic Memory, P=250)")
-    print("=" * 60)
-    set_seed(args.seed)
-    agem_net = nn.Sequential(
-        copy.deepcopy(base_encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
-    agem_trainer = AGEM(agem_net, buffer_size=250, lr=1e-3, device=device)
-    evaluator_agem = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("agem") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        agem_trainer.train_task(t_idx, task.train_loader, epochs=epochs_per_task)
-        accs = evaluator_agem.evaluate_all_seen_tasks(agem_net, t_idx, tasks)
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    results["AGEM (P=250)"] = {
-        "acc": evaluator_agem.compute_average_accuracy(),
-        "forgetting": evaluator_agem.compute_forgetting(),
-        "bwt": evaluator_agem.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": float("nan"),
-        "utilization": float("nan"),
-        "final_experts": 1,
-        "acc_matrix": evaluator_agem.R.tolist(),
-    }
+    if run("agem"):
+        _banner("Running Baseline 8: AGEM (Average Gradient Episodic Memory, P=250)")
+        set_seed(args.seed)
+        agem_net = _make_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
+        )
+        agem_trainer = AGEM(agem_net, buffer_size=250, lr=1e-3, device=device)
+        evaluator_agem = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(
+            agem_trainer, agem_net, evaluator_agem, tasks, epochs_per_task
+        )
+        results["AGEM (P=250)"] = _record_baseline_result(agem_net, evaluator_agem)
 
     # -------------------------------------------------------------
-    # 9. Baseline: iCaRL (Incremental Classifier & Representation Learning, k=25/class)
+    # 9. Baseline: iCaRL (Incremental Classifier & Representation Learning)
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print(
-        "Running Baseline 9: iCaRL (Incremental Classifier & Representation Learning)"
-    )
-    print("=" * 60)
-    set_seed(args.seed)
-    icarl_net = nn.Sequential(
-        copy.deepcopy(base_encoder),
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
+    if run("icarl"):
+        _banner(
+            "Running Baseline 9: iCaRL (Incremental Classifier & Representation Learning)"
+        )
+        set_seed(args.seed)
+        icarl_net = _make_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
+        )
+        icarl_trainer = ICaRL(
+            icarl_net,
+            exemplars_per_class=25,
             num_classes=num_classes,
-            expert_id=0,
-        ),
-    ).to(device)
-    icarl_trainer = ICaRL(
-        icarl_net,
-        exemplars_per_class=25,
-        num_classes=num_classes,
-        lr=1e-3,
-        device=device,
-    )
-    evaluator_icarl = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("icarl") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        icarl_trainer.train_task(
-            t_idx,
-            task.train_loader,
-            epochs=epochs_per_task,
-            current_classes=list(task.classes),
+            lr=1e-3,
+            device=device,
         )
-        accs = evaluator_icarl.evaluate_all_seen_tasks(
-            icarl_trainer.eval_model(), t_idx, tasks
+        evaluator_icarl = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(
+            icarl_trainer,
+            icarl_net,
+            evaluator_icarl,
+            tasks,
+            epochs_per_task,
+            per_task_kwargs=lambda task: {"current_classes": list(task.classes)},
+            eval_model=icarl_trainer.eval_model,
         )
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    results["iCaRL (k=25)"] = {
-        "acc": evaluator_icarl.compute_average_accuracy(),
-        "forgetting": evaluator_icarl.compute_forgetting(),
-        "bwt": evaluator_icarl.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": float("nan"),
-        "utilization": float("nan"),
-        "final_experts": 1,
-        "acc_matrix": evaluator_icarl.R.tolist(),
-    }
+        results["iCaRL (k=25)"] = _record_baseline_result(icarl_net, evaluator_icarl)
 
     # -------------------------------------------------------------
     # 10. Baseline: Standard MoE Fine-tuning (Fixed 4 Experts)
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Baseline 6: Standard MoE Fine-tuning (Fixed 4 Experts, Balanced)")
-    print("=" * 60)
-    set_seed(args.seed)
-    std_encoder = copy.deepcopy(base_encoder)
-    std_router = DynamicRouter(input_dim=feature_dim, num_experts=4, top_k=1).to(device)
-    std_experts = [
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
+    if run("stdmoe"):
+        _banner(
+            "Running Baseline 6: Standard MoE Fine-tuning (Fixed 4 Experts, Balanced)"
+        )
+        results["Standard MoE"] = _run_standard_moe(
+            base_encoder,
+            tasks,
+            device,
+            args.seed,
+            epochs_per_task,
+            feature_dim,
+            expert_hidden,
+            num_classes,
+            num_tasks,
+        )
+
+    # -------------------------------------------------------------
+    # 11. Proposed: PAL-MoE (pure, zero raw replay)
+    # -------------------------------------------------------------
+    if run("palmoe"):
+        _banner(
+            "Running Proposed: PAL-MoE (Prototype-Anchored Lifelong Mixture of Experts)"
+        )
+        results["PAL-MoE (Ours)"] = _run_palmoe_variant(
+            base_encoder,
+            tasks,
+            device,
+            args,
+            dataset=dataset,
+            feature_dim=feature_dim,
+            expert_hidden=expert_hidden,
             num_classes=num_classes,
-            expert_id=i,
-        ).to(device)
-        for i in range(4)
-    ]
-    std_moe = DynamicMoE(
-        encoder=std_encoder,
-        router=std_router,
-        experts=std_experts,
-        use_ema_encoder=False,
-    ).to(device)
-    opt_std = torch.optim.Adam(std_moe.parameters(), lr=1e-3)
-    evaluator_std_moe = ContinualEvaluator(num_tasks=num_tasks, device=device)
-
-    for t_idx, task in enumerate(tasks if run("stdmoe") else []):
-        print(f"  Training Task {t_idx} (classes {task.classes})...")
-        std_moe.train()
-        for _ in range(epochs_per_task):
-            for x, y in task.train_loader:
-                x, y = x.to(device), y.to(device)
-                opt_std.zero_grad()
-                feats = std_moe.encoder(x)
-                logits = std_moe(x)
-                loss_ce = nn.functional.cross_entropy(logits, y)
-
-                # Switch Transformer auxiliary load-balancing loss: L_balance = N * sum_{i=1}^N f_i * P_i
-                dense_probs = std_moe.router.get_full_distribution(feats)
-                _, topk_idx, _ = std_moe.router(feats)
-                f_i = torch.bincount(topk_idx.flatten(), minlength=4).float() / x.size(
-                    0
-                )
-                P_i = dense_probs.mean(dim=0)
-                loss_balance = 4.0 * torch.sum(f_i * P_i)
-
-                loss = loss_ce + 0.1 * loss_balance
-                loss.backward()
-                opt_std.step()
-
-        accs = evaluator_std_moe.evaluate_all_seen_tasks(std_moe, t_idx, tasks)
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    mi_std, util_std = ContinualEvaluator.compute_expert_specialization_and_utilization(
-        std_moe, tasks, device
-    )
-
-    results["Standard MoE"] = {
-        "acc": evaluator_std_moe.compute_average_accuracy(),
-        "forgetting": evaluator_std_moe.compute_forgetting(),
-        "bwt": evaluator_std_moe.compute_backward_transfer(),
-        "router_stability_kl": float("nan"),
-        "specialization_mi": mi_std,
-        "utilization": util_std,
-        "final_experts": 4,
-        "acc_matrix": evaluator_std_moe.R.tolist(),
-    }
+            proto_threshold=proto_threshold,
+            encoder_ft=encoder_ft,
+            epochs_per_task=epochs_per_task,
+            output_dir=output_dir,
+            checkpoint_subdir="checkpoints_palmoe",
+            replay=False,
+        )
 
     # -------------------------------------------------------------
-    # 7. Proposed: PAL-MoE
+    # 12. Proposed Extension: PAL-MoE + Replay (Hybrid, P=250)
     # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Proposed: PAL-MoE (Prototype-Anchored Lifelong Mixture of Experts)")
-    print("=" * 60)
-    set_seed(args.seed)
-
-    dyn_encoder = copy.deepcopy(base_encoder)
-    dyn_router = _build_router(args.router_type, feature_dim, args.top_k, device)
-    initial_experts = [
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
+    if run("hybrid"):
+        _banner("Running Method 8: PAL-MoE + Replay (Hybrid, P=250 Exemplars)")
+        results["PAL-MoE + Replay (Hybrid, P=250)"] = _run_palmoe_variant(
+            base_encoder,
+            tasks,
+            device,
+            args,
+            dataset=dataset,
+            feature_dim=feature_dim,
+            expert_hidden=expert_hidden,
             num_classes=num_classes,
-            expert_id=0,
-        ).to(device)
-    ]
-    moe_model = DynamicMoE(
-        encoder=dyn_encoder,
-        router=dyn_router,
-        experts=initial_experts,
-        use_ema_encoder=False,
-    ).to(device)
-
-    prototype_mem = _build_prototype_memory(
-        feature_dim, proto_threshold, args.proto_size, args.proto_per_class, False
-    )
-    trigger = QuantitativeTrigger(
-        alpha=1.0,
-        beta=0.4,
-        gamma=0.6,
-        delta=0.5,
-        threshold_tau=0.5,
-    )
-    builder = ExpertBuilder(
-        min_acc_threshold=0.45 if dataset in ("cifar10", "cifar100") else 0.60,
-        max_proto_drop=args.max_proto_drop,
-        max_proto_acc_drop=args.max_proto_acc_drop,
-        max_ece=999.0,
-        distill_lambda=0.5,
-    )
-    trainer = ContinualTrainer(
-        model=moe_model,
-        prototype_memory=prototype_mem,
-        trigger=trigger,
-        builder=builder,
-        lambda_r=args.lambda_r,
-        lambda_e=args.lambda_e,
-        lambda_enc=0.5 if encoder_ft else 0.0,
-        encoder_lr=1e-4 if encoder_ft else None,
-        lr=1e-3,
-        max_experts=args.max_experts,
-        joint_keep_routing_lock=args.joint_keep_routing_lock,
-        joint_freeze_router=args.joint_freeze_router,
-        lambda_ood=args.lambda_ood,
-        router_anchor_steps=args.router_anchor_steps,
-        router_anchor_lr=args.router_anchor_lr,
-        joint_calib_epochs=args.joint_calib_epochs,
-        proto_samples=args.proto_samples,
-        refresh_anchors_after_calib=args.refresh_anchors_after_calib,
-        keep_optimizer_state=args.keep_optimizer_state,
-        stability_every=args.stability_every,
-        ood_every=args.ood_every,
-        device=device,
-        checkpoint_dir=os.path.join(output_dir, "checkpoints_palmoe"),
-    )
-    evaluator_dynamic = ContinualEvaluator(num_tasks=num_tasks, device=device)
-    if args.proto_routing_alpha > 0:
-        moe_model.set_prototype_routing(
-            prototype_mem,
-            alpha=args.proto_routing_alpha,
-            threshold=args.proto_routing_threshold,
+            proto_threshold=proto_threshold,
+            encoder_ft=encoder_ft,
+            epochs_per_task=epochs_per_task,
+            output_dir=output_dir,
+            checkpoint_subdir="checkpoints_hybrid",
+            replay=True,
         )
-
-    for t_idx, task in enumerate(tasks if run("palmoe") else []):
-        print(
-            f"  Training Task {t_idx} (classes {task.classes})... Experts before: {moe_model.num_experts}"
-        )
-        hist = trainer.train_task(
-            task_id=t_idx,
-            train_loader=task.train_loader,
-            val_loader=task.val_loader,
-            epochs=epochs_per_task,
-            enable_expansion=True,
-            enable_anchor=args.anchor,
-        )
-        print(
-            f"    Triggers: {hist['trigger_events']} | Experts added: {hist['experts_added']} | Gate rejects: {hist['gate_rejections']} | Total experts: {moe_model.num_experts}"
-        )
-        accs = evaluator_dynamic.evaluate_all_seen_tasks(moe_model, t_idx, tasks)
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    # Compute advanced stability and information metrics
-    router_kl = ContinualEvaluator.compute_router_stability(
-        moe_model, prototype_mem, device
-    )
-    mi_dyn, util_dyn = ContinualEvaluator.compute_expert_specialization_and_utilization(
-        moe_model, tasks, device
-    )
-    footprint = prototype_mem.estimate_memory_footprint()
-    print(
-        f"  Prototype Memory Footprint: {footprint['num_prototypes']} prototypes, {footprint['total_elements']} floats ({footprint['size_kb']:.1f} KB)"
-    )
-
-    results["PAL-MoE (Ours)"] = {
-        "acc": evaluator_dynamic.compute_average_accuracy(),
-        "forgetting": evaluator_dynamic.compute_forgetting(),
-        "bwt": evaluator_dynamic.compute_backward_transfer(),
-        "router_stability_kl": router_kl,
-        "specialization_mi": mi_dyn,
-        "utilization": util_dyn,
-        "final_experts": moe_model.num_experts,
-        "prototype_elements": footprint["total_elements"],
-        "acc_matrix": evaluator_dynamic.R.tolist(),
-    }
-
-    # -------------------------------------------------------------
-    # 8. Proposed Extension: PAL-MoE + Replay (Hybrid, P=250)
-    # -------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("Running Method 8: PAL-MoE + Replay (Hybrid, P=250 Exemplars)")
-    print("=" * 60)
-    set_seed(args.seed)
-    hyb_encoder = copy.deepcopy(base_encoder)
-    hyb_router = _build_router(args.router_type, feature_dim, args.top_k, device)
-    initial_experts_hyb = [
-        MLPExpert(
-            input_dim=feature_dim,
-            hidden_dim=expert_hidden,
-            num_classes=num_classes,
-            expert_id=0,
-        ).to(device)
-    ]
-    moe_hyb = DynamicMoE(
-        encoder=hyb_encoder,
-        router=hyb_router,
-        experts=initial_experts_hyb,
-        use_ema_encoder=False,
-    ).to(device)
-    prototype_mem_hyb = _build_prototype_memory(
-        feature_dim,
-        proto_threshold,
-        args.proto_size,
-        args.proto_per_class,
-        not args.feature_cache,
-    )
-    trigger_hyb = QuantitativeTrigger(
-        alpha=1.0, beta=0.4, gamma=0.6, delta=0.5, threshold_tau=0.5
-    )
-    builder_hyb = ExpertBuilder(
-        min_acc_threshold=0.45 if dataset in ("cifar10", "cifar100") else 0.60,
-        max_proto_drop=args.max_proto_drop,
-        max_proto_acc_drop=args.max_proto_acc_drop,
-        max_ece=999.0,
-        distill_lambda=0.5,
-    )
-    trainer_hyb = ContinualTrainer(
-        model=moe_hyb,
-        prototype_memory=prototype_mem_hyb,
-        trigger=trigger_hyb,
-        builder=builder_hyb,
-        lambda_r=args.lambda_r,
-        lambda_e=args.lambda_e,
-        lambda_enc=0.5 if encoder_ft else 0.0,
-        encoder_lr=1e-4 if encoder_ft else None,
-        replay_exemplars=True,
-        lambda_replay=1.0,
-        lr=1e-3,
-        max_experts=args.max_experts,
-        joint_keep_routing_lock=args.joint_keep_routing_lock,
-        joint_freeze_router=args.joint_freeze_router,
-        lambda_ood=args.lambda_ood,
-        router_anchor_steps=args.router_anchor_steps,
-        router_anchor_lr=args.router_anchor_lr,
-        joint_calib_epochs=args.joint_calib_epochs,
-        proto_samples=args.proto_samples,
-        refresh_anchors_after_calib=args.refresh_anchors_after_calib,
-        keep_optimizer_state=args.keep_optimizer_state,
-        stability_every=args.stability_every,
-        ood_every=args.ood_every,
-        device=device,
-        checkpoint_dir=os.path.join(output_dir, "checkpoints_hybrid"),
-    )
-    evaluator_hyb = ContinualEvaluator(num_tasks=num_tasks, device=device)
-    if args.proto_routing_alpha > 0:
-        moe_hyb.set_prototype_routing(
-            prototype_mem_hyb,
-            alpha=args.proto_routing_alpha,
-            threshold=args.proto_routing_threshold,
-        )
-
-    for t_idx, task in enumerate(tasks if run("hybrid") else []):
-        print(
-            f"  Training Task {t_idx} (classes {task.classes})... Experts before: {moe_hyb.num_experts}"
-        )
-        hist = trainer_hyb.train_task(
-            task_id=t_idx,
-            train_loader=task.train_loader,
-            val_loader=task.val_loader,
-            epochs=epochs_per_task,
-            enable_expansion=True,
-            enable_anchor=args.anchor,
-        )
-        print(
-            f"    Triggers: {hist['trigger_events']} | Experts added: {hist['experts_added']} | Gate rejects: {hist['gate_rejections']} | Total experts: {moe_hyb.num_experts}"
-        )
-        accs = evaluator_hyb.evaluate_all_seen_tasks(moe_hyb, t_idx, tasks)
-        print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
-
-    router_kl_hyb = ContinualEvaluator.compute_router_stability(
-        moe_hyb, prototype_mem_hyb, device
-    )
-    mi_hyb, util_hyb = ContinualEvaluator.compute_expert_specialization_and_utilization(
-        moe_hyb, tasks, device
-    )
-    results["PAL-MoE + Replay (Hybrid, P=250)"] = {
-        "acc": evaluator_hyb.compute_average_accuracy(),
-        "forgetting": evaluator_hyb.compute_forgetting(),
-        "bwt": evaluator_hyb.compute_backward_transfer(),
-        "router_stability_kl": router_kl_hyb,
-        "specialization_mi": mi_hyb,
-        "utilization": util_hyb,
-        "final_experts": moe_hyb.num_experts,
-        "prototype_elements": prototype_mem_hyb.estimate_memory_footprint()[
-            "total_elements"
-        ],
-        "acc_matrix": evaluator_hyb.R.tolist(),
-    }
 
     # Drop skipped methods so the table/JSON only contain what actually ran.
     kept = {name for mid, name in method_keys.items() if run(mid)}
@@ -1145,6 +1111,25 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Carry Adam moments across task/expansion optimizer rebuilds",
+    )
+    parser.add_argument(
+        "--save_checkpoints",
+        action="store_true",
+        default=False,
+        help=(
+            "Write per-task checkpoint files (model + prototype memory) for the "
+            "PAL-MoE variants; off by default, they add hundreds of MB per run"
+        ),
+    )
+    parser.add_argument(
+        "--pretrain_cache",
+        action="store_true",
+        default=False,
+        help=(
+            "Cache the unsupervised/contrastive encoder pretraining under "
+            "./data/pretrain_cache and reuse it when dataset, seed, epochs and "
+            "architecture match (distributionally equivalent, not bit-identical)"
+        ),
     )
     parser.add_argument(
         "--anchor",
