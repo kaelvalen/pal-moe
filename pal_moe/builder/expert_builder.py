@@ -87,9 +87,40 @@ class ExpertBuilder:
     ) -> float:
         """
         Trains candidate on new task with distillation from prototype anchors.
+
+        Candidate and encoder modes are restored on exit so this helper cannot
+        leave the shared encoder in eval mode for the caller's training loop.
         """
+        prev_candidate_mode = candidate_expert.training
+        prev_encoder_mode = encoder.training
         candidate_expert.train()
         encoder.eval()
+        try:
+            return self._train_candidate_impl(
+                candidate_expert,
+                encoder,
+                train_loader,
+                prototype_memory,
+                parent_expert,
+                epochs,
+                lr,
+                device,
+            )
+        finally:
+            candidate_expert.train(prev_candidate_mode)
+            encoder.train(prev_encoder_mode)
+
+    def _train_candidate_impl(
+        self,
+        candidate_expert: MLPExpert,
+        encoder: nn.Module,
+        train_loader: Any,
+        prototype_memory: Optional[PrototypeMemory],
+        parent_expert: Optional[MLPExpert],
+        epochs: int,
+        lr: float,
+        device: torch.device,
+    ) -> float:
         optimizer = torch.optim.Adam(
             candidate_expert.parameters(), lr=lr, weight_decay=1e-5
         )
@@ -193,10 +224,42 @@ class ExpertBuilder:
         2. Prototype output drift (MSE) <= max_proto_drop
         3. Historical prototype accuracy drop <= max_proto_acc_drop (Acc_proto)
         4. ECE <= max_ece
+
+        Modes of candidate, parent and encoder are restored on exit.
         """
+        prev_modes = (
+            candidate_expert.training,
+            parent_expert.training,
+            encoder.training,
+        )
         candidate_expert.eval()
         parent_expert.eval()
         encoder.eval()
+        try:
+            return self._validate_candidate_impl(
+                candidate_expert,
+                parent_expert,
+                encoder,
+                val_loader,
+                prototype_memory,
+                train_loss,
+                device,
+            )
+        finally:
+            candidate_expert.train(prev_modes[0])
+            parent_expert.train(prev_modes[1])
+            encoder.train(prev_modes[2])
+
+    def _validate_candidate_impl(
+        self,
+        candidate_expert: MLPExpert,
+        parent_expert: MLPExpert,
+        encoder: nn.Module,
+        val_loader: Any,
+        prototype_memory: Optional[PrototypeMemory],
+        train_loss: float,
+        device: torch.device,
+    ) -> ValidationGateResult:
 
         correct = 0
         total = 0

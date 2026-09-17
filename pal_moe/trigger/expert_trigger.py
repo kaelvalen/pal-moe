@@ -58,7 +58,23 @@ class QuantitativeTrigger:
             - d(x, P): Minimum distance to prototype memory
             - max_confidence: Maximum confidence among existing experts
         """
+        # Inference-only: restore the caller's training mode afterwards, so a
+        # trigger check can never silently leave the model in eval mode for the
+        # rest of the task's training loop.
+        was_training = model.training
         model.eval()
+        try:
+            return self._evaluate_impl(model, x, y, prototype_memory)
+        finally:
+            model.train(was_training)
+
+    def _evaluate_impl(
+        self,
+        model: Any,
+        x: torch.Tensor,
+        y: Optional[torch.Tensor],
+        prototype_memory: Optional[Any],
+    ) -> TriggerEvaluationResult:
         with torch.no_grad():
             h = model.get_routing_features(x)  # [B, D]
             routing_weights, _, _ = model.router(h)  # [B, N]
