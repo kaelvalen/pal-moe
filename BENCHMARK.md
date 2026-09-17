@@ -22,8 +22,14 @@ for every method). This isolates the continual-learning mechanisms.
   (`max_prototypes=250`) + optional raw exemplars in hybrid mode. Full 5-task
   pure model is approximately 284 KB (`PrototypeMemory.estimate_memory_footprint()`).
 - **Replay baselines:** raw exemplar buffer of the same cardinality
-  (`buffer_size=250`; P=60/P=360 variants show budget sensitivity).
-- Memory is reported both as buffer size and bytes.
+  (`buffer_size=250`; P=60/P=360 variants show budget sensitivity). The default
+  eviction policy is `--buffer_sampling recency` (published behaviour); the
+  optional `reservoir` policy keeps a uniform sample over the task stream
+  instead of evicting the oldest tasks. Experience Replay uses
+  `0.5*CE(current) + 0.5*CE(replay)`; DER++ additionally distils stored logits
+  (`alpha=beta=0.5`); ER-ACE uses the asymmetric term.
+- Memory is reported both as buffer size and bytes. Every result JSON records
+  `trainable_params` per method.
 
 ### Evaluation
 
@@ -43,8 +49,10 @@ for every method). This isolates the continual-learning mechanisms.
 | Optimizer / LR | Adam, `1e-3` (adaptive encoder: `1e-4`) |
 | Epochs per task | 3 |
 | Batch size | 128 |
-| Expert head | `hidden_dim=256`, matched capacity across ALL methods |
-| PAL-MoE: `--lambda_r` / `--lambda_e` / `--lambda_ood` | 0.5 / 2.5 / 0.1 |
+| Expert head | `hidden_dim=256` per head, identical for every method; PAL-MoE grows to N experts, so its total head parameter count scales with N and is recorded as `trainable_params` in every result JSON |
+| PAL-MoE: `--lambda_r` / `--lambda_e` / `--lambda_ood` | 0.5 / 2.5 / 0.5 (`configs/mnist_default.json`; see design fact 15) |
+| PAL-MoE: router-anchor distillation | `--router_anchor_steps 300` (zero-replay) |
+| PAL-MoE: inference prototype anchoring | `--proto_routing_alpha 0.5` (zero raw replay) |
 | PAL-MoE: joint calibration | 5 epochs on latent exemplars (all experts calibrate) |
 | Validation gate | `min_acc_threshold=0.60` (MNIST), `max_proto_drop=2.0`, `max_proto_acc_drop=999.0` |
 | Null-space routing anchoring | off (measured harmful; see design fact 4) |
@@ -61,14 +69,16 @@ CPU runs supported (`--device cpu`); MNIST is deterministic w.r.t. seed
 source .venv/bin/activate
 export PYTHONPATH=.
 
-# Single run (MNIST, seed 42)
-python experiments/run_benchmark.py --epochs 3 --device cuda
+# Single run (MNIST, seed 42, current recipe)
+python experiments/run_benchmark.py --config configs/mnist_default.json --device cuda
 
 # Multi-seed run (5 seeds, mean ± std): source of the README headline table
-python experiments/run_benchmark_multi.py --seeds "42 1 2 3 4" --epochs 3 --device cuda
+python experiments/run_benchmark_multi.py --seeds "42 1 2 3 4" \
+  --config configs/mnist_default.json --device cuda
 
-# Config-driven
-python experiments/run_benchmark.py --config configs/mnist_default.json --device cuda
+# Same knobs as plain flags (what the config contains)
+python experiments/run_benchmark.py --epochs 3 --device cuda \
+  --lambda_ood 0.5 --router_anchor_steps 300 --proto_routing_alpha 0.5
 
 # Controlled ablation (one pretrained encoder shared per seed across configs)
 python experiments/run_ablation.py --seeds 42 1 2 --device cuda
@@ -165,6 +175,19 @@ registration produces identical prototypes) before being kept:
 | `--feature_cache` (frozen encoder): precompute h(x) per split, run training/calibration/distillation/registration/eval on the cache | removes all conv forward/backward from the loop (CIFAR-10 cache approx. 25 MB fp16); measured **2.15× end-to-end** on the 1-epoch Split-MNIST CPU smoke (23.6 s vs 50.8 s, including the uncached pretraining phase, so the cached fraction is faster still); the effect grows with encoder size |
 | Loss history accumulated on-device, converted once per task (was 4 `.item()` syncs per batch) | removes ~280 host syncs per task |
 | `--keep_optimizer_state`: Adam moments carried across optimizer rebuilds (matched by parameter name) | preserves momentum across tasks/expansions (opt-in) |
+| Exemplar batch cached until the memory mutates (hybrid latent replay re-fetched and re-transferred it every step) | 0.63 ms to 0.0002 ms per call |
+| Stability-loss per-expert row indices cached (depended only on the cached routing matrix) | removes repeated mask/nonzero work per step |
+| `refresh_representations` encodes all raw exemplars in one batched forward | one GPU call per task instead of one per prototype |
+| DER++ buffer logits computed in 512-sample chunks | removes a full-split forward (multi-GB activations, OOM on raw CIFAR) |
+| iCaRL herding vectorized (`argmin ||s+f_i||^2` via one matvec per pick) | 458 ms to 4 ms per class (k=25, N=5000, CPU) |
+| Loss accumulation in all baselines (was `.item()` on every optimisation step) | one host sync per task |
+| Conditional model construction in the runner (only selected methods are built) | `--methods palmoe` no longer deep-copies 11 unused baselines onto the GPU |
+| `--pretrain_cache`: SimCLR/AE encoder weights cached under `./data/pretrain_cache` | skips 50-150 pretraining epochs on repeated runs |
+| `--save_checkpoints` is opt-in | no more hundreds of MB of per-task checkpoints per run |
+| Training mode restored after the trigger/gate inference paths (`_enter_training_mode`) | fixes a latent eval-mode leak: trainable-encoder BatchNorm stats and prototype-anchored routing no longer silently activate in training |
+| Router parameters moved to a zero weight-decay Adam group | historical-routing rows stay exactly locked (Adam's L2 term used to shrink them every step; see design fact 15) |
+| `--stability_every` / `--ood_every` (weight scaled by k) | optional amortisation of the two most expensive per-step terms (+35% / +10% measured at k=1) |
+| `--buffer_sampling reservoir`, `--ewc_online` | optional fairness/memory alternatives for the baselines (defaults preserve published behaviour) |
 
 ### Router/dynamics knobs and the ablation grid
 
@@ -183,9 +206,9 @@ for ood in 0.0 0.1; do for calib in 0 5; do for dist in 0 300; do
 done; done; done
 ```
 
-Open item: fold the twelve method blocks in `run_benchmark.py` into a registry.
-The shared factories for the router and prototype memory have already been
-extracted.
+The twelve method blocks in `run_benchmark.py` share `pal_moe.factory` and the
+`_run_baseline_loop`/`_run_palmoe_variant` helpers, so the PAL-MoE variants and
+the single-head baselines cannot drift apart.
 
 ## Measured design facts (controlled experiments)
 
@@ -386,6 +409,40 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     less forgetting; the earlier ~14-point gap was a baseline-side BatchNorm
     drift artifact.
 
+15. **The historical-routing lock must exclude optimizer weight decay.** Router
+    rows of frozen experts are protected by backward hooks that zero their task
+    gradients, but `Adam(weight_decay=1e-5)` adds its decoupled L2 term inside
+    `step()`; because Adam normalises by the second moment, a locked row whose
+    only gradient is `wd * theta` receives updates of order `lr` per step and
+    slowly collapses toward zero. That implicit decay was part of the tables
+    published before this commit. Moving the router parameters into a
+    zero-decay group makes the lock exact, which by itself changes the pure
+    recipe (MNIST, seed 42, 3 epochs: **76.60% -> 65.60%**): without the decay
+    the newest expert's routing row can no longer out-compete the historical
+    rows on its own task, so tasks 2-4 lose their routing.
+
+    The recovery uses mechanisms that are already part of the method and stay
+    zero-raw-replay: prototype-owner router distillation
+    (`--router_anchor_steps 300`), a stronger OOD negative-boundary weight
+    (`--lambda_ood 0.5`) and inference-time prototype anchoring
+    (`--proto_routing_alpha 0.5`). This is the recipe in
+    `configs/mnist_default.json`; 5-seed results (42 1 2 3 4, 3 epochs,
+    reproduced with the config command above):
+
+    | Variant | Avg Acc | Forgetting | Experts |
+    | :-- | :--: | :--: | :--: |
+    | PAL-MoE pure | **79.36 ± 1.16%** | 7.91 ± 1.24% | 5 |
+    | PAL-MoE + Replay (hybrid) | 80.05 ± 1.08% | 5.61 ± 1.12% | 5 |
+
+    The hybrid prefers the weaker OOD weight used before the fix: with
+    `--lambda_ood 0.1` and everything else unchanged it reaches 81.92% /
+    3.66% forgetting on seed 42 (pure: 78.78% / 8.78%), because its raw replay
+    already supplies the boundary signal.
+
+    **Provenance caveat:** every table produced before this commit (including
+    the CIFAR-10 tables below) ran with the implicit decay in place; re-run
+    them with the fixed lock before citing them.
+
 ## Ablations
 
 `experiments/run_ablation.py` sweeps loss components, expert-init strategy,
@@ -398,7 +455,8 @@ ablation). Config selection supports case-insensitive substring filters
 ## CI verification
 
 `.github/workflows/ci.yml`:
-- **test**: pytest (47 tests) on Python 3.10-3.12, with coverage.
+- **lint**: `ruff check` + `black --check` (versions pinned).
+- **test**: pytest (64 tests) on Python 3.10-3.12, with coverage.
 - **benchmark-verify**: CPU smoke of the full 12-method benchmark (1 epoch)
   asserting it completes and that PAL-MoE hybrid ≥ 50% + pure ≥ 25%
   (sanity bounds, not state-of-the-art checks).
