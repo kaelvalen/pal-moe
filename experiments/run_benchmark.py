@@ -42,6 +42,7 @@ from pal_moe.evaluation.diagnostics import (
     print_router_diagnostics,
     router_diagnostics,
 )
+from pal_moe.evaluation.heads import BiasCorrectionHead, NCMHead
 from pal_moe.evaluation.metrics import ContinualEvaluator
 from pal_moe.factory import (
     build_prototype_memory,
@@ -419,6 +420,12 @@ def _run_palmoe_variant(
     if args.expert_temperature_calib:
         calib_data = [(x, y) for task in tasks for x, y in list(task.val_loader)[:2]]
 
+    eval_head = None
+    if args.eval_head == "ncm":
+        eval_head = NCMHead(model, memory, num_classes).to(device)
+    elif args.eval_head == "bias":
+        eval_head = BiasCorrectionHead(model, memory, num_classes).to(device)
+
     t0 = time.time()
     for t_idx, task in enumerate(tasks):
         print(
@@ -451,7 +458,12 @@ def _run_palmoe_variant(
                 f"{[round(t, 2) for t in calib['temperatures']]} "
                 f"nll {calib['nll_before']:.3f} -> {calib['nll_after']:.3f}"
             )
-        accs = evaluator.evaluate_all_seen_tasks(model, t_idx, tasks)
+        if eval_head is not None:
+            eval_head.refit()
+            eval_head.eval()
+            accs = evaluator.evaluate_all_seen_tasks(eval_head, t_idx, tasks)
+        else:
+            accs = evaluator.evaluate_all_seen_tasks(model, t_idx, tasks)
         print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
 
     router_kl = ContinualEvaluator.compute_router_stability(model, memory, device)
@@ -1228,6 +1240,17 @@ if __name__ == "__main__":
         help=(
             "Add an always-on generalist expert mixed with the routed expert by "
             "a learned gate (never frozen; carries shared knowledge)"
+        ),
+    )
+    parser.add_argument(
+        "--eval_head",
+        type=str,
+        default="moe",
+        choices=["moe", "ncm", "bias"],
+        help=(
+            "Inference read-out for the PAL-MoE variants: the learned MoE head, "
+            "nearest-class-mean over stored latents (ncm) or the same logits "
+            "with a fitted per-class bias removed (bias)"
         ),
     )
     parser.add_argument(
