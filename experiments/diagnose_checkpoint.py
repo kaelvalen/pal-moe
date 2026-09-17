@@ -24,6 +24,7 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -41,7 +42,22 @@ from pal_moe.persistence import load_checkpoint
 INPUT_DIMS = {"mnist": 784, "cifar10": 3072, "cifar100": 3072}
 
 
-def infer_config(state, dataset):
+def _detect_encoder_arch(state) -> Optional[str]:
+    """Best-effort architecture detection for checkpoints without encoder meta."""
+    if "encoder._device_probe" in state:
+        return "cached"
+    resnet_keys = [k for k in state if k.startswith("encoder.") and "layer1" in k]
+    if resnet_keys:
+        if any("layer1.0.conv3" in k for k in state):
+            return "resnet50"
+        layer2_blocks = {
+            int(k.split("layer2.")[1].split(".")[0]) for k in state if "layer2." in k
+        }
+        return "resnet34" if layer2_blocks and max(layer2_blocks) >= 3 else "resnet18"
+    return None
+
+
+def infer_config(state, dataset, encoder_arch: Optional[str] = None):
     """Recover model geometry (encoder arch, router kind, sizes) from a state dict."""
     expert_ids = sorted(
         {int(k.split(".")[1]) for k in state if k.startswith("experts.")}
@@ -50,16 +66,20 @@ def infer_config(state, dataset):
     expert_hidden, feature_dim = state["experts.0.fc1.weight"].shape
     num_classes = state["experts.0.fc2.weight"].shape[0]
 
-    cached_encoder = "encoder._device_probe" in state
+    arch = encoder_arch or _detect_encoder_arch(state)
+    cached_encoder = arch == "cached"
     conv_ws = sorted(
         (int(k.split(".")[2]), v.shape[0])
         for k, v in state.items()
         if k.startswith("encoder.net.") and k.endswith(".weight") and v.dim() == 4
     )
-    if cached_encoder:
+    if arch in ("resnet18", "resnet34", "resnet50"):
+        hidden_dims = None
+        conv_channels = (32, 64, 128)  # unused for ResNet backbones
+    elif cached_encoder:
         arch, hidden_dims = "cached", None
         conv_channels = (32, 64, 128)
-    elif conv_ws:
+    elif arch == "conv" or conv_ws:
         arch, hidden_dims = "conv", None
         conv_channels = tuple(ch for _, ch in conv_ws)
     else:
@@ -149,7 +169,8 @@ def main():
 
     payload = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
     state = payload["model_state"]
-    cfg = infer_config(state, args.dataset)
+    meta_arch = (payload.get("meta") or {}).get("encoder_arch")
+    cfg = infer_config(state, args.dataset, encoder_arch=meta_arch)
     print(
         f"[Diagnose] experts={cfg['num_experts']} feature_dim={cfg['feature_dim']} "
         f"expert_hidden={cfg['expert_hidden']} arch={cfg['arch']} "

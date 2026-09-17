@@ -164,11 +164,14 @@ def _pretrain_cache_path(
     epochs: int,
     feature_dim: int,
     conv_channels: tuple,
+    arch: str = "conv",
+    backbone_weights: str = "none",
 ) -> str:
     """Content-addressed path for a cached unsupervised pretraining result."""
     key = (
         f"v1|{dataset}|{mode}|seed={seed}|epochs={epochs}|fd={feature_dim}|"
-        f"ch={conv_channels}|torch={torch.__version__}"
+        f"ch={conv_channels}|arch={arch}|bw={backbone_weights}|"
+        f"torch={torch.__version__}"
     )
     digest = hashlib.sha1(key.encode()).hexdigest()[:16]
     return os.path.join(cache_dir, f"pretrain_{dataset}_{mode}_{digest}.pt")
@@ -218,7 +221,15 @@ def _pretrain_encoder(
 
     set_seed(seed)
     path = _pretrain_cache_path(
-        cache_dir, dataset, mode, seed, epochs, feature_dim, conv_channels
+        cache_dir,
+        dataset,
+        mode,
+        seed,
+        epochs,
+        feature_dim,
+        conv_channels,
+        arch=getattr(encoder, "arch", "conv"),
+        backbone_weights=getattr(encoder, "backbone_weights", "none"),
     )
     if _load_pretrained_encoder(encoder, path):
         print(f"  [pretrain-cache] loaded {path}")
@@ -613,6 +624,20 @@ def run_benchmark(
         )
         print(f"  [encoder] loading external weights from {args.encoder_checkpoint}")
 
+    encoder_arch = args.encoder_arch or (
+        "conv" if dataset in ("cifar10", "cifar100") else "mlp"
+    )
+
+    def _build_base_encoder(input_dim: int) -> SharedEncoder:
+        return SharedEncoder(
+            input_dim=input_dim,
+            hidden_dims=(256, 128) if encoder_arch == "mlp" else None,
+            output_dim=feature_dim,
+            arch=encoder_arch,
+            conv_channels=conv_channels,
+            backbone_weights=args.encoder_weights,
+        ).to(device)
+
     if dataset == "cifar10":
         from pal_moe.data.split_cifar import get_split_cifar10_tasks
 
@@ -635,14 +660,8 @@ def run_benchmark(
             num_workers=args.num_workers,
             pin_memory=pin_memory,
         )
-        base_encoder = SharedEncoder(
-            input_dim=input_dim,
-            hidden_dims=None,
-            output_dim=feature_dim,
-            arch="conv",
-            conv_channels=conv_channels,
-        ).to(device)
-        if external_encoder_state is None:
+        base_encoder = _build_base_encoder(input_dim)
+        if external_encoder_state is None and args.encoder_weights != "imagenet":
             _pretrain_encoder(
                 base_encoder,
                 unlabeled_loader,
@@ -676,14 +695,8 @@ def run_benchmark(
             num_workers=args.num_workers,
             pin_memory=pin_memory,
         )
-        base_encoder = SharedEncoder(
-            input_dim=input_dim,
-            hidden_dims=None,
-            output_dim=feature_dim,
-            arch="conv",
-            conv_channels=conv_channels,
-        ).to(device)
-        if external_encoder_state is None:
+        base_encoder = _build_base_encoder(input_dim)
+        if external_encoder_state is None and args.encoder_weights != "imagenet":
             _pretrain_encoder(
                 base_encoder,
                 unlabeled_loader,
@@ -715,13 +728,8 @@ def run_benchmark(
             num_workers=args.num_workers,
             pin_memory=pin_memory,
         )
-        base_encoder = SharedEncoder(
-            input_dim=input_dim,
-            hidden_dims=(256, 128),
-            output_dim=feature_dim,
-            arch="mlp",
-        ).to(device)
-        if external_encoder_state is None:
+        base_encoder = _build_base_encoder(input_dim)
+        if external_encoder_state is None and args.encoder_weights != "imagenet":
             _pretrain_encoder(
                 base_encoder,
                 unlabeled_loader,
@@ -741,6 +749,26 @@ def run_benchmark(
 
     if args.freeze_encoder:
         base_encoder.freeze()
+
+    if args.domain_shift != "none":
+        from pal_moe.data.domain_shift import (
+            apply_phase_shift,
+            permutation_transform,
+            rotation_transform,
+        )
+
+        if args.domain_shift == "permute":
+            transforms = [
+                permutation_transform(seed=args.seed + i, input_dim=input_dim)
+                for i in range(len(tasks))
+            ]
+        else:
+            transforms = [rotation_transform(90 * i) for i in range(len(tasks))]
+        tasks = apply_phase_shift(tasks, transforms)
+        print(
+            f"  [domain-shift] applied per-task {args.domain_shift} phases "
+            f"({len(tasks)} tasks, shared label space)"
+        )
 
     print(
         "  Shared Encoder successfully pretrained and frozen for all benchmark models."
@@ -1404,6 +1432,38 @@ if __name__ == "__main__":
         help=(
             "Load SharedEncoder-compatible weights (e.g. an exported foundation "
             "backbone) instead of running the built-in pretraining"
+        ),
+    )
+    parser.add_argument(
+        "--encoder_arch",
+        type=str,
+        default=None,
+        choices=[None, "mlp", "conv", "resnet18", "resnet34", "resnet50"],
+        help=(
+            "Encoder architecture (None = dataset default: mlp for MNIST, conv "
+            "for CIFAR). ResNet options give a much stronger backbone."
+        ),
+    )
+    parser.add_argument(
+        "--encoder_weights",
+        type=str,
+        default="none",
+        choices=["none", "imagenet"],
+        help=(
+            "Backbone initialisation for ResNet encoders: 'imagenet' loads "
+            "ImageNet weights and skips the built-in pretraining (recommended "
+            "with --freeze_encoder)"
+        ),
+    )
+    parser.add_argument(
+        "--domain_shift",
+        type=str,
+        default="none",
+        choices=["none", "permute", "rotate"],
+        help=(
+            "Class-shared domain-shifting stream: every task sees the same "
+            "classes under a different fixed transform (permutation or 90-deg "
+            "rotations), useful for stability stress tests"
         ),
     )
     parser.add_argument(
