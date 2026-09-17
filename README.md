@@ -79,18 +79,19 @@ pal-moe/
 │   ├── models/
 │   │   ├── encoder.py          # SharedEncoder (AE / SimCLR pretraining)
 │   │   ├── expert.py           # MLPExpert with Net2Net Expansion
-│   │   ├── router.py           # DynamicRouter + DistanceRouter (top-k, null-space utils)
+│   │   ├── router.py           # DynamicRouter / DistanceRouter / AttentionRouter (top-k)
 │   │   └── moe.py              # DynamicMoE container (latent forward, freeze/unfreeze)
 │   ├── memory/
 │   │   └── prototype_memory.py # Prototype anchors (v_p, r_p, o_p) + stability losses
 │   ├── adaptation/
 │   │   └── ttt.py              # ContinualTrainer (OOD loss, joint calibration, checkpointing)
 │   ├── baselines/
-│   │   ├── naive.py / ewc.py / replay.py / standard_moe.py
+│   │   ├── naive.py / ewc.py / replay.py
 │   │   ├── der.py              # DER++ and ER-ACE
 │   │   ├── agem.py             # A-GEM
 │   │   └── icarl.py            # iCaRL (nearest-class-mean + distillation)
 │   ├── data/                   # split_mnist / split_cifar / split_cifar100
+│   ├── config.py               # Validated JSON config (explicit CLI > config > defaults)
 │   ├── persistence.py          # checkpoint save/load (model + prototype memory)
 │   ├── evaluation/             # ContinualEvaluator (avg acc, forgetting, BWT, router KL)
 │   ├── trigger/                # QuantitativeTrigger (expert spawning)
@@ -101,10 +102,11 @@ pal-moe/
 │   ├── run_ablation.py         # Controlled ablation (shared encoder per seed)
 │   ├── run_pure_explore.py     # Fast pure/hybrid mechanism sweeps
 │   ├── debug_routing_asymmetry.py  # Task-to-expert routing diagnostics
+│   ├── diagnose_checkpoint.py  # Per-task checkpoint diagnostics
 │   └── plot_results.py         # Figure generation (single + multi-seed JSON)
 ├── configs/                    # JSON configs (mnist_default, cifar10_default, ...)
 ├── BENCHMARK.md                # Methodology, protocol and measured design facts
-└── tests/test_pal_moe.py       # PyTest suite (42 tests)
+└── tests/test_pal_moe.py       # PyTest suite (47 tests)
 ```
 
 ---
@@ -157,10 +159,10 @@ If you use **PAL-MoE** in your research or benchmarks, please cite:
 
 ```bibtex
 @software{pal_moe2026,
-  author = {Hakbilen, Mehmet Arda},
+  author = {Valen, Kael},
   title = {PAL-MoE: Prototype-Anchored Lifelong Mixture of Experts},
   url = {https://github.com/kaelvalen/pal-moe},
-  version = {1.1.0},
+  version = {0.1.0},
   year = {2026}
 }
 ```

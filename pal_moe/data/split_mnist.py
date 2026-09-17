@@ -4,17 +4,17 @@ Divides MNIST into 5 sequential tasks: [0,1], [2,3], [4,5], [6,7], [8,9].
 Supports Class-Incremental Learning (10-class global space).
 """
 
+from dataclasses import dataclass
+
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
-from dataclasses import dataclass
-from typing import List, Tuple, Dict
 
 
 @dataclass
 class SplitMNISTTask:
     task_id: int
-    classes: Tuple[int, int]
+    classes: tuple[int, int]
     train_loader: DataLoader
     val_loader: DataLoader
     test_loader: DataLoader
@@ -27,7 +27,7 @@ def get_split_mnist_tasks(
     seed: int = 42,
     num_workers: int = 0,
     pin_memory: bool = False,
-) -> List[SplitMNISTTask]:
+) -> list[SplitMNISTTask]:
     """
     Creates 5 sequential tasks for Split-MNIST benchmark:
     Task 0: digits 0, 1

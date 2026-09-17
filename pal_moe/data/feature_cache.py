@@ -23,8 +23,9 @@ Results are distributionally equivalent, not bit-identical; use the raw pipeline
 when bit-level comparability matters.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, List, Optional, Sequence
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -82,7 +83,7 @@ class CachedTask:
 
 @dataclass
 class FeatureCache:
-    tasks: List[CachedTask]
+    tasks: list[CachedTask]
     encoder: CachedFeatureEncoder
     feature_dim: int
 
@@ -121,7 +122,7 @@ def build_feature_cache(
     if output_dim is None:  # pragma: no cover - defensive
         raise ValueError("encoder has no output_dim attribute")
 
-    cached_tasks: List[CachedTask] = []
+    cached_tasks: list[CachedTask] = []
     for task in tasks:
         tr_f, tr_y = _encode_split(encoder, task.train_loader, device, dtype)
         va_f, va_y = _encode_split(encoder, task.val_loader, device, dtype)

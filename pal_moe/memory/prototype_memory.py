@@ -10,12 +10,12 @@ Maintains:
 - raw_x: Raw input samples to dynamically refresh representations upon encoder drift
 """
 
-import copy
+from dataclasses import dataclass
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Dict, Any
 
 
 @dataclass
@@ -66,12 +66,12 @@ class PrototypeMemory:
         # per-task one, preventing majority classes from crowding out the rest.
         self.max_prototypes_per_class = max_prototypes_per_class
 
-        self.prototypes: List[Prototype] = []
+        self.prototypes: list[Prototype] = []
 
         # Cached stacked tensors (prototype/route/output anchors). Invalidated on
         # every mutation so hot loops (stability losses) do not re-stack hundreds
         # of CPU tensors and re-transfer them to the device every batch.
-        self._cache: Dict[Any, Any] = {}
+        self._cache: dict[Any, Any] = {}
 
     def __len__(self) -> int:
         return len(self.prototypes)
@@ -194,7 +194,7 @@ class PrototypeMemory:
 
     def get_router_anchor_matrices(
         self, num_experts: int, device: torch.device
-    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
         """
         Returns (V_anchor [M, D], R_targets [M, num_experts]) used by the router
         stability loss: each prototype centre plus its exemplar features, each
@@ -203,7 +203,7 @@ class PrototypeMemory:
         if self.is_empty():
             return None
 
-        def build() -> Tuple[torch.Tensor, torch.Tensor]:
+        def build() -> tuple[torch.Tensor, torch.Tensor]:
             v_rows, r_rows = [], []
             for p in self.prototypes:
                 rp = p.r_p.to(device)
@@ -233,7 +233,7 @@ class PrototypeMemory:
 
     def get_raw_anchor(
         self, device: torch.device
-    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
         """
         Returns (raw_rows [M, input_dim], owner_idx [M]) grouping every stored raw
         exemplar with the index of the prototype it belongs to (for the encoder
@@ -242,7 +242,7 @@ class PrototypeMemory:
         if self.is_empty():
             return None
 
-        def build() -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+        def build() -> Optional[tuple[torch.Tensor, torch.Tensor]]:
             rows, owners = [], []
             for p_idx, p in enumerate(self.prototypes):
                 if p.raw_x is not None and p.raw_x.size(0) > 0:
@@ -260,7 +260,7 @@ class PrototypeMemory:
 
     def get_expert_anchors(
         self, expert_id: int, device: torch.device
-    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
         """
         Retrieves stored prototype representations and historical output anchors for a given expert.
         Returns:
@@ -283,7 +283,7 @@ class PrototypeMemory:
 
     def get_exemplar_batch(
         self, device: torch.device
-    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
         """
         Gathers all stored exemplar feature vectors and labels across all prototypes.
         Returns:
@@ -358,7 +358,7 @@ class PrototypeMemory:
         raw_input: Optional[torch.Tensor],
         work_matrix: Optional[torch.Tensor],
         owner_expert: Optional[int] = None,
-    ) -> Tuple[Prototype, Optional[torch.Tensor]]:
+    ) -> tuple[Prototype, Optional[torch.Tensor]]:
         """
         Same as `update_or_create_prototype`, but reuses a caller-maintained
         [P, D] matrix of prototype centres so registering a batch does not
@@ -663,7 +663,7 @@ class PrototypeMemory:
         lambda_e: float = 1.0,
         lambda_enc: float = 0.0,
         return_enc: bool = False,
-    ) -> Tuple[torch.Tensor, ...]:
+    ) -> tuple[torch.Tensor, ...]:
         """
         Computes the stability losses:
         L_router_stab = KL( g_old(v_p) || g_new(v_p) )
@@ -763,7 +763,7 @@ class PrototypeMemory:
 
     def get_raw_exemplar_batch(
         self, device: torch.device
-    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
         """
         Gathers all stored raw exemplar images and class labels across all prototypes.
         Returns:
@@ -803,7 +803,7 @@ class PrototypeMemory:
                     proto.v_p = proto.x_p.mean(dim=0)
         self._invalidate_cache()
 
-    def estimate_memory_footprint(self) -> Dict[str, Any]:
+    def estimate_memory_footprint(self) -> dict[str, Any]:
         """
         Estimates total parameter/element counts stored across all prototypes.
         """

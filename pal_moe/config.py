@@ -10,10 +10,10 @@ then ignored. Both are errors here.
 """
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 # Numeric knobs that must stay inside a sane domain; (min, max), None = open.
-_RANGES: Dict[str, tuple] = {
+_RANGES: dict[str, tuple] = {
     "epochs": (1, None),
     "pretrain_epochs": (0, None),
     "feature_dim": (1, None),
@@ -36,7 +36,7 @@ class ConfigError(ValueError):
     """Invalid --config file: unknown key, wrong type or out-of-range value."""
 
 
-def load_config(path: str) -> Dict[str, Any]:
+def load_config(path: str) -> dict[str, Any]:
     """Reads a JSON config file, requiring a top-level object."""
     with open(path) as fh:
         cfg = json.load(fh)

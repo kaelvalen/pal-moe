@@ -7,10 +7,10 @@ Supports:
 - Tracking usage frequency and lineage for capacity control
 """
 
-import copy
+from typing import Optional
+
 import torch
 import torch.nn as nn
-from typing import Optional
 
 
 class MLPExpert(nn.Module):
@@ -96,9 +96,3 @@ class MLPExpert(nn.Module):
         nn.init.zeros_(child.adapter_up.weight)
 
         return child
-
-
-class ExpertAdapter(MLPExpert):
-    """Alias for MLPExpert with adapter."""
-
-    pass

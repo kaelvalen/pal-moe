@@ -12,24 +12,24 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import argparse
 import copy
 import json
-import argparse
+
 import numpy as np
 import torch
-import torch.nn as nn
 from tabulate import tabulate
 
+from pal_moe.adaptation.ttt import ContinualTrainer
+from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.data.split_cifar import get_split_cifar10_tasks
+from pal_moe.evaluation.metrics import ContinualEvaluator
+from pal_moe.memory.prototype_memory import PrototypeMemory
 from pal_moe.models.encoder import SharedEncoder
-from pal_moe.models.router import DynamicRouter
 from pal_moe.models.expert import MLPExpert
 from pal_moe.models.moe import DynamicMoE
-from pal_moe.memory.prototype_memory import PrototypeMemory
+from pal_moe.models.router import DynamicRouter
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
-from pal_moe.builder.expert_builder import ExpertBuilder
-from pal_moe.adaptation.ttt import ContinualTrainer
-from pal_moe.evaluation.metrics import ContinualEvaluator
 
 
 def set_seed(seed: int = 42):

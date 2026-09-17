@@ -11,24 +11,24 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import json
 import argparse
+import json
+
 import numpy as np
 import torch
-import torch.nn.functional as F
-from torchvision import datasets, transforms
 from tabulate import tabulate
+from torchvision import datasets, transforms
 
+from pal_moe.adaptation.ttt import ContinualTrainer
+from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.data.split_mnist import get_split_mnist_tasks
+from pal_moe.evaluation.metrics import ContinualEvaluator
+from pal_moe.memory.prototype_memory import PrototypeMemory
 from pal_moe.models.encoder import SharedEncoder
-from pal_moe.models.router import DynamicRouter
 from pal_moe.models.expert import MLPExpert
 from pal_moe.models.moe import DynamicMoE
-from pal_moe.memory.prototype_memory import PrototypeMemory
+from pal_moe.models.router import DynamicRouter
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
-from pal_moe.builder.expert_builder import ExpertBuilder
-from pal_moe.adaptation.ttt import ContinualTrainer
-from pal_moe.evaluation.metrics import ContinualEvaluator
 
 
 def set_seed(seed: int = 42):
@@ -220,7 +220,7 @@ def run_diagnostic_experiment(
         )
 
     evaluator = ContinualEvaluator(num_tasks=len(tasks), device=device)
-    for t_idx, task in enumerate(tasks):
+    for t_idx, _task in enumerate(tasks):
         evaluator.evaluate_all_seen_tasks(moe_model, t_idx, tasks)
 
     final_acc = evaluator.compute_average_accuracy()

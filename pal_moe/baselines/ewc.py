@@ -3,11 +3,11 @@ Elastic Weight Consolidation (EWC) baseline.
 Computes diagonal Fisher Information matrix on past tasks to penalize changes to critical weights.
 """
 
-import copy
+from typing import Any
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, List
 
 
 class EWC:
@@ -29,8 +29,8 @@ class EWC:
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        self.fisher_matrices: List[Dict[str, torch.Tensor]] = []
-        self.star_params: List[Dict[str, torch.Tensor]] = []
+        self.fisher_matrices: list[dict[str, torch.Tensor]] = []
+        self.star_params: list[dict[str, torch.Tensor]] = []
 
     def compute_fisher(self, data_loader: Any, num_samples: int = 200) -> None:
         """Computes diagonal empirical Fisher Information matrix for current task."""
@@ -78,10 +78,10 @@ class EWC:
 
     def train_task(
         self, task_id: int, train_loader: Any, epochs: int = 5
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         self.model.train()
         losses = []
-        for epoch in range(epochs):
+        for _ in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
                 self.optimizer.zero_grad()

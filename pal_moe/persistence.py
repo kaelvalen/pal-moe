@@ -7,7 +7,7 @@ torch.save file. Tensors are moved to CPU on save and back to `device` on load.
 """
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import torch
 
@@ -18,7 +18,7 @@ def save_checkpoint(
     path: str,
     model: torch.nn.Module,
     prototype_memory: PrototypeMemory,
-    meta: Optional[Dict[str, Any]] = None,
+    meta: Optional[dict[str, Any]] = None,
 ) -> str:
     """Saves model + prototype memory state to `path`. Returns the path."""
     mem_state = []
@@ -33,9 +33,9 @@ def save_checkpoint(
                 "count": proto.count,
                 "x_p": proto.x_p.detach().cpu() if proto.x_p is not None else None,
                 "y_p": proto.y_p.detach().cpu() if proto.y_p is not None else None,
-                "raw_x": proto.raw_x.detach().cpu()
-                if proto.raw_x is not None
-                else None,
+                "raw_x": (
+                    proto.raw_x.detach().cpu() if proto.raw_x is not None else None
+                ),
             }
         )
     payload = {
@@ -53,7 +53,7 @@ def load_checkpoint(
     model: torch.nn.Module,
     prototype_memory: PrototypeMemory,
     device: torch.device = torch.device("cpu"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Restores model + prototype memory from `path`. Returns stored meta."""
     payload = torch.load(path, map_location="cpu", weights_only=False)
     model.load_state_dict(payload["model_state"], strict=False)

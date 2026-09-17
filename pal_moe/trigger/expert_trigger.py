@@ -7,11 +7,11 @@ Evaluates whether existing experts are sufficient using the composite metric:
 If E[S(x)] > tau, a new expert candidate is warranted.
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Any, Optional
+
+import torch
+import torch.nn.functional as F
 
 
 @dataclass

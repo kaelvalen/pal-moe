@@ -10,10 +10,11 @@ Interface matches pal_moe.baselines.replay.ReplayTrainer:
 """
 
 import random
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, List, Tuple, Optional
 
 
 class AGEM:
@@ -30,8 +31,8 @@ class AGEM:
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        self.buffer_x: List[torch.Tensor] = []
-        self.buffer_y: List[torch.Tensor] = []
+        self.buffer_x: list[torch.Tensor] = []
+        self.buffer_y: list[torch.Tensor] = []
 
     def update_buffer(self, train_loader: Any, seen_tasks: int) -> None:
         collected_x, collected_y = [], []
@@ -53,7 +54,7 @@ class AGEM:
 
     def get_ref_batch(
         self, batch_size: int
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         if not self.buffer_x:
             return None, None
         n = min(batch_size, len(self.buffer_x))
@@ -77,10 +78,10 @@ class AGEM:
 
     def train_task(
         self, task_id: int, train_loader: Any, epochs: int = 5
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         self.model.train()
         losses = []
-        for epoch in range(epochs):
+        for _ in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
 
