@@ -2,6 +2,7 @@
 Dynamic Router with dynamic expert growth, top-k sparsity, and entropy computation.
 """
 
+import math
 from typing import Optional
 
 import torch
@@ -58,6 +59,7 @@ class DynamicRouter(nn.Module):
         top_k: int = 1,
         temperature: float = 1.0,
         noise_std: float = 0.0,
+        learn_temperature: bool = False,
     ):
         super().__init__()
         self.input_dim = input_dim
@@ -65,6 +67,13 @@ class DynamicRouter(nn.Module):
         self.top_k = top_k
         self.temperature = temperature
         self.noise_std = noise_std
+        # Optional learnable softening/hardening of the routing distribution.
+        # Kept out of the module when disabled so old state dicts still load.
+        self.learn_temperature = learn_temperature
+        if learn_temperature:
+            self.log_temperature = nn.Parameter(
+                torch.tensor(float(math.log(temperature)))
+            )
 
         # Linear projection from representation to expert logits
         self.gate = nn.Linear(input_dim, num_experts, bias=True)
@@ -73,6 +82,11 @@ class DynamicRouter(nn.Module):
         # Register hooks to mask gradients for locked historical experts
         self.gate.weight.register_hook(self._weight_backward_hook)
         self.gate.bias.register_hook(self._bias_backward_hook)
+
+    def effective_temperature(self) -> torch.Tensor:
+        if self.learn_temperature:
+            return self.log_temperature.exp().clamp(min=1e-3, max=1e3)
+        return max(self.temperature, 1e-5)
 
     def _weight_backward_hook(self, grad):
         if self.locked_experts > 0 and grad is not None:
@@ -106,7 +120,7 @@ class DynamicRouter(nn.Module):
         k = top_k if top_k is not None else self.top_k
         k = min(k, self.num_experts)
 
-        logits = self.gate(h) / max(self.temperature, 1e-5)
+        logits = self.gate(h) / self.effective_temperature()
 
         if self.training and self.noise_std > 0:
             noise = torch.randn_like(logits) * self.noise_std
@@ -128,7 +142,7 @@ class DynamicRouter(nn.Module):
 
     def get_full_distribution(self, h: torch.Tensor) -> torch.Tensor:
         """Returns dense softmax distribution over all experts."""
-        logits = self.gate(h) / max(self.temperature, 1e-5)
+        logits = self.gate(h) / self.effective_temperature()
         return F.softmax(logits, dim=-1)
 
     @staticmethod
@@ -262,18 +276,29 @@ class DistanceRouter(nn.Module):
         num_experts: int = 4,
         top_k: int = 1,
         temperature: float = 0.1,
+        learn_temperature: bool = False,
     ):
         super().__init__()
         self.input_dim = input_dim
         self.num_experts = num_experts
         self.top_k = top_k
         self.temperature = temperature
+        self.learn_temperature = learn_temperature
+        if learn_temperature:
+            self.log_temperature = nn.Parameter(
+                torch.tensor(float(math.log(temperature)))
+            )
 
         # Expert centroids: [num_experts, input_dim]
         # We use register_buffer so they are saved in state_dict but NOT optimized by grad
         self.register_buffer("centroids", torch.randn(num_experts, input_dim))
         self.centroids = F.normalize(self.centroids, p=2, dim=1)
         self.locked_experts = 0
+
+    def effective_temperature(self) -> torch.Tensor:
+        if self.learn_temperature:
+            return self.log_temperature.exp().clamp(min=1e-3, max=1e3)
+        return max(self.temperature, 1e-5)
 
     def lock_historical_routing(self, num_locked: int):
         self.locked_experts = min(num_locked, self.num_experts)
@@ -289,7 +314,7 @@ class DistanceRouter(nn.Module):
 
         # Cosine similarity logits
         sim = torch.matmul(h_norm, c_norm.T)
-        logits = sim / max(self.temperature, 1e-5)
+        logits = sim / self.effective_temperature()
 
         dense_probs = F.softmax(logits, dim=-1)
         topk_probs, topk_idx = torch.topk(dense_probs, k=k, dim=-1)
@@ -306,7 +331,7 @@ class DistanceRouter(nn.Module):
         h_norm = F.normalize(h, p=2, dim=1)
         c_norm = F.normalize(self.centroids, p=2, dim=1)
         sim = torch.matmul(h_norm, c_norm.T)
-        logits = sim / max(self.temperature, 1e-5)
+        logits = sim / self.effective_temperature()
         return F.softmax(logits, dim=-1)
 
     @staticmethod
@@ -417,6 +442,7 @@ class AttentionRouter(nn.Module):
         temperature: float = 0.1,
         query_dim: Optional[int] = None,
         noise_std: float = 0.0,
+        learn_temperature: bool = False,
     ):
         super().__init__()
         self.input_dim = input_dim
@@ -424,6 +450,11 @@ class AttentionRouter(nn.Module):
         self.top_k = top_k
         self.temperature = temperature
         self.noise_std = noise_std
+        self.learn_temperature = learn_temperature
+        if learn_temperature:
+            self.log_temperature = nn.Parameter(
+                torch.tensor(float(math.log(temperature)))
+            )
         self.locked_experts = 0
 
         q_dim = query_dim or input_dim
@@ -446,10 +477,15 @@ class AttentionRouter(nn.Module):
         """Freezes the routing keys of the first `num_locked` experts."""
         self.locked_experts = min(num_locked, self.num_experts)
 
+    def effective_temperature(self) -> torch.Tensor:
+        if self.learn_temperature:
+            return self.log_temperature.exp().clamp(min=1e-3, max=1e3)
+        return max(self.temperature, 1e-5)
+
     def _logits(self, h: torch.Tensor) -> torch.Tensor:
         q = F.normalize(self.query(h), p=2, dim=-1)
         k = F.normalize(self.keys, p=2, dim=-1)
-        logits = (q @ k.t()) / max(self.temperature, 1e-5)
+        logits = (q @ k.t()) / self.effective_temperature()
         if self.training and self.noise_std > 0:
             logits = logits + torch.randn_like(logits) * self.noise_std
         return logits

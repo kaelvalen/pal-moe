@@ -51,6 +51,8 @@ class ContinualTrainer:
         keep_optimizer_state: bool = False,
         stability_every: int = 1,
         ood_every: int = 1,
+        router_anchor_margin: float = 0.0,
+        router_weight_decay: float = 0.0,
         checkpoint_dir: Optional[str] = None,
         device: torch.device = torch.device("cpu"),
     ):
@@ -99,6 +101,12 @@ class ContinualTrainer:
         # Default 1 == every step (identical to the published recipes).
         self.stability_every = max(1, int(stability_every))
         self.ood_every = max(1, int(ood_every))
+        # Owner-contrastive ranking margin added to the router-distillation loss:
+        # the owner expert's logit must beat every other expert by >= margin.
+        self.router_anchor_margin = float(router_anchor_margin)
+        # Reproducibility knob: the published recipes used 0.0 (exact lock),
+        # 1e-5 reproduces the implicit L2 decay of locked rows (design fact 15).
+        self.router_weight_decay = float(router_weight_decay)
         self.checkpoint_dir = checkpoint_dir
         self.device = device
 
@@ -128,7 +136,11 @@ class ContinualTrainer:
             # inside step() and would still shrink them a little every update.
             # With weight_decay=0 the historical-routing lock is exact.
             param_groups.append(
-                {"params": router_params, "lr": self.lr, "weight_decay": 0.0}
+                {
+                    "params": router_params,
+                    "lr": self.lr,
+                    "weight_decay": self.router_weight_decay,
+                }
             )
         if not param_groups:
             param_groups = [
@@ -193,8 +205,21 @@ class ContinualTrainer:
         last_loss = 0.0
         for _ in range(steps):
             optimizer.zero_grad()
-            probs = self.model.router.get_full_distribution(vp)
-            loss = F.nll_loss(torch.log(probs + 1e-9), y_owner)
+            _, _, logits = self.model.router(vp)
+            loss = F.cross_entropy(logits, y_owner)
+            if self.router_anchor_margin > 0 and logits.size(-1) > 1:
+                # Owner-contrastive ranking margin: the owner's logit must beat
+                # the best competing expert by at least `margin`.
+                owner_logit = logits.gather(1, y_owner.unsqueeze(1)).squeeze(1)
+                other_mask = torch.ones_like(logits, dtype=torch.bool)
+                other_mask.scatter_(1, y_owner.unsqueeze(1), False)
+                other_max = logits.masked_fill(~other_mask, -1e9).max(dim=1).values
+                loss = (
+                    loss
+                    + F.relu(
+                        self.router_anchor_margin - (owner_logit - other_max)
+                    ).mean()
+                )
             loss.backward()
             optimizer.step()
             last_loss = float(loss.item())

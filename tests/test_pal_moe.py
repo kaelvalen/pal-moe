@@ -1621,6 +1621,76 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_router_learnable_temperature():
+    """learn_temperature adds a trainable log-temperature and stays stable."""
+    from pal_moe.models.router import AttentionRouter, DistanceRouter
+
+    torch.manual_seed(0)
+    h = torch.randn(32, 8)
+    plain = DynamicRouter(input_dim=8, num_experts=3, learn_temperature=False)
+    assert not any("log_temperature" in k for k in plain.state_dict())
+
+    router = DynamicRouter(input_dim=8, num_experts=3, learn_temperature=True)
+    assert "log_temperature" in dict(router.named_parameters())
+    t0 = router.effective_temperature().item()
+    assert abs(t0 - 1.0) < 1e-5
+
+    weights, _, _ = router(h)
+    weights.sum().backward()
+    assert router.log_temperature.grad is not None
+    assert router.log_temperature.grad.abs().item() > 0
+
+    with torch.no_grad():
+        router.log_temperature -= 0.5
+    assert router.effective_temperature().item() < t0
+
+    for cls in (DistanceRouter, AttentionRouter):
+        r = cls(input_dim=8, num_experts=3, learn_temperature=True)
+        r_weights, _, _ = r(h)
+        r_weights.sum().backward()
+        assert r.log_temperature.grad is not None
+
+
+def test_router_anchor_margin_distillation():
+    """Margin distillation trains the router onto prototype owners."""
+    from pal_moe.adaptation.ttt import ContinualTrainer
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2)
+    moe = DynamicMoE(
+        enc, router, [MLPExpert(8, 8, 3, i) for i in range(2)], use_ema_encoder=False
+    )
+    memory = PrototypeMemory(feature_dim=8)
+    for i in range(20):
+        owner = i % 2
+        feat = torch.randn(8) + (0 if owner == 0 else 5.0) * torch.ones(8)
+        memory.update_or_create_prototype(
+            feat,
+            torch.eye(2)[owner],
+            torch.randn(2, 3),
+            task_id=owner,
+            owner_expert=owner,
+        )
+
+    trainer = ContinualTrainer(
+        model=moe,
+        prototype_memory=memory,
+        trigger=QuantitativeTrigger(),
+        builder=ExpertBuilder(),
+        router_anchor_margin=0.5,
+        device=torch.device("cpu"),
+    )
+    loss = trainer._distill_router_anchors(steps=60, lr=1e-2)
+    assert loss < 1.0
+
+    with torch.no_grad():
+        v = memory.get_prototype_matrix(torch.device("cpu"))
+        pred = router(v)[1].flatten()
+        owners = torch.tensor([p.owner_expert for p in memory.prototypes])
+        assert (pred == owners).float().mean().item() > 0.9
+
+
 def test_geometry_report_separates_clusters():
     """Geometry metrics must separate clustered from overlapping features."""
     from pal_moe.evaluation.geometry import (

@@ -323,7 +323,13 @@ def _run_palmoe_variant(
     set_seed(args.seed)
     model = DynamicMoE(
         encoder=copy.deepcopy(base_encoder),
-        router=build_router(args.router_type, feature_dim, args.top_k, device=device),
+        router=build_router(
+            args.router_type,
+            feature_dim,
+            args.top_k,
+            device=device,
+            learn_temperature=args.router_learn_temperature,
+        ),
         experts=[
             MLPExpert(
                 input_dim=feature_dim,
@@ -375,6 +381,8 @@ def _run_palmoe_variant(
         keep_optimizer_state=args.keep_optimizer_state,
         stability_every=args.stability_every,
         ood_every=args.ood_every,
+        router_anchor_margin=args.router_anchor_margin,
+        router_weight_decay=args.router_weight_decay,
         device=device,
         checkpoint_dir=(
             os.path.join(output_dir, checkpoint_subdir)
@@ -1109,6 +1117,31 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="EWC: keep a single gamma-decayed Fisher instead of one per task",
+    )
+    parser.add_argument(
+        "--router_learn_temperature",
+        action="store_true",
+        default=False,
+        help="Make the router temperature learnable (metric-router mode)",
+    )
+    parser.add_argument(
+        "--router_anchor_margin",
+        type=float,
+        default=0.0,
+        help=(
+            "Owner-contrastive ranking margin in the router distillation: the "
+            "owner's logit must beat the best competitor by this value "
+            "(0 = plain cross-entropy distillation)"
+        ),
+    )
+    parser.add_argument(
+        "--router_weight_decay",
+        type=float,
+        default=0.0,
+        help=(
+            "Adam weight decay for router parameters; 0 keeps the historical "
+            "routing lock exact, 1e-5 reproduces the pre-fix implicit decay"
+        ),
     )
     parser.add_argument(
         "--router_anchor_steps",

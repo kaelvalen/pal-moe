@@ -52,6 +52,11 @@ def main():
         choices=["recency", "reservoir"],
     )
     parser.add_argument("--ewc_online", action="store_true", default=False)
+    parser.add_argument(
+        "--router_learn_temperature", action="store_true", default=False
+    )
+    parser.add_argument("--router_anchor_margin", type=float, default=0.0)
+    parser.add_argument("--router_weight_decay", type=float, default=0.0)
     parser.add_argument("--max_experts", type=int, default=6)
     parser.add_argument(
         "--proto_routing_threshold",
@@ -207,6 +212,12 @@ def main():
             cmd += ["--buffer_sampling", args.buffer_sampling]
         if args.ewc_online:
             cmd.append("--ewc_online")
+        if args.router_learn_temperature:
+            cmd.append("--router_learn_temperature")
+        if args.router_anchor_margin:
+            cmd += ["--router_anchor_margin", str(args.router_anchor_margin)]
+        if args.router_weight_decay:
+            cmd += ["--router_weight_decay", str(args.router_weight_decay)]
         if args.max_experts != 6:
             cmd += ["--max_experts", str(args.max_experts)]
         if args.proto_routing_threshold is not None:
