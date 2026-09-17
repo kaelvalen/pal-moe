@@ -33,6 +33,11 @@ def save_checkpoint(
                 "count": proto.count,
                 "x_p": proto.x_p.detach().cpu() if proto.x_p is not None else None,
                 "y_p": proto.y_p.detach().cpu() if proto.y_p is not None else None,
+                "s_p": (
+                    proto.s_p.detach().cpu()
+                    if getattr(proto, "s_p", None) is not None
+                    else None
+                ),
                 "raw_x": (
                     proto.raw_x.detach().cpu() if proto.raw_x is not None else None
                 ),
@@ -81,6 +86,7 @@ def load_checkpoint(
                 count=p.get("count", 1),
                 x_p=p["x_p"].to(device) if p["x_p"] is not None else None,
                 y_p=p["y_p"].to(device) if p["y_p"] is not None else None,
+                s_p=p["s_p"].to(device) if p.get("s_p") is not None else None,
                 raw_x=p["raw_x"].to(device) if p.get("raw_x") is not None else None,
             )
         )

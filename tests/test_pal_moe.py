@@ -1712,6 +1712,75 @@ def test_streaming_task_free_evaluation():
     assert set(report["per_domain_accuracy"]) == {"0", "1"}
 
 
+def test_shared_expert_stability_anchor():
+    """The always-on expert is anchored to its registration-time outputs."""
+    from pal_moe.factory import build_moe
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    model = build_moe(enc, 8, 8, 3, num_experts=1, shared_expert=True)
+
+    memory = PrototypeMemory(feature_dim=8)
+    h = torch.randn(4, 8)
+    outs = model.get_all_expert_outputs(h)
+    shared = model.shared_expert(h, track_usage=False)
+    memory.register_task_batch(
+        h,
+        torch.softmax(torch.randn(4, 1), dim=-1),
+        outs,
+        task_id=0,
+        labels=torch.tensor([0, 1, 2, 0]),
+        shared_outputs=shared,
+    )
+    assert all(p.s_p is not None for p in memory.prototypes)
+
+    loss_before = memory.compute_stability_losses(model, lambda_e=1.0)[1]
+    with torch.no_grad():
+        for p in model.shared_expert.parameters():
+            p.add_(torch.randn_like(p) * 0.5)
+    loss_after = memory.compute_stability_losses(model, lambda_e=1.0)[1]
+    assert loss_after.item() > loss_before.item()
+
+    # refresh_anchors pulls the anchors back to the current shared behaviour.
+    memory.refresh_anchors(model)
+    refreshed = memory.compute_stability_losses(model, lambda_e=1.0)[1]
+    assert refreshed.item() < loss_after.item()
+
+
+def test_freeze_shared_expert_after_task():
+    from pal_moe.factory import build_moe
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    model = build_moe(enc, 8, 8, 3, num_experts=2, shared_expert=True)
+    memory = PrototypeMemory(feature_dim=8)
+    trainer = ContinualTrainer(
+        model=model,
+        prototype_memory=memory,
+        trigger=QuantitativeTrigger(threshold_tau=1e9),
+        builder=ExpertBuilder(),
+        freeze_shared_after=1,
+        joint_calib_epochs=0,
+        device=torch.device("cpu"),
+    )
+    x = torch.randn(16, 16)
+    y = torch.randint(0, 3, (16,))
+    trainer.train_task(
+        task_id=1,
+        train_loader=[(x, y)],
+        val_loader=[(x, y)],
+        epochs=1,
+        enable_expansion=False,
+    )
+    assert getattr(model, "shared_frozen", False)
+    assert not any(p.requires_grad for p in model.shared_expert.parameters())
+    # The gate stays trainable so the model can still choose the generalist.
+    assert all(p.requires_grad for p in model.shared_gate.parameters())
+    # Calibration must not unfreeze it again.
+    model.unfreeze_all_experts()
+    assert not any(p.requires_grad for p in model.shared_expert.parameters())
+
+
 def test_expert_width_growth_is_function_preserving():
     torch.manual_seed(0)
     expert = MLPExpert(8, 16, 3, 0)

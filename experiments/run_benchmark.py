@@ -413,6 +413,7 @@ def _run_palmoe_variant(
         loss_weighting=args.loss_weighting,
         expansion_action=args.expansion_action,
         widen_by=args.widen_by,
+        freeze_shared_after=args.freeze_shared_after,
         router_anchor_margin=args.router_anchor_margin,
         router_weight_decay=args.router_weight_decay,
         device=device,
@@ -501,6 +502,25 @@ def _run_palmoe_variant(
     diagnostics = router_diagnostics(model, tasks, device, memory)
     print_router_diagnostics(diagnostics)
     result["router_diagnostics"] = diagnostics
+
+    if args.task_free_eval:
+        from pal_moe.evaluation.task_free import StreamingEvaluator
+
+        stream = []
+        for task in tasks:
+            domain = getattr(task, "domain", None)
+            for x, y in task.test_loader:
+                stream.append(
+                    (x, y, torch.full_like(y, domain)) if domain is not None else (x, y)
+                )
+        stream_eval = StreamingEvaluator(model, device)
+        task_free = stream_eval.run(stream)
+        print(
+            f"    [task-free] online={task_free['online_accuracy']:.2%} "
+            f"recent={task_free['recent_accuracy']:.2%} "
+            f"surprise={task_free['surprise']:.3f}"
+        )
+        result["task_free"] = task_free
     return result
 
 
@@ -1384,6 +1404,24 @@ if __name__ == "__main__":
         help=(
             "Load SharedEncoder-compatible weights (e.g. an exported foundation "
             "backbone) instead of running the built-in pretraining"
+        ),
+    )
+    parser.add_argument(
+        "--freeze_shared_after",
+        type=int,
+        default=-1,
+        help=(
+            "Freeze the generalist expert once this task index is reached "
+            "(e.g. 1 = freeze after the first task; -1 = never)"
+        ),
+    )
+    parser.add_argument(
+        "--task_free_eval",
+        action="store_true",
+        default=False,
+        help=(
+            "After training, evaluate the model as a boundary-free stream "
+            "(online/recent accuracy, surprise, per-domain) and store the report"
         ),
     )
     parser.add_argument(

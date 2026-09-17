@@ -30,6 +30,9 @@ class Prototype:
     owner_expert: Optional[int] = None
     x_p: Optional[torch.Tensor] = None  # [num_exemplars, feature_dim]
     y_p: Optional[torch.Tensor] = None  # [num_exemplars] labels of those exemplars
+    # Anchor for the shared/generalist expert's output on this prototype (set at
+    # registration time, used to keep the always-on pathway from drifting).
+    s_p: Optional[torch.Tensor] = None  # [num_classes]
     # x_p/y_p serve two roles: (1) the joint-calibration exemplar batch
     # (features + labels) and (2) extra router-stability anchors (each exemplar
     # row is treated as a prototype centre whose r_p target is the prototype's).
@@ -217,6 +220,34 @@ class PrototypeMemory:
 
         return self._get_cached(("o", str(device), num_experts), build)
 
+    def get_shared_anchor_matrix(
+        self, device: torch.device
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Returns (anchors [P, C], mask [P]) for the shared/generalist expert.
+
+        Rows without a recorded anchor are zero and masked out. Cached until the
+        memory mutates.
+        """
+        if self.is_empty():
+            return None
+        if all(p.s_p is None for p in self.prototypes):
+            return None
+
+        def build() -> tuple[torch.Tensor, torch.Tensor]:
+            num_classes = next(
+                int(p.s_p.numel()) for p in self.prototypes if p.s_p is not None
+            )
+            anchors = torch.zeros(len(self.prototypes), num_classes, device=device)
+            mask = torch.zeros(len(self.prototypes), dtype=torch.bool, device=device)
+            for i, p in enumerate(self.prototypes):
+                if p.s_p is not None:
+                    anchors[i] = p.s_p.to(device)
+                    mask[i] = True
+            return anchors, mask
+
+        return self._get_cached(("shared_anchor", str(device)), build)
+
     def get_router_anchor_matrices(
         self, num_experts: int, device: torch.device
     ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
@@ -396,6 +427,7 @@ class PrototypeMemory:
         raw_input: Optional[torch.Tensor],
         work_matrix: Optional[torch.Tensor],
         owner_expert: Optional[int] = None,
+        shared_output: Optional[torch.Tensor] = None,
     ) -> tuple[Prototype, Optional[torch.Tensor]]:
         """
         Same as `update_or_create_prototype`, but reuses a caller-maintained
@@ -406,6 +438,9 @@ class PrototypeMemory:
         feat_detached = feat.detach().cpu()
         routing_detached = routing_dist.detach().cpu()
         expert_detached = expert_outputs.detach().cpu()
+        shared_detached = (
+            shared_output.detach().cpu() if shared_output is not None else None
+        )
         y_detached = label.detach().cpu().view(1) if label is not None else None
         raw_detached = None
         if self.store_raw and raw_input is not None:
@@ -425,6 +460,7 @@ class PrototypeMemory:
                 count=1,
                 x_p=feat_detached.unsqueeze(0).clone(),
                 y_p=y_detached.clone() if y_detached is not None else None,
+                s_p=shared_detached.clone() if shared_detached is not None else None,
                 raw_x=raw_detached.clone() if raw_detached is not None else None,
             )
             self.prototypes.append(new_proto)
@@ -490,6 +526,10 @@ class PrototypeMemory:
                         proto.raw_x = raw_detached.clone()
                 if self.selection != "first" and proto.x_p.size(0) >= pool_limit:
                     self._reselect_exemplars(proto)
+            # Anchor the shared expert's behaviour at first sight; later updates
+            # must not move it (that is the whole point of the anchor).
+            if proto.s_p is None and shared_detached is not None:
+                proto.s_p = shared_detached.clone()
             self._invalidate_cache()
             return proto, work_matrix
 
@@ -507,6 +547,7 @@ class PrototypeMemory:
             count=1,
             x_p=feat_detached.unsqueeze(0).clone(),
             y_p=y_detached.clone() if y_detached is not None else None,
+            s_p=shared_detached.clone() if shared_detached is not None else None,
             raw_x=raw_detached.clone() if raw_detached is not None else None,
         )
         self.prototypes.append(new_proto)
@@ -523,6 +564,7 @@ class PrototypeMemory:
         labels: Optional[torch.Tensor] = None,
         raw_inputs: Optional[torch.Tensor] = None,
         owner_expert: Optional[int] = None,
+        shared_outputs: Optional[torch.Tensor] = None,
     ) -> None:
         """
         Registers representative samples from a batch into prototype memory.
@@ -540,6 +582,9 @@ class PrototypeMemory:
         all_expert_outs = all_expert_outs.detach().cpu()
         labels = labels.detach().cpu() if labels is not None else None
         raw_inputs = raw_inputs.detach().cpu() if raw_inputs is not None else None
+        shared_outputs = (
+            shared_outputs.detach().cpu() if shared_outputs is not None else None
+        )
         if self.distance_threshold is None:
             # Scale-free calibration (see _auto_threshold): a fixed absolute
             # threshold is meaningless across feature spaces. Measured nearest
@@ -558,6 +603,7 @@ class PrototypeMemory:
         for i in range(features.size(0)):
             lbl = labels[i] if labels is not None else None
             raw = raw_inputs[i] if raw_inputs is not None else None
+            shared = shared_outputs[i] if shared_outputs is not None else None
             _, work_matrix = self._update_or_create_with_matrix(
                 features[i],
                 routing_dists[i],
@@ -567,6 +613,7 @@ class PrototypeMemory:
                 raw,
                 work_matrix,
                 owner_expert=owner_expert,
+                shared_output=shared,
             )
 
     @torch.no_grad()
@@ -615,9 +662,14 @@ class PrototypeMemory:
             return 0
         routing = model.router.get_full_distribution(v_mat)
         outputs = model.get_all_expert_outputs(v_mat)  # [P, N, C]
+        shared_outputs = None
+        if getattr(model, "shared_expert", None) is not None:
+            shared_outputs = model.shared_expert(v_mat, track_usage=False)
         for i, proto in enumerate(self.prototypes):
             proto.r_p = routing[i].detach().cpu()
             proto.o_p = outputs[i].detach().cpu()
+            if shared_outputs is not None:
+                proto.s_p = shared_outputs[i].detach().cpu()
         self._invalidate_cache()
         return len(self.prototypes)
 
@@ -850,6 +902,21 @@ class PrototypeMemory:
             l_expert_stab = torch.stack(expert_losses).sum() * lambda_e
         else:
             l_expert_stab = torch.tensor(0.0, device=device)
+
+        # 3. Shared/generalist expert stability: the always-on pathway must not
+        #    drift away from the behaviour it showed when the prototype was
+        #    registered (otherwise it becomes a recency funnel for new tasks).
+        shared_anchor = self.get_shared_anchor_matrix(device)
+        if (
+            shared_anchor is not None
+            and getattr(model, "shared_expert", None) is not None
+        ):
+            s_mat, s_mask = shared_anchor
+            if bool(s_mask.any()):
+                shared_out = model.shared_expert(v_mat[s_mask], track_usage=False)
+                l_expert_stab = (
+                    l_expert_stab + F.mse_loss(shared_out, s_mat[s_mask]) * lambda_e
+                )
 
         if return_enc:
             l_enc_stab = self.compute_encoder_stability_loss(
