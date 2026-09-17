@@ -341,6 +341,16 @@ def _run_palmoe_variant(
             ).to(device)
         ],
         use_ema_encoder=False,
+        shared_expert=(
+            MLPExpert(
+                input_dim=feature_dim,
+                hidden_dim=expert_hidden,
+                num_classes=num_classes,
+                expert_id=-1,
+            ).to(device)
+            if args.shared_expert
+            else None
+        ),
     ).to(device)
     memory = build_prototype_memory(
         feature_dim,
@@ -1209,6 +1219,15 @@ if __name__ == "__main__":
         help=(
             "Fit one temperature per expert on its routed validation samples "
             "at every task end (affects confidence and top-k>1 mixtures)"
+        ),
+    )
+    parser.add_argument(
+        "--shared_expert",
+        action="store_true",
+        default=False,
+        help=(
+            "Add an always-on generalist expert mixed with the routed expert by "
+            "a learned gate (never frozen; carries shared knowledge)"
         ),
     )
     parser.add_argument(

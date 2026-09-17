@@ -28,6 +28,7 @@ class DynamicMoE(nn.Module):
         experts: list[MLPExpert],
         use_ema_encoder: bool = True,
         ema_decay: float = 0.99,
+        shared_expert: Optional[MLPExpert] = None,
     ):
         super().__init__()
         self.encoder = encoder
@@ -39,6 +40,20 @@ class DynamicMoE(nn.Module):
             self.ema_encoder = EMAEncoder(encoder, decay=ema_decay)
         else:
             self.ema_encoder = None
+
+        # Optional always-on generalist expert (DeepSeek-MoE style): its logits
+        # are mixed with the routed task expert by a learned gate, so the shared
+        # pathway can carry knowledge that must survive every task boundary.
+        # It is never frozen by `freeze_historical_experts`.
+        self.shared_expert = shared_expert
+        if shared_expert is not None:
+            self.shared_gate = nn.Linear(encoder.output_dim, 1)
+            nn.init.zeros_(self.shared_gate.weight)
+            # Start with the routed expert in charge (sigmoid(-2) ~ 0.12) so the
+            # generalist has to earn its weight during training.
+            nn.init.constant_(self.shared_gate.bias, -2.0)
+        else:
+            self.shared_gate = None
 
         # Optional prototype-anchored inference routing (see set_prototype_routing)
         self.prototype_memory = None
@@ -257,6 +272,11 @@ class DynamicMoE(nn.Module):
                 if return_routing_info:
                     expert_outputs_dict[exp_idx] = exp_out
 
+        if self.shared_expert is not None:
+            shared_out = self.shared_expert(h)
+            shared_weight = torch.sigmoid(self.shared_gate(h))
+            out = (1.0 - shared_weight) * out + shared_weight * shared_out
+
         if return_routing_info:
             entropy = self.router.compute_entropy(routing_weights)
             routing_info = {
@@ -412,6 +432,11 @@ class DynamicMoE(nn.Module):
         for exp in self.experts:
             for param in exp.parameters():
                 param.requires_grad = True
+        if self.shared_expert is not None:
+            for param in self.shared_expert.parameters():
+                param.requires_grad = True
+            for param in self.shared_gate.parameters():
+                param.requires_grad = True
         self.router.lock_historical_routing(0)
 
     def unfreeze_experts_keep_routing_lock(self) -> None:
@@ -423,6 +448,11 @@ class DynamicMoE(nn.Module):
         """
         for exp in self.experts:
             for param in exp.parameters():
+                param.requires_grad = True
+        if self.shared_expert is not None:
+            for param in self.shared_expert.parameters():
+                param.requires_grad = True
+            for param in self.shared_gate.parameters():
                 param.requires_grad = True
         self.router.lock_historical_routing(max(0, self.num_experts - 1))
 
