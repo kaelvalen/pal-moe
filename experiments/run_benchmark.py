@@ -341,7 +341,8 @@ def _run_palmoe_variant(
                 expert_id=0,
             ).to(device)
         ],
-        use_ema_encoder=False,
+        use_ema_encoder=args.ema_encoder,
+        ema_decay=args.ema_decay,
         shared_expert=(
             MLPExpert(
                 input_dim=feature_dim,
@@ -405,6 +406,10 @@ def _run_palmoe_variant(
         generative_replay=args.generative_replay,
         generative_replay_mode=args.generative_replay_mode,
         lambda_generative=args.lambda_generative,
+        lambda_lwf=args.lambda_lwf,
+        lwf_temperature=args.lwf_temperature,
+        lambda_ema=args.lambda_ema,
+        loss_weighting=args.loss_weighting,
         router_anchor_margin=args.router_anchor_margin,
         router_weight_decay=args.router_weight_decay,
         device=device,
@@ -1296,6 +1301,36 @@ if __name__ == "__main__":
         help=(
             "Prototype eviction policy: over-represented task (original), the "
             "same but protecting the newest task, or uniform reservoir"
+        ),
+    )
+    parser.add_argument(
+        "--lambda_lwf",
+        type=float,
+        default=0.0,
+        help="Learning-without-forgetting weight vs the pre-task snapshot",
+    )
+    parser.add_argument("--lwf_temperature", type=float, default=2.0)
+    parser.add_argument(
+        "--lambda_ema",
+        type=float,
+        default=0.0,
+        help="EMA-teacher representation distillation weight (trainable encoders)",
+    )
+    parser.add_argument(
+        "--ema_encoder",
+        action="store_true",
+        default=False,
+        help="Maintain an EMA copy of the encoder for routing/teacher features",
+    )
+    parser.add_argument("--ema_decay", type=float, default=0.99)
+    parser.add_argument(
+        "--loss_weighting",
+        type=str,
+        default="fixed",
+        choices=["fixed", "uncertainty"],
+        help=(
+            "fixed: lambda-weighted sum (published recipes); uncertainty: "
+            "learned homoscedastic weights for task/router/expert/ood"
         ),
     )
     parser.add_argument(
