@@ -9,12 +9,13 @@ Interface matches pal_moe.baselines.replay.ReplayTrainer:
     trainer.train_task(task_id, train_loader, epochs)
 """
 
-import random
 from typing import Any, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from .buffer import SampleBuffer
 
 
 class AGEM:
@@ -24,6 +25,7 @@ class AGEM:
         buffer_size: int = 200,
         lr: float = 1e-3,
         device: torch.device = torch.device("cpu"),
+        sampling: str = "recency",
     ):
         self.model = model
         self.buffer_size = buffer_size
@@ -31,8 +33,7 @@ class AGEM:
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        self.buffer_x: list[torch.Tensor] = []
-        self.buffer_y: list[torch.Tensor] = []
+        self.buffer = SampleBuffer(buffer_size, mode=sampling)
 
     def update_buffer(self, train_loader: Any, seen_tasks: int) -> None:
         collected_x, collected_y = [], []
@@ -42,25 +43,12 @@ class AGEM:
         cat_x = torch.cat(collected_x, dim=0)
         cat_y = torch.cat(collected_y, dim=0)
 
-        budget = max(1, self.buffer_size // max(seen_tasks, 1))
-        indices = list(range(cat_x.size(0)))
-        random.shuffle(indices)
-        for idx in indices[:budget]:
-            self.buffer_x.append(cat_x[idx].clone())
-            self.buffer_y.append(cat_y[idx].clone())
-        if len(self.buffer_x) > self.buffer_size:
-            self.buffer_x = self.buffer_x[-self.buffer_size :]
-            self.buffer_y = self.buffer_y[-self.buffer_size :]
+        self.buffer.add_task(cat_x, cat_y, seen_tasks=seen_tasks)
 
     def get_ref_batch(
         self, batch_size: int
     ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-        if not self.buffer_x:
-            return None, None
-        n = min(batch_size, len(self.buffer_x))
-        indices = [random.randint(0, len(self.buffer_x) - 1) for _ in range(n)]
-        rx = torch.stack([self.buffer_x[i] for i in indices]).to(self.device)
-        ry = torch.stack([self.buffer_y[i] for i in indices]).to(self.device)
+        rx, ry, _ = self.buffer.sample_tensors(batch_size, self.device)
         return rx, ry
 
     def _flatten_grad(self) -> torch.Tensor:

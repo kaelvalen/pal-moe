@@ -625,7 +625,9 @@ def run_benchmark(
         ewc_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
-        ewc_trainer = EWC(ewc_net, ewc_lambda=1000.0, lr=1e-3, device=device)
+        ewc_trainer = EWC(
+            ewc_net, ewc_lambda=1000.0, lr=1e-3, device=device, online=args.ewc_online
+        )
         evaluator_ewc = ContinualEvaluator(num_tasks=num_tasks, device=device)
         _run_baseline_loop(ewc_trainer, ewc_net, evaluator_ewc, tasks, epochs_per_task)
         results["EWC"] = _record_baseline_result(ewc_net, evaluator_ewc)
@@ -640,7 +642,11 @@ def run_benchmark(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         replay_trainer_budget = ReplayTrainer(
-            replay_net_budget, buffer_size=60, lr=1e-3, device=device
+            replay_net_budget,
+            buffer_size=60,
+            lr=1e-3,
+            device=device,
+            sampling=args.buffer_sampling,
         )
         evaluator_replay_budget = ContinualEvaluator(num_tasks=num_tasks, device=device)
         _run_baseline_loop(
@@ -664,7 +670,11 @@ def run_benchmark(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         replay_trainer_360 = ReplayTrainer(
-            replay_net_360, buffer_size=360, lr=1e-3, device=device
+            replay_net_360,
+            buffer_size=360,
+            lr=1e-3,
+            device=device,
+            sampling=args.buffer_sampling,
         )
         evaluator_replay_360 = ContinualEvaluator(num_tasks=num_tasks, device=device)
         _run_baseline_loop(
@@ -688,7 +698,11 @@ def run_benchmark(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
         replay_trainer = ReplayTrainer(
-            replay_net, buffer_size=250, lr=1e-3, device=device
+            replay_net,
+            buffer_size=250,
+            lr=1e-3,
+            device=device,
+            sampling=args.buffer_sampling,
         )
         evaluator_replay = ContinualEvaluator(num_tasks=num_tasks, device=device)
         _run_baseline_loop(
@@ -707,7 +721,13 @@ def run_benchmark(
         der_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
-        der_trainer = DERPP(der_net, buffer_size=250, lr=1e-3, device=device)
+        der_trainer = DERPP(
+            der_net,
+            buffer_size=250,
+            lr=1e-3,
+            device=device,
+            sampling=args.buffer_sampling,
+        )
         evaluator_der = ContinualEvaluator(num_tasks=num_tasks, device=device)
         _run_baseline_loop(der_trainer, der_net, evaluator_der, tasks, epochs_per_task)
         results["DER++ (P=250)"] = _record_baseline_result(der_net, evaluator_der)
@@ -721,7 +741,13 @@ def run_benchmark(
         erace_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
-        erace_trainer = ERACE(erace_net, buffer_size=250, lr=1e-3, device=device)
+        erace_trainer = ERACE(
+            erace_net,
+            buffer_size=250,
+            lr=1e-3,
+            device=device,
+            sampling=args.buffer_sampling,
+        )
         evaluator_erace = ContinualEvaluator(num_tasks=num_tasks, device=device)
         _run_baseline_loop(
             erace_trainer,
@@ -742,7 +768,13 @@ def run_benchmark(
         agem_net = build_single_head(
             base_encoder, feature_dim, expert_hidden, num_classes, device
         )
-        agem_trainer = AGEM(agem_net, buffer_size=250, lr=1e-3, device=device)
+        agem_trainer = AGEM(
+            agem_net,
+            buffer_size=250,
+            lr=1e-3,
+            device=device,
+            sampling=args.buffer_sampling,
+        )
         evaluator_agem = ContinualEvaluator(num_tasks=num_tasks, device=device)
         _run_baseline_loop(
             agem_trainer, agem_net, evaluator_agem, tasks, epochs_per_task
@@ -993,6 +1025,22 @@ if __name__ == "__main__":
         type=float,
         default=None,
         help="Max prototype distance for anchoring (None = memory distance_threshold)",
+    )
+    parser.add_argument(
+        "--buffer_sampling",
+        type=str,
+        default="recency",
+        choices=["recency", "reservoir"],
+        help=(
+            "Rehearsal-buffer policy for the memory baselines: 'recency' is the "
+            "published behaviour, 'reservoir' is uniform over the task stream"
+        ),
+    )
+    parser.add_argument(
+        "--ewc_online",
+        action="store_true",
+        default=False,
+        help="EWC: keep a single gamma-decayed Fisher instead of one per task",
     )
     parser.add_argument(
         "--router_anchor_steps",

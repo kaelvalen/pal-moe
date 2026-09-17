@@ -12,8 +12,13 @@ import torch.nn.functional as F
 
 class EWC:
     """
-    Online / Multi-task Elastic Weight Consolidation.
+    Multi-task / Online Elastic Weight Consolidation.
     L_ewc = L_new + sum_p (lambda_ewc / 2) * F_p * (theta_p - theta_p*)^2
+
+    By default every task's Fisher matrix is kept and summed (the original
+    behaviour, O(T * params) memory). With `online=True` a single running
+    Fisher with gamma-decayed old mass is maintained instead (Schwarz et al.,
+    2018), which is the standard constant-memory approximation.
     """
 
     def __init__(
@@ -22,6 +27,8 @@ class EWC:
         ewc_lambda: float = 500.0,
         lr: float = 1e-3,
         device: torch.device = torch.device("cpu"),
+        online: bool = False,
+        online_gamma: float = 0.9,
     ):
         self.model = model
         self.ewc_lambda = ewc_lambda
@@ -29,6 +36,8 @@ class EWC:
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
+        self.online = online
+        self.online_gamma = online_gamma
         self.fisher_matrices: list[dict[str, torch.Tensor]] = []
         self.star_params: list[dict[str, torch.Tensor]] = []
 
@@ -65,8 +74,16 @@ class EWC:
         for n in fisher:
             fisher[n] /= max(samples_processed, 1)
 
-        self.fisher_matrices.append(fisher)
-        self.star_params.append(params_star)
+        if self.online and self.fisher_matrices:
+            # F_t <- gamma * F_{t-1} + F_t, with a single star-parameter set.
+            previous = self.fisher_matrices[0]
+            for n in fisher:
+                fisher[n] = self.online_gamma * previous[n] + fisher[n]
+            self.fisher_matrices[0] = fisher
+            self.star_params[0] = params_star
+        else:
+            self.fisher_matrices.append(fisher)
+            self.star_params.append(params_star)
 
     def ewc_loss(self) -> torch.Tensor:
         loss = torch.tensor(0.0, device=self.device)

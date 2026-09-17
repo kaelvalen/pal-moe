@@ -12,12 +12,13 @@ Same interface as pal_moe.baselines.replay.ReplayTrainer:
     trainer.train_task(task_id, train_loader, epochs)
 """
 
-import random
 from typing import Any, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from .buffer import SampleBuffer
 
 
 class DERPP:
@@ -31,6 +32,7 @@ class DERPP:
         alpha: float = 0.5,
         beta: float = 0.5,
         device: torch.device = torch.device("cpu"),
+        sampling: str = "recency",
     ):
         self.model = model
         self.buffer_size = buffer_size
@@ -40,9 +42,7 @@ class DERPP:
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        self.buffer_x: list[torch.Tensor] = []
-        self.buffer_y: list[torch.Tensor] = []
-        self.buffer_logits: list[torch.Tensor] = []
+        self.buffer = SampleBuffer(buffer_size, mode=sampling)
 
     def update_buffer(
         self, train_loader: Any, seen_tasks: int, logit_batch_size: int = 512
@@ -61,11 +61,6 @@ class DERPP:
         cat_x = torch.cat(collected_x, dim=0)
         cat_y = torch.cat(collected_y, dim=0)
 
-        budget = max(1, self.buffer_size // max(seen_tasks, 1))
-        indices = list(range(cat_x.size(0)))
-        random.shuffle(indices)
-        selected = indices[:budget]
-
         logit_chunks = []
         with torch.no_grad():
             for start in range(0, cat_x.size(0), logit_batch_size):
@@ -73,27 +68,12 @@ class DERPP:
                 logit_chunks.append(self.model(chunk).detach().cpu())
         logits_all = torch.cat(logit_chunks, dim=0)
 
-        for idx in selected:
-            self.buffer_x.append(cat_x[idx].clone())
-            self.buffer_y.append(cat_y[idx].clone())
-            self.buffer_logits.append(logits_all[idx].clone())
-
-        if len(self.buffer_x) > self.buffer_size:
-            self.buffer_x = self.buffer_x[-self.buffer_size :]
-            self.buffer_y = self.buffer_y[-self.buffer_size :]
-            self.buffer_logits = self.buffer_logits[-self.buffer_size :]
+        self.buffer.add_task(cat_x, cat_y, logits_all, seen_tasks=seen_tasks)
 
     def get_replay_batch(
         self, batch_size: int
     ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
-        if not self.buffer_x:
-            return None, None, None
-        n = min(batch_size, len(self.buffer_x))
-        indices = [random.randint(0, len(self.buffer_x) - 1) for _ in range(n)]
-        bx = torch.stack([self.buffer_x[i] for i in indices]).to(self.device)
-        by = torch.stack([self.buffer_y[i] for i in indices]).to(self.device)
-        bl = torch.stack([self.buffer_logits[i] for i in indices]).to(self.device)
-        return bx, by, bl
+        return self.buffer.sample_tensors(batch_size, self.device)
 
     def train_task(
         self, task_id: int, train_loader: Any, epochs: int = 5
@@ -138,6 +118,7 @@ class ERACE:
         buffer_size: int = 200,
         lr: float = 1e-3,
         device: torch.device = torch.device("cpu"),
+        sampling: str = "recency",
     ):
         self.model = model
         self.buffer_size = buffer_size
@@ -145,8 +126,7 @@ class ERACE:
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        self.buffer_x: list[torch.Tensor] = []
-        self.buffer_y: list[torch.Tensor] = []
+        self.buffer = SampleBuffer(buffer_size, mode=sampling)
         self.classes_per_task: list[list[int]] = []
 
     def update_buffer(
@@ -159,27 +139,13 @@ class ERACE:
         cat_x = torch.cat(collected_x, dim=0)
         cat_y = torch.cat(collected_y, dim=0)
 
-        budget = max(1, self.buffer_size // max(seen_tasks, 1))
-        indices = list(range(cat_x.size(0)))
-        random.shuffle(indices)
-        for idx in indices[:budget]:
-            self.buffer_x.append(cat_x[idx].clone())
-            self.buffer_y.append(cat_y[idx].clone())
+        self.buffer.add_task(cat_x, cat_y, seen_tasks=seen_tasks)
         self.classes_per_task.append(list(current_classes))
-
-        if len(self.buffer_x) > self.buffer_size:
-            self.buffer_x = self.buffer_x[-self.buffer_size :]
-            self.buffer_y = self.buffer_y[-self.buffer_size :]
 
     def get_replay_batch(
         self, batch_size: int
     ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-        if not self.buffer_x:
-            return None, None
-        n = min(batch_size, len(self.buffer_x))
-        indices = [random.randint(0, len(self.buffer_x) - 1) for _ in range(n)]
-        bx = torch.stack([self.buffer_x[i] for i in indices]).to(self.device)
-        by = torch.stack([self.buffer_y[i] for i in indices]).to(self.device)
+        bx, by, _ = self.buffer.sample_tensors(batch_size, self.device)
         return bx, by
 
     def train_task(
@@ -194,10 +160,13 @@ class ERACE:
             current_classes = [2 * task_id, 2 * task_id + 1]
         self.model.train()
         self.classes_per_task.append(list(current_classes))
-        losses = []
+        total_loss = torch.zeros((), device=self.device)
+        n_updates = 0
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, non_blocking=True), y.to(
+                    self.device, non_blocking=True
+                )
                 self.optimizer.zero_grad()
                 logits = self.model(x)
                 # Standard CE over all classes for current-task samples
@@ -215,9 +184,13 @@ class ERACE:
 
                 loss.backward()
                 self.optimizer.step()
-                losses.append(loss.item())
+                total_loss += loss.detach()
+                n_updates += 1
 
         self.update_buffer(
             train_loader, seen_tasks=task_id + 1, current_classes=current_classes
         )
-        return {"task_id": task_id, "loss": sum(losses) / max(len(losses), 1)}
+        return {
+            "task_id": task_id,
+            "loss": float(total_loss.item()) / max(n_updates, 1),
+        }
