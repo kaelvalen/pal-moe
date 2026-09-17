@@ -105,7 +105,12 @@ class ExpertBuilder:
                 with torch.no_grad():
                     h = encoder(x)
 
-                logits = candidate_expert(h)
+                # track_usage=False: a candidate is not part of the model's
+                # expert pool yet, so its training batches must not inflate the
+                # usage statistics that capacity control uses to pick prune and
+                # merge candidates (a freshly added expert would otherwise look
+                # heavily used from the first moment).
+                logits = candidate_expert(h, track_usage=False)
                 loss_task = F.cross_entropy(logits, y)
 
                 # Distillation loss on old prototype anchors

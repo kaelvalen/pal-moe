@@ -119,7 +119,9 @@ def test_prototype_routing_confidence_scales_with_ambiguity():
     model.set_prototype_routing(memory, alpha=1.0)
     with torch.no_grad():
         anchors, confidence = model._prototype_routing_anchor(query.unsqueeze(0))
-    assert confidence.item() < 0.05, f"ambiguous input should not be anchored: {confidence}"
+    assert confidence.item() < 0.05, (
+        f"ambiguous input should not be anchored: {confidence}"
+    )
     assert anchors.shape == (1, 2)
 
 
@@ -147,9 +149,10 @@ def test_attention_router_routing_expansion_and_lock():
     assert new_id == 2 and router.num_experts == 3
     assert torch.allclose(router.keys.data[0], old_key0)
     aligned = torch.nn.functional.normalize(h[0], dim=0)
-    assert torch.dot(
-        torch.nn.functional.normalize(router.keys.data[2], dim=0), aligned
-    ) > 0.99
+    assert (
+        torch.dot(torch.nn.functional.normalize(router.keys.data[2], dim=0), aligned)
+        > 0.99
+    )
 
     # Locked historical keys receive no gradient
     router.lock_historical_routing(2)
@@ -327,7 +330,10 @@ def test_feature_cache_matches_raw_encoder():
         ],
     )
     cached_model.load_state_dict(
-        {k.replace("encoder.", "encoder.", 1): v for k, v in raw_model.state_dict().items()},
+        {
+            k.replace("encoder.", "encoder.", 1): v
+            for k, v in raw_model.state_dict().items()
+        },
         strict=False,
     )
     with torch.no_grad():
@@ -339,19 +345,26 @@ def test_feature_cache_matches_raw_encoder():
 def test_prototype_auto_threshold_and_class_balanced_eviction():
     torch.manual_seed(0)
     memory = PrototypeMemory(
-        feature_dim=4, distance_threshold=None, max_prototypes=8,
+        feature_dim=4,
+        distance_threshold=None,
+        max_prototypes=8,
         max_prototypes_per_class=2,
     )
     torch.manual_seed(0)
     cluster_a = torch.randn(10, 4) * 0.01
     cluster_b = torch.randn(10, 4) * 0.01 + 5.0
     feats = torch.cat([cluster_a, cluster_b], dim=0)
-    labels = torch.cat([torch.zeros(10, dtype=torch.long), torch.ones(10, dtype=torch.long)])
+    labels = torch.cat(
+        [torch.zeros(10, dtype=torch.long), torch.ones(10, dtype=torch.long)]
+    )
     routing = torch.softmax(torch.randn(20, 2), dim=-1)
     outs = torch.randn(20, 2, 4)
     memory.register_task_batch(
-        features=feats, routing_dists=routing, all_expert_outs=outs,
-        task_id=0, labels=labels,
+        features=feats,
+        routing_dists=routing,
+        all_expert_outs=outs,
+        task_id=0,
+        labels=labels,
     )
     assert memory.distance_threshold is not None and memory.distance_threshold > 0
     # Scale-free clustering must compress the batch meaningfully instead of the
@@ -374,12 +387,12 @@ def test_prototype_auto_threshold_and_class_balanced_eviction():
 
     # Class-balanced eviction: both classes survive under the quota
     memory2 = PrototypeMemory(
-        feature_dim=4, distance_threshold=1e-6, max_prototypes=2,
+        feature_dim=4,
+        distance_threshold=1e-6,
+        max_prototypes=2,
         max_prototypes_per_class=1,
     )
-    feats2 = torch.tensor(
-        [[0.0, 0, 0, 0], [10.0, 0, 0, 0], [20.0, 0, 0, 0]]
-    )
+    feats2 = torch.tensor([[0.0, 0, 0, 0], [10.0, 0, 0, 0], [20.0, 0, 0, 0]])
     labels2 = torch.tensor([0, 0, 1])
     memory2.register_task_batch(
         features=feats2,
@@ -414,7 +427,11 @@ def test_optimizer_state_is_carried_across_rebuilds():
     out = model(x).sum()
     out.backward()
     trainer.optimizer.step()
-    before = {id(p): s["step"].item() for p, s in trainer.optimizer.state.items() if "step" in s}
+    before = {
+        id(p): s["step"].item()
+        for p, s in trainer.optimizer.state.items()
+        if "step" in s
+    }
     assert before, "optimizer state should be populated after a step"
 
     rebuilt = trainer._build_optimizer()
@@ -472,7 +489,9 @@ def test_refresh_anchors_updates_targets():
     assert not torch.allclose(memory.prototypes[0].r_p, old_rp)
     assert not torch.allclose(memory.prototypes[0].o_p, old_op)
     with torch.no_grad():
-        expected_rp = model.router.get_full_distribution(memory.get_prototype_matrix(torch.device("cpu")))[0]
+        expected_rp = model.router.get_full_distribution(
+            memory.get_prototype_matrix(torch.device("cpu"))
+        )[0]
     assert torch.allclose(memory.prototypes[0].r_p, expected_rp.cpu(), atol=1e-5)
 
 
@@ -484,12 +503,20 @@ def test_owner_aware_merging_never_crosses_tasks():
     outs = torch.randn(1, 2, 4)
 
     memory.register_task_batch(
-        features=base, routing_dists=routing, all_expert_outs=outs,
-        task_id=0, labels=torch.tensor([0]), owner_expert=0,
+        features=base,
+        routing_dists=routing,
+        all_expert_outs=outs,
+        task_id=0,
+        labels=torch.tensor([0]),
+        owner_expert=0,
     )
     memory.register_task_batch(
-        features=base, routing_dists=routing, all_expert_outs=outs,
-        task_id=1, labels=torch.tensor([1]), owner_expert=1,
+        features=base,
+        routing_dists=routing,
+        all_expert_outs=outs,
+        task_id=1,
+        labels=torch.tensor([1]),
+        owner_expert=1,
     )
     # Identical features, different owners -> two prototypes (no cross-task merge)
     assert len(memory.prototypes) == 2
@@ -497,8 +524,12 @@ def test_owner_aware_merging_never_crosses_tasks():
 
     # Same owner within the merge radius -> merges into the existing prototype
     memory.register_task_batch(
-        features=base + 1e-6, routing_dists=routing, all_expert_outs=outs,
-        task_id=0, labels=torch.tensor([0]), owner_expert=0,
+        features=base + 1e-6,
+        routing_dists=routing,
+        all_expert_outs=outs,
+        task_id=0,
+        labels=torch.tensor([0]),
+        owner_expert=0,
     )
     assert len(memory.prototypes) == 2
     assert memory.prototypes[0].count == 2
@@ -506,9 +537,7 @@ def test_owner_aware_merging_never_crosses_tasks():
 
 def test_frozen_encoder_stays_in_eval_mode():
     """freeze() must survive a later model.train() so BN statistics cannot drift."""
-    enc = SharedEncoder(
-        input_dim=3072, hidden_dims=None, output_dim=8, arch="conv"
-    )
+    enc = SharedEncoder(input_dim=3072, hidden_dims=None, output_dim=8, arch="conv")
     enc.freeze()
     x = torch.randn(4, 3, 32, 32)
     with torch.no_grad():
@@ -527,13 +556,27 @@ def test_frozen_encoder_stays_in_eval_mode():
 
 
 def test_conv_encoder_channels_and_feature_dim():
-    default = SharedEncoder(input_dim=3072, hidden_dims=None, output_dim=128, arch="conv")
+    default = SharedEncoder(
+        input_dim=3072, hidden_dims=None, output_dim=128, arch="conv"
+    )
     # Default channels must reproduce the original 3-stage layout exactly
     assert [type(m).__name__ for m in default.net] == [
-        "Conv2d", "BatchNorm2d", "ReLU", "MaxPool2d",
-        "Conv2d", "BatchNorm2d", "ReLU", "MaxPool2d",
-        "Conv2d", "BatchNorm2d", "ReLU",
-        "AdaptiveAvgPool2d", "Flatten", "Linear", "BatchNorm1d", "ReLU",
+        "Conv2d",
+        "BatchNorm2d",
+        "ReLU",
+        "MaxPool2d",
+        "Conv2d",
+        "BatchNorm2d",
+        "ReLU",
+        "MaxPool2d",
+        "Conv2d",
+        "BatchNorm2d",
+        "ReLU",
+        "AdaptiveAvgPool2d",
+        "Flatten",
+        "Linear",
+        "BatchNorm1d",
+        "ReLU",
     ]
     assert default.net[-3].in_features == 128
 
@@ -1227,6 +1270,192 @@ def test_icarl_smoke():
     out = tr.eval_model()(xs[:8])
     assert out.shape == (8, 10)
     print("iCaRL smoke OK")
+
+
+def test_merge_experts_merges_router_rows_and_owner_indices():
+    """Merge must be consistent across experts, router rows and prototype owners."""
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=3, top_k=1)
+    experts = [MLPExpert(8, 8, 4, i) for i in range(3)]
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+
+    with torch.no_grad():
+        experts[0].fc1.weight.fill_(1.0)
+        experts[1].fc1.weight.fill_(3.0)
+        experts[0].usage_count.fill_(3)
+        experts[1].usage_count.fill_(4)
+        router.gate.weight[0].fill_(1.0)
+        router.gate.weight[1].fill_(3.0)
+        router.gate.bias[0].fill_(1.0)
+        router.gate.bias[1].fill_(3.0)
+
+    mem = PrototypeMemory(feature_dim=8)
+    mem.update_or_create_prototype(
+        torch.randn(8),
+        torch.tensor([0.3, 0.5, 0.2]),
+        torch.randn(3, 4),
+        task_id=0,
+        owner_expert=1,
+    )
+    mem.update_or_create_prototype(
+        torch.randn(8),
+        torch.tensor([0.0, 0.1, 0.9]),
+        torch.randn(3, 4),
+        task_id=1,
+        owner_expert=2,
+    )
+
+    moe.merge_experts(0, 1, prototype_memory=mem)
+
+    assert moe.num_experts == 2
+    assert moe.router.num_experts == 2
+    # Full parameter midpoint (base pathway), not just fc1/fc2
+    fc1_w = moe.experts[0].fc1.weight
+    assert torch.allclose(fc1_w, torch.full_like(fc1_w, 2.0))
+    assert moe.experts[0].usage_count.item() == 7
+    # Router row 0 is the average of the two merged rows; row 1 is the old row 2
+    for param in (moe.router.gate.weight[0], moe.router.gate.bias[0]):
+        assert torch.allclose(param, torch.full_like(param, 2.0))
+    # Prototype owners are re-indexed: 1 -> 0, 2 -> 1
+    assert mem.prototypes[0].owner_expert == 0
+    assert mem.prototypes[1].owner_expert == 1
+    # r_p mass of the merged expert folds into idx1 and is renormalized
+    p = mem.prototypes[0]
+    assert abs(p.r_p[0].item() - 0.8 / 1.0) < 1e-5
+    assert abs(p.r_p[1].item() - 0.2) < 1e-5
+    assert abs(p.r_p.sum().item() - 1.0) < 1e-5
+
+
+def test_prune_keeps_historical_routing_lock():
+    """Rebuilding the gate in prune_expert must not drop the lock hooks."""
+    torch.manual_seed(0)
+    router = DynamicRouter(input_dim=8, num_experts=3, top_k=1)
+    router.lock_historical_routing(2)
+    router.prune_expert(0)  # drops former row 0; former row 1 (locked) becomes row 0
+    assert router.num_experts == 2
+    assert router.locked_experts == 1
+
+    h = torch.randn(6, 8)
+    weights, _, _ = router(h)
+    weights.sum().backward()
+    assert router.gate.weight.grad[0].abs().sum().item() == 0.0
+    assert router.gate.weight.grad[1].abs().sum().item() > 0.0
+
+    # Lock count also stays consistent for the other router variants
+    from pal_moe.models.router import AttentionRouter, DistanceRouter
+
+    for cls in (AttentionRouter, DistanceRouter):
+        r = cls(input_dim=8, num_experts=3, top_k=1)
+        r.lock_historical_routing(2)
+        r.prune_expert(0)
+        assert r.locked_experts == 1 and r.num_experts == 2
+
+
+def test_candidate_training_does_not_inflate_usage():
+    """Candidate experts train outside the pool, so their usage stays at zero."""
+    parent = MLPExpert(input_dim=8, hidden_dim=8, num_classes=3, expert_id=0)
+    builder = ExpertBuilder()
+    child = builder.create_candidate_from_parent(
+        parent, new_expert_id=1, creation_task=1
+    )
+
+    x = torch.randn(12, 8)
+    y = torch.randint(0, 3, (12,))
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(x, y), batch_size=4
+    )
+    builder.train_candidate(child, encoder=nn.Identity(), train_loader=loader, epochs=2)
+    assert child.usage_count.item() == 0
+
+
+def test_prototype_routing_confidence_uses_task_margin():
+    """conf = clamp(1 - d1/d2, 0, 1) with d2 the nearest other-task prototype."""
+    torch.manual_seed(0)
+    enc = nn.Identity()
+    router = DynamicRouter(input_dim=4, num_experts=2, top_k=1)
+    experts = [MLPExpert(4, 4, 3, i) for i in range(2)]
+    model = DynamicMoE(enc, router, experts)
+    model.eval()
+
+    mem = PrototypeMemory(feature_dim=4)
+    mem.update_or_create_prototype(
+        torch.zeros(4),
+        torch.tensor([1.0, 0.0]),
+        torch.zeros(2, 3),
+        task_id=0,
+        owner_expert=0,
+    )
+    mem.update_or_create_prototype(
+        torch.tensor([10.0, 0.0, 0.0, 0.0]),
+        torch.tensor([0.0, 1.0]),
+        torch.zeros(2, 3),
+        task_id=1,
+        owner_expert=1,
+    )
+    model.set_prototype_routing(mem, alpha=1.0)
+
+    with torch.no_grad():
+        # Clearly inside task 0's region: d1 = 1, d2 = 9
+        _, conf = model._prototype_routing_anchor(torch.tensor([[1.0, 0, 0, 0]]))
+        assert abs(conf.item() - (1.0 - 1.0 / 9.0)) < 1e-5
+
+        # Equidistant between the two tasks: maximum ambiguity -> 0
+        _, conf_mid = model._prototype_routing_anchor(torch.tensor([[5.0, 0, 0, 0]]))
+        assert conf_mid.item() < 1e-6
+
+        # Single-task memory: no cross-task ambiguity -> 1
+        mem_single = PrototypeMemory(feature_dim=4)
+        mem_single.update_or_create_prototype(
+            torch.zeros(4),
+            torch.tensor([1.0, 0.0]),
+            torch.zeros(2, 3),
+            task_id=0,
+        )
+        model.set_prototype_routing(mem_single, alpha=1.0)
+        _, conf_single = model._prototype_routing_anchor(torch.tensor([[1.0, 0, 0, 0]]))
+        assert conf_single.item() == 1.0
+
+
+def test_config_validation_and_precedence(tmp_path):
+    """--config is validated and explicit CLI flags win over config values."""
+    import argparse
+    import json
+
+    from pal_moe.config import ConfigError, apply_config
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--lambda_ood", type=float, default=0.1)
+    parser.add_argument("--anchor", action="store_true")
+    parser.add_argument(
+        "--joint_freeze_router", action=argparse.BooleanOptionalAction, default=False
+    )
+
+    cfg_path = tmp_path / "cfg.json"
+    cfg_path.write_text(json.dumps({"epochs": 5, "lambda_ood": 0.2, "anchor": True}))
+    args = parser.parse_args(["--epochs", "7"])
+    apply_config(args, parser, ["--epochs", "7"], str(cfg_path))
+    assert args.epochs == 7  # explicit CLI wins
+    assert args.lambda_ood == 0.2  # config wins over the default
+    assert args.anchor is True
+
+    cfg_path.write_text(json.dumps({"epochz": 1}))
+    with pytest.raises(ConfigError):
+        apply_config(args, parser, [], str(cfg_path))
+
+    cfg_path.write_text(json.dumps({"epochs": "many"}))
+    with pytest.raises(ConfigError):
+        apply_config(args, parser, [], str(cfg_path))
+
+    cfg_path.write_text(json.dumps({"lambda_ood": -1.0}))
+    with pytest.raises(ConfigError):
+        apply_config(args, parser, [], str(cfg_path))
+
+    cfg_path.write_text(json.dumps({"joint_freeze_router": True}))
+    args2 = parser.parse_args(["--no-joint_freeze_router"])
+    apply_config(args2, parser, ["--no-joint_freeze_router"], str(cfg_path))
+    assert args2.joint_freeze_router is False
 
 
 def test_split_cifar100_loader():

@@ -33,6 +33,7 @@ from pal_moe.memory.prototype_memory import PrototypeMemory
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
 from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.adaptation.ttt import ContinualTrainer
+from pal_moe.config import ConfigError, apply_config
 from pal_moe.baselines.naive import NaiveFineTuning
 from pal_moe.baselines.der import DERPP, ERACE
 from pal_moe.baselines.agem import AGEM
@@ -276,7 +277,12 @@ def run_benchmark(
     set_seed(args.seed)
     naive_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
     ).to(device)
     naive_trainer = NaiveFineTuning(naive_net, lr=1e-3, device=device)
     evaluator_naive = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -307,7 +313,12 @@ def run_benchmark(
     set_seed(args.seed)
     ewc_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
     ).to(device)
     ewc_trainer = EWC(ewc_net, ewc_lambda=1000.0, lr=1e-3, device=device)
     evaluator_ewc = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -338,7 +349,12 @@ def run_benchmark(
     set_seed(args.seed)
     replay_net_budget = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
     ).to(device)
     replay_trainer_budget = ReplayTrainer(
         replay_net_budget, buffer_size=60, lr=1e-3, device=device
@@ -375,7 +391,12 @@ def run_benchmark(
     set_seed(args.seed)
     replay_net_360 = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
     ).to(device)
     replay_trainer_360 = ReplayTrainer(
         replay_net_360, buffer_size=360, lr=1e-3, device=device
@@ -410,7 +431,12 @@ def run_benchmark(
     set_seed(args.seed)
     replay_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
     ).to(device)
     replay_trainer = ReplayTrainer(replay_net, buffer_size=250, lr=1e-3, device=device)
     evaluator_replay = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -441,7 +467,12 @@ def run_benchmark(
     set_seed(args.seed)
     der_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
     ).to(device)
     der_trainer = DERPP(der_net, buffer_size=250, lr=1e-3, device=device)
     evaluator_der = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -472,7 +503,12 @@ def run_benchmark(
     set_seed(args.seed)
     erace_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
     ).to(device)
     erace_trainer = ERACE(erace_net, buffer_size=250, lr=1e-3, device=device)
     evaluator_erace = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -508,7 +544,12 @@ def run_benchmark(
     set_seed(args.seed)
     agem_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
     ).to(device)
     agem_trainer = AGEM(agem_net, buffer_size=250, lr=1e-3, device=device)
     evaluator_agem = ContinualEvaluator(num_tasks=num_tasks, device=device)
@@ -541,7 +582,12 @@ def run_benchmark(
     set_seed(args.seed)
     icarl_net = nn.Sequential(
         copy.deepcopy(base_encoder),
-        MLPExpert(input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0),
+        MLPExpert(
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
+        ),
     ).to(device)
     icarl_trainer = ICaRL(
         icarl_net,
@@ -587,7 +633,10 @@ def run_benchmark(
     std_router = DynamicRouter(input_dim=feature_dim, num_experts=4, top_k=1).to(device)
     std_experts = [
         MLPExpert(
-            input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=i
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=i,
         ).to(device)
         for i in range(4)
     ]
@@ -654,7 +703,10 @@ def run_benchmark(
     dyn_router = _build_router(args.router_type, feature_dim, args.top_k, device)
     initial_experts = [
         MLPExpert(
-            input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
         ).to(device)
     ]
     moe_model = DynamicMoE(
@@ -686,8 +738,8 @@ def run_benchmark(
         prototype_memory=prototype_mem,
         trigger=trigger,
         builder=builder,
-        lambda_r=0.5,
-        lambda_e=2.5,
+        lambda_r=args.lambda_r,
+        lambda_e=args.lambda_e,
         lambda_enc=0.5 if encoder_ft else 0.0,
         encoder_lr=1e-4 if encoder_ft else None,
         lr=1e-3,
@@ -765,7 +817,10 @@ def run_benchmark(
     hyb_router = _build_router(args.router_type, feature_dim, args.top_k, device)
     initial_experts_hyb = [
         MLPExpert(
-            input_dim=feature_dim, hidden_dim=expert_hidden, num_classes=num_classes, expert_id=0
+            input_dim=feature_dim,
+            hidden_dim=expert_hidden,
+            num_classes=num_classes,
+            expert_id=0,
         ).to(device)
     ]
     moe_hyb = DynamicMoE(
@@ -796,8 +851,8 @@ def run_benchmark(
         prototype_memory=prototype_mem_hyb,
         trigger=trigger_hyb,
         builder=builder_hyb,
-        lambda_r=0.5,
-        lambda_e=2.5,
+        lambda_r=args.lambda_r,
+        lambda_e=args.lambda_e,
         lambda_enc=0.5 if encoder_ft else 0.0,
         encoder_lr=1e-4 if encoder_ft else None,
         replay_exemplars=True,
@@ -1119,26 +1174,35 @@ if __name__ == "__main__":
         default=None,
         help="Historical prototype accuracy drop tolerance (None = dataset default)",
     )
+    parser.add_argument(
+        "--lambda_r",
+        type=float,
+        default=0.5,
+        help="Router stability loss weight (KL to stored routing targets)",
+    )
+    parser.add_argument(
+        "--lambda_e",
+        type=float,
+        default=2.5,
+        help="Expert stability loss weight (MSE to stored output anchors)",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
         "--config",
         type=str,
         default=None,
-        help="JSON config file overriding CLI defaults",
+        help=(
+            "JSON config file (validated; explicit CLI flags take precedence, "
+            "config values take precedence over defaults)"
+        ),
     )
     args = parser.parse_args()
 
     if args.config:
-        import json as _json
-
-        with open(args.config) as _cf:
-            _cfg = _json.load(_cf)
-        unknown = sorted(k for k in _cfg if not hasattr(args, k))
-        if unknown:
-            print(f"[config] WARNING: unknown keys ignored: {unknown}")
-        for _k, _v in _cfg.items():
-            if hasattr(args, _k):
-                setattr(args, _k, _v)
+        try:
+            apply_config(args, parser, sys.argv[1:], args.config)
+        except ConfigError as _cfg_err:
+            raise SystemExit(f"[config] {_cfg_err}")
 
     if args.feature_cache and not args.freeze_encoder:
         raise SystemExit(
