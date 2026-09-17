@@ -191,9 +191,6 @@ extracted).
 
 ## Measured design facts (controlled experiments)
 
-All figures below are Split-MNIST, seed 42, 3 epochs/task, current code
-(`experiments/run_pure_explore.py` + `debug_routing_asymmetry.py`):
-
 1. **OOD negative-boundary loss is the decisive pure-mode mechanism.**
    Max-entropy on historical prototypes for the newest expert lifts pure
    zero-replay accuracy from **49.85% → 76.60%** (forgetting 54.00 → 23.05)
@@ -322,6 +319,72 @@ All figures below are Split-MNIST, seed 42, 3 epochs/task, current code
     while storing **zero raw exemplars**. The hybrid (P=250) is statistically
     indistinguishable (37.85%), i.e. the latent anchors carry the readout at
     this geometry. Multi-seed validation is the remaining step.
+
+12. **The training recipe simplifies: distillation replaces joint
+    calibration.** Controlled grid on Split-CIFAR-10 (pure, frozen encoder,
+    feature cache, 5 epochs/task, 50 SimCLR epochs, seed 42, 8 cells):
+
+    | OOD | joint calib | distill | Avg Acc | Forgetting | Util. entropy |
+    | :---: | :---: | :---: | :---: | :---: | :---: |
+    | 0.1 | off | 300 | **32.5%** | **24.1%** | **0.997** |
+    | 0.0 | off | 300 | 31.8% | 26.4% | 0.994 |
+    | 0.1 | 5 | 300 | 31.4% | 26.4% | 0.995 |
+    | 0.1 | 5 | off | 30.5% | 44.9% | 0.626 |
+    | 0.0 | 5 | 300 | 30.2% | 30.2% | 0.997 |
+    | 0.1 | off | off | 22.9% | 66.4% | 0.542 |
+    | 0.0 | 5 | off | 19.4% | 48.0% | 0.433 |
+    | 0.0 | off | off | 18.4% | 68.6% | 0.427 |
+
+    (a) **Distillation is the dominant mechanism**: without it the best cell
+    reaches 30.5% / 44.9% forgetting vs 32.5% / 24.1% with it.
+    (b) **Calibration and distillation are substitutes**: with distillation,
+    calibration adds nothing (32.5 → 31.4) and slightly hurts; without it,
+    calibration is critical (22.9 → 30.5). The default recipe therefore sets
+    `--joint_calib_epochs 0`, which also removes the stale-anchor tension.
+    (c) **OOD is a small, consistent positive** (+0.7-1.2 acc, 2-4 pp less
+    forgetting).
+
+    **Budget caveat (measured at the 15-epoch schedule, seed 42):** with the
+    fixed threshold, calibration is *not* redundant at longer schedules —
+    calib-on reaches **37.60%** vs **35.03%** for the calib-off/auto-threshold
+    cell (and 34.62% for calib-on/auto). The long-schedule default therefore
+    keeps calibration and the fixed threshold
+    (`configs/cifar10_big_final.json`), while the 5-epoch comparison table uses
+    the simplified recipe (`configs/cifar10_big_final_full.json`).
+
+13. **Registration needs owner-aware merging; soft top-2 does not pay off.**
+    With the scale-free `--proto_threshold auto`, prototypes from different
+    tasks could merge and inherit a single owner, so the router distillation
+    routed one task to the other's expert (auto: 30.4% / 39.7% forgetting vs the
+    fixed-0.5 baseline 32.5% / 24.1%). Merging is now restricted to same-owner
+    prototypes; with that fix `auto` + `--proto_per_class` is the best cell
+    (**33.0% / 22.6%**). Class-balanced eviction alone at threshold 0.5 changes
+    little (32.4% / 26.6%), and `--proto_samples 1024` hurts under the 1000-
+    prototype quota (29.5% / 53.9%). `--top_k 2` raises accuracy slightly
+    (33.4%) but more than doubles forgetting (36.4%), so top-1 remains the
+    default. Final validated recipe: `configs/cifar10_big_final.json`.
+
+    **Budget caveat:** the auto threshold wins at the 5-epoch budget but costs
+    ~3 points at 15 epochs (calib-on: 37.60% fixed vs 34.62% auto), so the fixed
+    `0.5` threshold remains the long-schedule default. The feature cache itself
+    is neutral (seed-42 with cache 37.60% vs 36.72% without).
+
+All figures below are Split-MNIST, seed 42, 3 epochs/task, current code
+(`experiments/run_pure_explore.py` + `debug_routing_asymmetry.py`):
+
+14. **A frozen encoder must stay in `eval()` everywhere — including the
+    baselines.** The earlier same-budget CIFAR table (`results/cifar10_big_frozen_full`)
+    trained each baseline with `model.train()`, which flipped the "frozen" conv
+    encoder's BatchNorm layers back to training mode: their features drifted with
+    every task and the replay baselines were badly understated (DER++ 21.6%,
+    iCaRL 8.6%, ER 20.6%). `--feature_cache` removes the encoder from the
+    baselines' loops entirely; the corrected table (`results/cifar10_final_full`)
+    reads DER++ **32.8%**, AGEM 28.3%, iCaRL 26.1%, ER 25.4%, ER-ACE 25.3% —
+    while PAL-MoE pure reaches **35.5% / 24.1% forgetting** and the hybrid
+    **36.9% / 22.1%**. The honest margin over the best baseline is therefore
+    ~2.7 accuracy points with ~2.5x less forgetting (not the ~14-point gap the
+    flawed table suggested; that discrepancy is a baseline-side BN-drift
+    artifact, reported here for the record).
 
 ## Ablations
 
