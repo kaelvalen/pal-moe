@@ -240,15 +240,28 @@ epochs, `configs/mnist_default.json`; base = 79.69% / 6.85% forgetting):
 These are single-seed measurements to guide the next validation round, not
 published claims.
 
-**20-task Split-CIFAR-100 stress run** (`results/cifar100_20task`, frozen
-encoder, 20 SimCLR epochs, 1 epoch/task, `--task_free_eval`): the pipeline runs
-end-to-end through 20 expansions with capacity control capped at 6 experts;
-pure 5.82% / 26.79% forgetting vs hybrid 7.13% / 13.68%; router-distillation
-owner routing accuracy is 100%; task-free stream scores are 5.8% (pure) and
-7.1% (hybrid) with recent-window 37.9% / 12.1% respectively. The negative
-prototype margin (−0.157) at this budget confirms the representation, not the
-routing, is the limiting factor on harder data — the intended conclusion of the
-1.1 "representation is the biggest lever" thesis.
+**20-task Split-CIFAR-100, full recipe** (`configs/cifar100_big_frozen.json`,
+`results/cifar100_big_frozen/`): 50 SimCLR epochs, 5 epochs/task, all methods.
+PAL-MoE pure 8.31% / 17.06% forgetting; hybrid 9.83% / 13.68%; DER++ 5.76% /
+63.19%; ER 6.43% / 62.91%; iCaRL 10.18% / 11.05%. Pure beats every replay
+baseline by 2-5 points with ~4× less forgetting and zero raw storage; the
+validation gate rejected 7 of 20 expansions because `min_acc_threshold=0.45`
+is too strict for 5-way CIFAR-100 tasks (a dataset-aware/relative threshold is
+the next tuning item). Router distillation reaches 76.7% owner-routing accuracy
+over 6 experts; the negative prototype margin (−0.13) again points at the
+representation as the limiting factor.
+
+**Strong-backbone CIFAR-10** (`configs/cifar10_resnet18_frozen.json`,
+ImageNet ResNet-18, frozen, feature cache): pure **47.53%** / 22.95% forgetting
+and hybrid **47.94%** / 21.44%, versus DER++ 45.29% / 44.27% and ER 40.51% /
+58.46%. The representation upgrade from the 3-block conv net to a frozen
+ImageNet backbone lifts pure accuracy by ~10.5 points — the strongest single
+lever observed in this project (brainstorm 1.1).
+
+**Class-shared domain shift** (`--domain_shift rotate`, MNIST, shared expert
+frozen after the first task): pure 86.07% / 5.64% forgetting, boundary-free
+stream 86.16% online, prototype margin +0.117 — the stabilized generalist no
+longer hurts when the label space is shared.
 
 Deliberately staged (not implemented here): GPM/Adam-NSCL gradient projection
 (needs stored raw activations), hierarchical MoE-of-MoE routing, boundary-free
