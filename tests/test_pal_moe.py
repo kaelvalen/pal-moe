@@ -1621,6 +1621,60 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_ncm_and_bias_correction_heads():
+    """Both read-out heads must beat an artificially biased model head."""
+    from pal_moe.evaluation.heads import BiasCorrectionHead, NCMHead
+    from pal_moe.factory import build_cached_encoder
+
+    torch.manual_seed(0)
+    # Identity encoder: the test works directly in the latent space, which is
+    # what the runner sees with --feature_cache.
+    enc = build_cached_encoder(4)
+    # A real (ReLU-positive) linear classifier with a +5 recency bias on class 1.
+    experts = [MLPExpert(4, 4, 2, 0)]
+    moe = DynamicMoE(enc, DynamicRouter(input_dim=4, num_experts=1), experts)
+    with torch.no_grad():
+        experts[0].fc1.weight.copy_(torch.eye(4))
+        experts[0].fc1.bias.zero_()
+        experts[0].fc2.weight.copy_(
+            torch.tensor([[1.0, -1.0, 0.0, 0.0], [-1.0, 1.0, 0.0, 0.0]])
+        )
+        experts[0].fc2.bias.copy_(torch.tensor([0.0, 5.0]))
+
+    means = {
+        0: torch.tensor([1.0, 0.0, 0.0, 0.0]),
+        1: torch.tensor([0.5, 1.0, 0.0, 0.0]),
+    }
+    memory = PrototypeMemory(feature_dim=4)
+    for label, mean in means.items():
+        for _ in range(5):
+            feat = mean + torch.randn(4) * 0.02
+            memory.update_or_create_prototype(
+                feat,
+                torch.tensor([1.0]),
+                torch.randn(1, 2),
+                task_id=0,
+                label=torch.tensor(label),
+            )
+
+    ncm = NCMHead(moe, memory, num_classes=2)
+    ncm.eval()
+    with torch.no_grad():
+        logits = ncm(memory.get_exemplar_batch(torch.device("cpu"))[0])
+        preds = logits.argmax(dim=-1)
+        labels = memory.get_exemplar_batch(torch.device("cpu"))[1]
+    assert (preds == labels).float().mean() > 0.9
+
+    bias = BiasCorrectionHead(moe, memory, num_classes=2, strength=1.0)
+    bias.eval()
+    with torch.no_grad():
+        feats, labels = memory.get_exemplar_batch(torch.device("cpu"))
+        base_preds = moe(latent_h=feats).argmax(dim=-1)
+        corrected_preds = bias(feats).argmax(dim=-1)
+    assert (base_preds == 1).all(), "biased model should always predict class 1"
+    assert (corrected_preds == labels).float().mean() > 0.9
+
+
 def test_shared_generalist_expert():
     """The always-on generalist mixes with the routed expert and stays trainable."""
     from pal_moe.factory import build_moe
