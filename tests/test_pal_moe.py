@@ -1621,6 +1621,72 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_prototype_routing_alpha_calibration():
+    """Alpha calibration must pick the anchor weight with the best exemplar accuracy."""
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2)
+    # Force the router to always pick expert 1, so only anchoring can help.
+    with torch.no_grad():
+        router.gate.weight.zero_()
+        router.gate.bias.copy_(torch.tensor([-5.0, 5.0]))
+    experts = [MLPExpert(8, 8, 3, i) for i in range(2)]
+    # Expert 0 is the only one that classifies its own prototypes correctly;
+    # mirror the classes into expert 1 so only the owner anchors matter.
+    with torch.no_grad():
+        experts[0].fc2.weight.zero_()
+        experts[0].fc2.bias.copy_(torch.tensor([1.0, -1.0, 0.0]))
+    moe = DynamicMoE(enc, router, experts, use_ema_encoder=False)
+
+    memory = PrototypeMemory(feature_dim=8)
+    for _ in range(8):
+        memory.update_or_create_prototype(
+            torch.randn(8),
+            torch.tensor([1.0, 0.0]),
+            torch.randn(2, 3),
+            task_id=0,
+            label=torch.tensor(0),  # expert 0's constant argmax is class 0
+            owner_expert=0,
+        )
+    moe.set_prototype_routing(memory, alpha=0.0)
+    alpha = moe.calibrate_prototype_routing()
+    assert alpha > 0.0
+    moe.eval()  # anchoring is an inference-time mechanism
+    with torch.no_grad():
+        v = memory.get_prototype_matrix(torch.device("cpu"))
+        _, idx, _ = moe._route(v)  # v is already in latent space
+    assert idx.flatten().tolist() == [0] * len(memory.prototypes)
+
+
+def test_expert_temperature_calibration_reduces_nll():
+    from pal_moe.evaluation.calibration import (
+        calibrate_expert_temperatures,
+        fit_temperature,
+    )
+
+    torch.manual_seed(0)
+    # Confident but wrong-on-average logits: softening must reduce the NLL.
+    logits = torch.randn(64, 3) * 8.0
+    labels = torch.randint(0, 3, (64,))
+    t = fit_temperature(logits, labels)
+    nll_before = torch.nn.functional.cross_entropy(logits, labels).item()
+    nll_after = torch.nn.functional.cross_entropy(logits / t, labels).item()
+    assert t > 1.0
+    assert nll_after < nll_before
+
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    moe = DynamicMoE(
+        enc,
+        DynamicRouter(input_dim=8, num_experts=2),
+        [MLPExpert(8, 8, 3, i) for i in range(2)],
+        use_ema_encoder=False,
+    )
+    loader = [(torch.randn(16, 16), torch.randint(0, 3, (16,)))]
+    report = calibrate_expert_temperatures(moe, loader, device=torch.device("cpu"))
+    assert len(report["temperatures"]) == 2
+    assert all(t > 0 for t in report["temperatures"])
+
+
 def test_energy_boundary_loss_pushes_prototypes_down():
     """The energy hinge must lower old-prototype energy and raise new-feature energy."""
     from pal_moe.adaptation.ttt import energy_boundary_loss
