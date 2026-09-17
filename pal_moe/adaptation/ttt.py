@@ -8,6 +8,7 @@ import os
 from typing import Any, Optional
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from ..builder.expert_builder import ExpertBuilder
@@ -15,6 +16,31 @@ from ..memory.prototype_memory import PrototypeMemory
 from ..models.moe import DynamicMoE
 from ..persistence import save_checkpoint
 from ..trigger.expert_trigger import QuantitativeTrigger
+
+
+def energy_boundary_loss(
+    expert: nn.Module,
+    old_prototypes: torch.Tensor,
+    new_features: Optional[torch.Tensor] = None,
+    margin: float = 1.0,
+) -> torch.Tensor:
+    """
+    Hinge energy loss for the newest expert's OOD boundary.
+
+    E(x) = logsumexp(logits) is low for data the expert knows and rises for
+    out-of-distribution inputs. With new features available the loss is
+
+        relu(margin - (E_new - E_old_mean))     (push new up, old down),
+
+    and without them (e.g. joint calibration on stored exemplars only) it falls
+    back to `relu(margin + E_old_mean)`, which pushes historical prototypes
+    below the boundary without needing new data.
+    """
+    e_old = torch.logsumexp(expert(old_prototypes, track_usage=False), dim=-1).mean()
+    if new_features is not None:
+        e_new = torch.logsumexp(expert(new_features, track_usage=False), dim=-1).mean()
+        return F.relu(margin - (e_new - e_old))
+    return F.relu(margin + e_old)
 
 
 class ContinualTrainer:
@@ -51,6 +77,8 @@ class ContinualTrainer:
         keep_optimizer_state: bool = False,
         stability_every: int = 1,
         ood_every: int = 1,
+        ood_mode: str = "entropy",
+        ood_margin: float = 1.0,
         router_anchor_margin: float = 0.0,
         router_weight_decay: float = 0.0,
         checkpoint_dir: Optional[str] = None,
@@ -101,6 +129,12 @@ class ContinualTrainer:
         # Default 1 == every step (identical to the published recipes).
         self.stability_every = max(1, int(stability_every))
         self.ood_every = max(1, int(ood_every))
+        # OOD boundary flavour: "entropy" maximises the newest expert's entropy
+        # on historical prototypes, "energy" uses the logsumexp hinge above.
+        if ood_mode not in ("entropy", "energy"):
+            raise ValueError(f"unknown ood_mode {ood_mode!r}")
+        self.ood_mode = ood_mode
+        self.ood_margin = float(ood_margin)
         # Owner-contrastive ranking margin added to the router-distillation loss:
         # the owner expert's logit must beat every other expert by >= margin.
         self.router_anchor_margin = float(router_anchor_margin)
@@ -166,6 +200,30 @@ class ContinualTrainer:
                     if state is not None:
                         optimizer.state[p] = state
         return optimizer
+
+    def _ood_term(
+        self,
+        old_prototypes: torch.Tensor,
+        new_features: Optional[torch.Tensor] = None,
+        scale: float = 1.0,
+    ) -> torch.Tensor:
+        """
+        OOD negative-boundary penalty for the newest expert.
+
+        `scale` carries the periodic-application factor (ood_every) in the
+        training loop and stays 1.0 during joint calibration.
+        """
+        if self.ood_mode == "energy":
+            return energy_boundary_loss(
+                self.model.experts[-1],
+                old_prototypes,
+                new_features=new_features,
+                margin=self.ood_margin,
+            ) * (self.lambda_ood * scale)
+        ood_logits = self.model.experts[-1](old_prototypes, track_usage=False)
+        ood_probs = F.softmax(ood_logits, dim=-1)
+        entropy_ood = -(ood_probs * torch.log(ood_probs + 1e-9)).sum(dim=-1).mean()
+        return -self.lambda_ood * scale * entropy_ood
 
     def _distill_router_anchors(self, steps: int, lr: float) -> float:
         """
@@ -449,14 +507,9 @@ class ContinualTrainer:
                     if vp_old is not None and vp_old.size(0) > 0:
                         with torch.no_grad():
                             vp_old = vp_old.detach()
-                        ood_logits = self.model.experts[-1](vp_old, track_usage=False)
-                        ood_probs = F.softmax(ood_logits, dim=-1)
-                        entropy_ood = (
-                            -(ood_probs * torch.log(ood_probs + 1e-9))
-                            .sum(dim=-1)
-                            .mean()
+                        l_ood = self._ood_term(
+                            vp_old, new_features=x, scale=self.ood_every
                         )
-                        l_ood = -self.lambda_ood * self.ood_every * entropy_ood
                         loss = loss + l_ood
 
                 # Optional latent exemplar replay from prototype memory (hybrid mode)
@@ -580,7 +633,9 @@ class ContinualTrainer:
                         loss_joint = F.cross_entropy(logits_joint, y_all)
 
                         # OOD negative-boundary term during calibration: the newest
-                        # expert must stay agnostic about historical tasks.
+                        # expert must stay agnostic about historical tasks. No new
+                        # features are available here, so the energy variant uses
+                        # its prototype-only fallback.
                         if self.lambda_ood > 0:
                             vp_old = self.prototype_memory.get_prototype_matrix(
                                 self.device
@@ -588,16 +643,7 @@ class ContinualTrainer:
                             if vp_old is not None and vp_old.size(0) > 0:
                                 with torch.no_grad():
                                     vp_old = vp_old.detach()
-                                ood_logits = self.model.experts[-1](
-                                    vp_old, track_usage=False
-                                )
-                                ood_probs = F.softmax(ood_logits, dim=-1)
-                                entropy_ood = (
-                                    -(ood_probs * torch.log(ood_probs + 1e-9))
-                                    .sum(dim=-1)
-                                    .mean()
-                                )
-                                loss_joint = loss_joint - self.lambda_ood * entropy_ood
+                                loss_joint = loss_joint + self._ood_term(vp_old)
 
                         loss_joint.backward()
                         self.optimizer.step()

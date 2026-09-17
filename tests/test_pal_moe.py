@@ -1621,6 +1621,57 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_energy_boundary_loss_pushes_prototypes_down():
+    """The energy hinge must lower old-prototype energy and raise new-feature energy."""
+    from pal_moe.adaptation.ttt import energy_boundary_loss
+
+    torch.manual_seed(0)
+    expert = MLPExpert(8, 16, 3, 0)
+    old = torch.randn(16, 8)
+    new = torch.randn(16, 8) + 0.5
+
+    loss0 = energy_boundary_loss(expert, old, new, margin=1.0)
+    assert loss0.item() > 0
+    opt = torch.optim.Adam(expert.parameters(), lr=1e-2)
+    for _ in range(40):
+        opt.zero_grad()
+        loss = energy_boundary_loss(expert, old, new, margin=1.0)
+        loss.backward()
+        opt.step()
+
+    with torch.no_grad():
+        e_old = torch.logsumexp(expert(old, track_usage=False), dim=-1).mean()
+        e_new = torch.logsumexp(expert(new, track_usage=False), dim=-1).mean()
+    assert loss.item() < loss0.item()
+    assert e_old < e_new
+
+    # Prototype-only fallback also optimises
+    fallback = energy_boundary_loss(expert, old, new_features=None, margin=1.0)
+    assert fallback.item() >= 0
+
+
+def test_energy_trigger_flags_out_of_distribution_batches():
+    from pal_moe.trigger.energy_trigger import EnergyTrigger
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=1)
+    moe = DynamicMoE(enc, router, [MLPExpert(8, 8, 3)], use_ema_encoder=False)
+
+    trigger = EnergyTrigger(threshold=2.0, warmup_batches=3)
+    x_id = torch.randn(32, 16) * 0.1
+    for _ in range(5):
+        res = trigger.evaluate(moe, x_id)
+    assert not res.should_trigger, "in-distribution batches must not trigger"
+
+    ref_mean = trigger.stats.mean
+    res = trigger.evaluate(moe, torch.randn(32, 16) * 100.0)
+    assert res.should_trigger, "high-energy OOD batch should trigger expansion"
+    assert (
+        trigger.stats.mean == ref_mean
+    ), "triggered batches must not update the reference"
+
+
 def test_router_learnable_temperature():
     """learn_temperature adds a trainable log-temperature and stays stable."""
     from pal_moe.models.router import AttentionRouter, DistanceRouter
