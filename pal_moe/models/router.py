@@ -217,6 +217,16 @@ class DynamicRouter(nn.Module):
         self.num_experts = new_num
         self.top_k = min(self.top_k, new_num)
 
+        # The rebuilt gate is a fresh module: re-attach the historical-routing
+        # lock hooks (they live on the old parameter tensors and would otherwise
+        # be silently lost, un-freezing history after any prune/merge) and keep
+        # the lock count consistent with the removed row.
+        if prune_idx < self.locked_experts:
+            self.locked_experts -= 1
+        self.locked_experts = min(self.locked_experts, new_num)
+        self.gate.weight.register_hook(self._weight_backward_hook)
+        self.gate.bias.register_hook(self._bias_backward_hook)
+
     def merge_experts(self, idx1: int, idx2: int) -> int:
         """
         Merges idx2 into idx1 by averaging their routing weights, then prunes idx2.
@@ -350,6 +360,11 @@ class DistanceRouter(nn.Module):
         self.centroids = self.centroids[keep_indices]
         self.num_experts = new_num
         self.top_k = min(self.top_k, new_num)
+
+        # Keep the historical lock aligned with the shrunk centroid bank.
+        if prune_idx < self.locked_experts:
+            self.locked_experts -= 1
+        self.locked_experts = min(self.locked_experts, new_num)
 
     def merge_experts(self, idx1: int, idx2: int) -> int:
         assert (
@@ -505,6 +520,11 @@ class AttentionRouter(nn.Module):
         self.keys.register_hook(self._key_backward_hook)
         self.num_experts -= 1
         self.top_k = min(self.top_k, self.num_experts)
+
+        # Keep the historical lock aligned with the shrunk key bank.
+        if prune_idx < self.locked_experts:
+            self.locked_experts -= 1
+        self.locked_experts = min(self.locked_experts, self.num_experts)
 
     def merge_experts(self, idx1: int, idx2: int) -> int:
         assert (

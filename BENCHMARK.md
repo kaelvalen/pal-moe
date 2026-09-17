@@ -44,7 +44,7 @@ for every method). This isolates the continual-learning mechanisms.
 | Epochs per task | 3 |
 | Batch size | 128 |
 | Expert head | `hidden_dim=256`, matched capacity across ALL methods |
-| PAL-MoE: `lambda_r` / `lambda_e` / `lambda_ood` | 0.5 / 2.5 / 0.1 |
+| PAL-MoE: `--lambda_r` / `--lambda_e` / `--lambda_ood` | 0.5 / 2.5 / 0.1 |
 | PAL-MoE: joint calibration | 5 epochs on latent exemplars (all experts calibrate) |
 | Validation gate | `min_acc_threshold=0.60` (MNIST), `max_proto_drop=2.0`, `max_proto_acc_drop=999.0` |
 | Null-space routing anchoring | off (measured harmful; see design fact 4) |

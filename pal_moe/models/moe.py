@@ -69,7 +69,9 @@ class DynamicMoE(nn.Module):
         confidence: d1 is the distance to the nearest stored prototype, d2 the
         distance to the nearest prototype of a different task. Close, unambiguous
         inputs inherit their prototype's historical routing distribution; distant
-        or ambiguous inputs keep the learned router. Training is untouched.
+        or ambiguous inputs keep the learned router. If memory holds prototypes of
+        a single task there is no cross-task ambiguity and `conf = 1`. Training is
+        untouched.
         """
         self.prototype_memory = prototype_memory
         self.proto_routing_alpha = float(alpha)
@@ -87,10 +89,14 @@ class DynamicMoE(nn.Module):
         prototypes' expert anchors (explicit owner experts when available):
             w_p   = softmax(-d_p / d1)          (scale-free kernel, d1 = nearest)
             A     = sum_p w_p * anchor_p
-            conf  = 1 - A_second / A_best       (vote margin, threshold-free)
         Single-nearest-neighbour assignment is too brittle when task regions
-        overlap; the vote margin also gives a principled trust weight, so
-        ambiguous inputs keep the learned router.
+        overlap, so the soft vote is kept.
+
+        The trust weight is the threshold-free nearest-class-mean margin on the
+        raw distances: `conf = clamp(1 - d1/d2, 0, 1)` with d1 the nearest
+        prototype and d2 the nearest prototype of a DIFFERENT task. Equidistant
+        (ambiguous) inputs get conf -> 0 and keep the learned router, while
+        inputs that are clearly inside one task's region get conf -> 1.
         """
         mem = self.prototype_memory
         if mem is None or mem.is_empty():
@@ -110,13 +116,16 @@ class DynamicMoE(nn.Module):
         weights = torch.softmax(-d_k / tau, dim=-1)  # [B, k]
         anchors = torch.einsum("bk,bkn->bn", weights, a_mat[idx_k])  # [B, N]
 
-        if anchors.size(-1) > 1:
-            top2 = anchors.topk(2, dim=-1).values
-            confidence = (1.0 - top2[:, 1] / (top2[:, 0] + 1e-9)).clamp(
-                min=0.0, max=1.0
-            )
-        else:
-            confidence = torch.ones(anchors.size(0), device=h.device)
+        # NCM confidence on the raw distances (see docstring): d1 = nearest
+        # prototype, d2 = nearest prototype of a different task. When memory
+        # only knows one task there is no competing region (d2 = inf -> conf 1);
+        # exactly equidistant neighbours give a 0/0 ratio -> conf 0.
+        d1, nearest_idx = dists.min(dim=1)
+        task_ids = mem.get_task_id_vector(h.device)  # [P]
+        same_task = task_ids.unsqueeze(0) == task_ids[nearest_idx].unsqueeze(1)
+        d2 = dists.masked_fill(same_task, float("inf")).min(dim=1).values
+        ratio = torch.nan_to_num(d1 / d2, nan=1.0, posinf=0.0)
+        confidence = (1.0 - ratio).clamp(min=0.0, max=1.0)
 
         if self.proto_routing_threshold is not None:
             close = (d_k[:, 0] <= self.proto_routing_threshold).float()
@@ -316,18 +325,24 @@ class DynamicMoE(nn.Module):
         e1, e2 = self.experts[idx1], self.experts[idx2]
 
         with torch.no_grad():
-            # Average fc1 and fc2
-            for p1, p2 in zip(e1.fc1.parameters(), e2.fc1.parameters()):
-                p1.data.add_(p2.data).mul_(0.5)
-            for p1, p2 in zip(e1.fc2.parameters(), e2.fc2.parameters()):
+            # Average the FULL parameter set (fc1/fc2 and the residual adapter),
+            # so the merged expert is the exact parameter-space midpoint.
+            for p1, p2 in zip(e1.parameters(), e2.parameters()):
                 p1.data.add_(p2.data).mul_(0.5)
             e1.usage_count.add_(e2.usage_count)
 
         if prototype_memory is not None:
             prototype_memory.sync_on_merge(idx1, idx2)
 
-        # Pruning router and list without duplicate prototype sync
-        self.prune_expert(idx2, prototype_memory=None)
+        # Merge the routing rows with the same semantics as the prototype
+        # anchors (and re-attach the historical-routing lock hooks), then drop
+        # the pruned expert. Previously the router row of idx2 was discarded
+        # while sync_on_merge folded its prototype mass into idx1, which
+        # desynchronized the gate from the stored targets.
+        self.router.merge_experts(idx1, idx2)
+        del self.experts[idx2]
+        for i, expert in enumerate(self.experts):
+            expert.expert_id = i
         return idx1
 
     def freeze_historical_experts(self, leave_unfrozen: int = 1) -> None:

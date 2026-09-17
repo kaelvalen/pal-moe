@@ -97,7 +97,24 @@ class PrototypeMemory:
             lambda: torch.stack([p.v_p.to(device) for p in self.prototypes], dim=0),
         )
 
-    def get_routing_matrix(self, num_experts: int, device: torch.device) -> torch.Tensor:
+    def get_task_id_vector(self, device: torch.device) -> torch.Tensor:
+        """
+        Returns [P] long tensor of task ids aligned with the prototype matrix
+        (used by the prototype-routing NCM confidence to find the nearest
+        prototype of a *different* task). Cached until the memory mutates.
+        """
+        if self.is_empty():
+            return torch.empty(0, dtype=torch.long, device=device)
+        return self._get_cached(
+            ("task", str(device)),
+            lambda: torch.tensor(
+                [p.task_id for p in self.prototypes], dtype=torch.long, device=device
+            ),
+        )
+
+    def get_routing_matrix(
+        self, num_experts: int, device: torch.device
+    ) -> torch.Tensor:
         """
         Returns [P, num_experts] historically padded routing distributions r_p
         (missing trailing columns filled with `pad`), aligned with
@@ -110,7 +127,9 @@ class PrototypeMemory:
                 rp = p.r_p.to(device)
                 n = rp.size(0)
                 if n < num_experts:
-                    pad = torch.full((num_experts - n,), 1e-4 / num_experts, device=device)
+                    pad = torch.full(
+                        (num_experts - n,), 1e-4 / num_experts, device=device
+                    )
                     rp = torch.cat([rp, pad], dim=0)
                 else:
                     rp = rp[:num_experts]
@@ -228,10 +247,14 @@ class PrototypeMemory:
             for p_idx, p in enumerate(self.prototypes):
                 if p.raw_x is not None and p.raw_x.size(0) > 0:
                     rows.append(p.raw_x)
-                    owners.append(torch.full((p.raw_x.size(0),), p_idx, dtype=torch.long))
+                    owners.append(
+                        torch.full((p.raw_x.size(0),), p_idx, dtype=torch.long)
+                    )
             if not rows:
                 return None
-            return torch.cat(rows, dim=0).to(device), torch.cat(owners, dim=0).to(device)
+            return torch.cat(rows, dim=0).to(device), torch.cat(owners, dim=0).to(
+                device
+            )
 
         return self._get_cached(("raw", str(device)), build)
 
@@ -555,9 +578,7 @@ class PrototypeMemory:
         from collections import Counter
 
         if self.max_prototypes_per_class is not None:
-            groups = Counter(
-                (p.task_id, self._label_of(p)) for p in self.prototypes
-            )
+            groups = Counter((p.task_id, self._label_of(p)) for p in self.prototypes)
             overrepresented = max(groups, key=groups.get)
             candidates = [
                 (i, p.count)
@@ -580,11 +601,20 @@ class PrototypeMemory:
         """
         Synchronizes historical prototype distributions and output anchors when expert idx2
         is merged into idx1:
-        1. r_p[idx1] <- r_p[idx1] + r_p[idx2]
-        2. o_p[idx1] <- 0.5 * (o_p[idx1] + o_p[idx2])
-        3. Removes idx2 column from all r_p and o_p tensors.
+        1. Owner experts are re-indexed (idx2 -> idx1, indices above idx2 shift down).
+        2. r_p[idx1] <- r_p[idx1] + r_p[idx2]
+        3. o_p[idx1] <- 0.5 * (o_p[idx1] + o_p[idx2])
+        4. Removes idx2 column from all r_p and o_p tensors.
         """
         for proto in self.prototypes:
+            # Owner experts are expert indices too: idx2's prototypes belong to
+            # idx1 after the merge, and every index above idx2 shifts down by one
+            # (the merged model re-indexes its experts).
+            if proto.owner_expert is not None:
+                if proto.owner_expert == idx2:
+                    proto.owner_expert = idx1
+                elif proto.owner_expert > idx2:
+                    proto.owner_expert -= 1
             n = proto.r_p.size(0)
             if idx1 < n and idx2 < n:
                 proto.r_p[idx1] = proto.r_p[idx1] + proto.r_p[idx2]
@@ -607,8 +637,16 @@ class PrototypeMemory:
     def sync_on_prune(self, prune_idx: int) -> None:
         """
         Synchronizes prototype distributions when an unused expert at prune_idx is pruned.
+        Owner experts are re-indexed (pruned owner -> None, indices above shift down).
         """
         for proto in self.prototypes:
+            # Owner experts are expert indices too: keep them valid after the
+            # prune (a pruned owner falls back to the stored r_p distribution).
+            if proto.owner_expert is not None:
+                if proto.owner_expert == prune_idx:
+                    proto.owner_expert = None
+                elif proto.owner_expert > prune_idx:
+                    proto.owner_expert -= 1
             n = proto.r_p.size(0)
             if prune_idx < n:
                 indices = [i for i in range(n) if i != prune_idx]
