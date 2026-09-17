@@ -1621,6 +1621,103 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_latent_generative_replay_gaussian_and_vae():
+    from pal_moe.memory.generative import LatentReplayGenerator
+
+    torch.manual_seed(0)
+    memory = PrototypeMemory(feature_dim=4)
+    for label, mean in ((0, torch.zeros(4)), (1, torch.ones(4) * 5)):
+        for _ in range(3):
+            memory.update_or_create_prototype(
+                mean + torch.randn(4) * 0.05,
+                torch.tensor([1.0]),
+                torch.randn(1, 2),
+                task_id=label,
+                label=torch.tensor(label),
+            )
+
+    gaussian = LatentReplayGenerator(4, 2, mode="gaussian", device=torch.device("cpu"))
+    assert gaussian.fit(memory)
+    feats, labels = gaussian.sample(64)
+    assert feats.shape == (64, 4)
+    assert set(labels.tolist()) <= {0, 1}
+    # Samples stay close to their class means.
+    for c in (0, 1):
+        centre = torch.zeros(4) if c == 0 else torch.ones(4) * 5
+        subset = feats[labels == c]
+        assert (subset - centre).norm(dim=1).mean() < 2.0
+
+    vae = LatentReplayGenerator(
+        4, 2, mode="vae", device=torch.device("cpu"), vae_steps=40
+    )
+    assert vae.fit(memory)
+    feats, labels = vae.sample(32)
+    assert feats.shape == (32, 4)
+    assert torch.isfinite(feats).all()
+
+    empty = LatentReplayGenerator(4, 2)
+    assert not empty.fit(PrototypeMemory(feature_dim=4))
+
+
+def test_prototype_selection_and_eviction_modes():
+    torch.manual_seed(0)
+    # kcenter must keep spread-out exemplars instead of the first five.
+    mem = PrototypeMemory(
+        feature_dim=2,
+        distance_threshold=1e9,  # merge everything into one prototype
+        exemplars_per_proto=3,
+        selection="kcenter",
+        candidate_pool=4,
+    )
+    centre = torch.zeros(2)
+    mem.update_or_create_prototype(centre, torch.tensor([1.0]), torch.zeros(1, 2), 0)
+    for i in range(20):
+        style = (
+            torch.tensor([float(i), 0.0])
+            if i < 10
+            else torch.tensor([0.0, float(i - 10)])
+        )
+        mem.register_task_batch(
+            style.unsqueeze(0),
+            torch.tensor([[1.0]]),
+            torch.zeros(1, 1, 2),
+            task_id=0,
+            labels=torch.tensor([0]),
+        )
+    proto = mem.prototypes[0]
+    assert proto.x_p.size(0) <= 3
+    assert proto.x_p[:, 0].max().item() > 5 or proto.x_p[:, 1].max().item() > 5
+
+    # balanced eviction never drops the newest task's prototypes.
+    mem2 = PrototypeMemory(
+        feature_dim=2, max_prototypes=4, distance_threshold=1e-6, eviction="balanced"
+    )
+    for task in range(3):
+        for i in range(4):
+            mem2.register_task_batch(
+                torch.tensor([[float(task * 10 + i), 0.0]]),
+                torch.tensor([[1.0]]),
+                torch.zeros(1, 1, 2),
+                task_id=task,
+                labels=torch.tensor([0]),
+            )
+    assert len(mem2.prototypes) == 4
+    assert any(p.task_id == 2 for p in mem2.prototypes)
+
+
+def test_prototype_ann_index_is_optional():
+    mem = PrototypeMemory(feature_dim=4)
+    mem.update_or_create_prototype(
+        torch.randn(4), torch.tensor([1.0]), torch.zeros(1, 2), task_id=0
+    )
+    built = mem.build_ann_index()
+    if not built:  # faiss is not a dependency: exact search stays the default
+        assert mem.query_ann(torch.randn(1, 4)) is None
+    else:  # pragma: no cover - only when faiss is installed
+        dists, idx = mem.query_ann(torch.randn(1, 4), k=1)
+        assert dists.shape == (1, 1)
+
+
 def test_ncm_and_bias_correction_heads():
     """Both read-out heads must beat an artificially biased model head."""
     from pal_moe.evaluation.heads import BiasCorrectionHead, NCMHead

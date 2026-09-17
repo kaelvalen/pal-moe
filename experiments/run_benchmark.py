@@ -359,6 +359,9 @@ def _run_palmoe_variant(
         args.proto_size,
         args.proto_per_class,
         (not args.feature_cache) if replay else False,
+        selection=args.proto_selection,
+        candidate_pool=args.proto_candidate_pool,
+        eviction=args.proto_eviction,
     )
     if args.trigger == "energy":
         trigger = EnergyTrigger(threshold=args.energy_threshold)
@@ -399,6 +402,9 @@ def _run_palmoe_variant(
         ood_every=args.ood_every,
         ood_mode=args.ood_mode,
         ood_margin=args.ood_margin,
+        generative_replay=args.generative_replay,
+        generative_replay_mode=args.generative_replay_mode,
+        lambda_generative=args.lambda_generative,
         router_anchor_margin=args.router_anchor_margin,
         router_weight_decay=args.router_weight_decay,
         device=device,
@@ -1251,6 +1257,45 @@ if __name__ == "__main__":
             "Inference read-out for the PAL-MoE variants: the learned MoE head, "
             "nearest-class-mean over stored latents (ncm) or the same logits "
             "with a fitted per-class bias removed (bias)"
+        ),
+    )
+    parser.add_argument(
+        "--generative_replay",
+        type=int,
+        default=0,
+        help=(
+            "Synthetic latent samples per step from a generator fitted on the "
+            "stored exemplars (0 = off; still stores no raw data)"
+        ),
+    )
+    parser.add_argument(
+        "--generative_replay_mode",
+        type=str,
+        default="gaussian",
+        choices=["gaussian", "vae"],
+    )
+    parser.add_argument("--lambda_generative", type=float, default=1.0)
+    parser.add_argument(
+        "--proto_selection",
+        type=str,
+        default="first",
+        choices=["first", "kcenter", "uncertainty"],
+        help="Exemplar selection policy inside prototype memory",
+    )
+    parser.add_argument(
+        "--proto_candidate_pool",
+        type=int,
+        default=4,
+        help="Candidate-pool multiplier before re-selection (selection != first)",
+    )
+    parser.add_argument(
+        "--proto_eviction",
+        type=str,
+        default="task",
+        choices=["task", "balanced", "reservoir"],
+        help=(
+            "Prototype eviction policy: over-represented task (original), the "
+            "same but protecting the newest task, or uniform reservoir"
         ),
     )
     parser.add_argument(
