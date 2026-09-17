@@ -237,6 +237,16 @@ epochs, `configs/mnist_default.json`; base = 79.69% / 6.85% forgetting):
 These are single-seed measurements to guide the next validation round, not
 published claims.
 
+**20-task Split-CIFAR-100 stress run** (`results/cifar100_20task`, frozen
+encoder, 20 SimCLR epochs, 1 epoch/task, `--task_free_eval`): the pipeline runs
+end-to-end through 20 expansions with capacity control capped at 6 experts;
+pure 5.82% / 26.79% forgetting vs hybrid 7.13% / 13.68%; router-distillation
+owner routing accuracy is 100%; task-free stream scores are 5.8% (pure) and
+7.1% (hybrid) with recent-window 37.9% / 12.1% respectively. The negative
+prototype margin (−0.157) at this budget confirms the representation, not the
+routing, is the limiting factor on harder data — the intended conclusion of the
+1.1 "representation is the biggest lever" thesis.
+
 Deliberately staged (not implemented here): GPM/Adam-NSCL gradient projection
 (needs stored raw activations), hierarchical MoE-of-MoE routing, boundary-free
 *task-free training* (training still uses task ids; the streaming evaluator and
