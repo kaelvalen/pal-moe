@@ -1621,6 +1621,104 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_uncertainty_weighter_formula_and_gradients():
+    from pal_moe.adaptation.losses import UncertaintyWeighter
+
+    weighter = UncertaintyWeighter(("task", "router"))
+    losses = {
+        "task": torch.tensor(2.0, requires_grad=True),
+        "router": torch.tensor(4.0),
+        "other": torch.tensor(1.0),
+    }
+    total, diagnostics = weighter.combine(losses)
+    # s=0 initially: exp(0)*L + 0, plus the passthrough term.
+    assert abs(total.item() - 7.0) < 1e-5
+    assert set(diagnostics) == {"task", "router"}
+    total.backward()
+    assert weighter.log_vars["task"].grad is not None
+
+
+def test_lwf_and_ema_terms_run():
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    enc.unfreeze()
+    moe = DynamicMoE(
+        enc,
+        DynamicRouter(input_dim=8, num_experts=1),
+        [MLPExpert(8, 8, 3)],
+        use_ema_encoder=True,
+    )
+    memory = PrototypeMemory(feature_dim=8)
+    trainer = ContinualTrainer(
+        model=moe,
+        prototype_memory=memory,
+        trigger=QuantitativeTrigger(threshold_tau=1e9),
+        builder=ExpertBuilder(),
+        lambda_lwf=0.5,
+        lambda_ema=0.5,
+        joint_calib_epochs=0,
+        device=torch.device("cpu"),
+    )
+    x = torch.randn(16, 16)
+    y = torch.randint(0, 3, (16,))
+    hist = trainer.train_task(
+        task_id=0,
+        train_loader=[(x, y)],
+        val_loader=[(x, y)],
+        epochs=1,
+        enable_expansion=False,
+    )
+    assert trainer._lwf_teacher is not None
+    assert len(hist["loss_total"]) == 1
+    # The EMA copy must have moved with the online encoder.
+    assert any(
+        not torch.allclose(p, q)
+        for p, q in zip(
+            moe.encoder.parameters(), moe.ema_encoder.ema_model.parameters()
+        )
+    )
+
+
+def test_loss_weighting_uncertainty_trains():
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    moe = DynamicMoE(
+        enc,
+        DynamicRouter(input_dim=8, num_experts=2),
+        [MLPExpert(8, 8, 3, i) for i in range(2)],
+    )
+    memory = PrototypeMemory(feature_dim=8)
+    memory.update_or_create_prototype(
+        torch.randn(8), torch.tensor([1.0, 0.0]), torch.randn(2, 3), task_id=0
+    )
+    trainer = ContinualTrainer(
+        model=moe,
+        prototype_memory=memory,
+        trigger=QuantitativeTrigger(threshold_tau=1e9),
+        builder=ExpertBuilder(),
+        loss_weighting="uncertainty",
+        joint_calib_epochs=0,
+        device=torch.device("cpu"),
+    )
+    assert trainer.loss_weighter is not None
+    x = torch.randn(16, 16)
+    y = torch.randint(0, 3, (16,))
+    trainer.train_task(
+        task_id=0,
+        train_loader=[(x, y)],
+        val_loader=[(x, y)],
+        epochs=1,
+        enable_expansion=False,
+    )
+    # The weighter parameters must be part of the optimizer and updatable.
+    weighter_ids = {id(p) for p in trainer.loss_weighter.parameters()}
+    assert any(
+        id(p) in weighter_ids
+        for group in trainer.optimizer.param_groups
+        for p in group["params"]
+    )
+
+
 def test_latent_generative_replay_gaussian_and_vae():
     from pal_moe.memory.generative import LatentReplayGenerator
 

@@ -4,6 +4,7 @@ Mode A: Continual Training (labeled stream with prototype router/expert stabilit
 Mode B: Test-Time Adaptation (unlabeled stream with entropy minimization, consistency, self-supervised)
 """
 
+import copy
 import os
 from typing import Any, Optional
 
@@ -16,6 +17,7 @@ from ..memory.prototype_memory import PrototypeMemory
 from ..models.moe import DynamicMoE
 from ..persistence import save_checkpoint
 from ..trigger.expert_trigger import QuantitativeTrigger
+from .losses import UncertaintyWeighter
 
 
 def energy_boundary_loss(
@@ -82,6 +84,10 @@ class ContinualTrainer:
         generative_replay: int = 0,
         generative_replay_mode: str = "gaussian",
         lambda_generative: float = 1.0,
+        lambda_lwf: float = 0.0,
+        lwf_temperature: float = 2.0,
+        lambda_ema: float = 0.0,
+        loss_weighting: str = "fixed",
         router_anchor_margin: float = 0.0,
         router_weight_decay: float = 0.0,
         checkpoint_dir: Optional[str] = None,
@@ -144,6 +150,19 @@ class ContinualTrainer:
         self.generative_replay_mode = generative_replay_mode
         self.lambda_generative = float(lambda_generative)
         self._replay_gen = None
+        # Learning-without-forgetting distillation from a pre-task snapshot.
+        self.lambda_lwf = float(lambda_lwf)
+        self.lwf_temperature = float(lwf_temperature)
+        # EMA-teacher representation distillation (trainable encoders only).
+        self.lambda_ema = float(lambda_ema)
+        self._lwf_teacher = None
+        # Optional learned weighting of the core loss terms.
+        if loss_weighting not in ("fixed", "uncertainty"):
+            raise ValueError(f"unknown loss_weighting {loss_weighting!r}")
+        self.loss_weighting = loss_weighting
+        self.loss_weighter = (
+            UncertaintyWeighter() if loss_weighting == "uncertainty" else None
+        )
         # Owner-contrastive ranking margin added to the router-distillation loss:
         # the owner expert's logit must beat every other expert by >= margin.
         self.router_anchor_margin = float(router_anchor_margin)
@@ -185,6 +204,14 @@ class ContinualTrainer:
                     "weight_decay": self.router_weight_decay,
                 }
             )
+        if self.loss_weighter is not None:
+            weighter_params = [
+                p for p in self.loss_weighter.parameters() if p.requires_grad
+            ]
+            if weighter_params:
+                param_groups.append(
+                    {"params": weighter_params, "lr": self.lr, "weight_decay": 0.0}
+                )
         if not param_groups:
             param_groups = [
                 {"params": [torch.nn.Parameter(torch.zeros(1))], "lr": self.lr}
@@ -475,6 +502,13 @@ class ContinualTrainer:
             if generator.fit(self.prototype_memory):
                 self._replay_gen = generator
 
+        # Pre-task teacher snapshot for LwF distillation.
+        self._lwf_teacher = None
+        if self.lambda_lwf > 0:
+            self._lwf_teacher = copy.deepcopy(self.model).eval()
+            for param in self._lwf_teacher.parameters():
+                param.requires_grad = False
+
         # Step 5: Continual Training loop with joint stability loss
 
         # Per-batch losses are accumulated on-device and converted once, instead
@@ -512,7 +546,18 @@ class ContinualTrainer:
                 else:
                     l_router_stab = l_expert_stab = l_enc_stab = zero
 
-                loss = loss_task + l_router_stab + l_expert_stab + l_enc_stab
+                # EMA-teacher representation distillation: only meaningful while
+                # the shared encoder is trainable.
+                l_ema = zero
+                if (
+                    self.lambda_ema > 0
+                    and self.model.ema_encoder is not None
+                    and any(p.requires_grad for p in self.model.encoder.parameters())
+                ):
+                    h_online = self.model.encoder(x)
+                    with torch.no_grad():
+                        h_teacher = self.model.ema_encoder(x)
+                    l_ema = F.mse_loss(h_online, h_teacher) * self.lambda_ema
 
                 # OOD negative-boundary term: the newest expert must stay agnostic
                 # about historical tasks, so its predictions on old prototypes are
@@ -534,10 +579,9 @@ class ContinualTrainer:
                         l_ood = self._ood_term(
                             vp_old, new_features=x, scale=self.ood_every
                         )
-                        loss = loss + l_ood
 
                 # Optional latent exemplar replay from prototype memory (hybrid mode)
-                l_replay = torch.tensor(0.0, device=self.device)
+                l_replay = zero
                 if self.replay_exemplars and not self.prototype_memory.is_empty():
                     # Latent Replay: Extremely cheap and memory efficient
                     exemplar_batch = self.prototype_memory.get_exemplar_batch(
@@ -549,16 +593,47 @@ class ContinualTrainer:
                         l_replay = (
                             F.cross_entropy(rep_logits, y_rep) * self.lambda_replay
                         )
-                        loss = loss + l_replay
 
                 # Latent generative replay: synthetic exemplars from the fitted
                 # generator (zero raw data).
+                l_gen = zero
                 if self._replay_gen is not None and self._replay_gen.is_fitted:
                     gen_x, gen_y = self._replay_gen.sample(max(1, x.size(0) // 2))
                     gen_logits = self.model(latent_h=gen_x)
-                    loss = loss + (
-                        F.cross_entropy(gen_logits, gen_y) * self.lambda_generative
+                    l_gen = F.cross_entropy(gen_logits, gen_y) * self.lambda_generative
+
+                # LwF distillation from the pre-task snapshot (optional).
+                l_lwf = zero
+                if self._lwf_teacher is not None:
+                    with torch.no_grad():
+                        teacher_logits = self._lwf_teacher(x)
+                    l_lwf = (
+                        F.kl_div(
+                            F.log_softmax(logits / self.lwf_temperature, dim=-1),
+                            F.softmax(teacher_logits / self.lwf_temperature, dim=-1),
+                            reduction="batchmean",
+                        )
+                        * (self.lwf_temperature**2)
+                        * self.lambda_lwf
                     )
+
+                # Compose. With uncertainty weighting the four core terms get
+                # learned precisions; everything else keeps its fixed weight.
+                if self.loss_weighter is not None:
+                    loss, _ = self.loss_weighter.combine(
+                        {
+                            "task": loss_task,
+                            "router": l_router_stab,
+                            "expert": l_expert_stab,
+                            "ood": l_ood,
+                        }
+                    )
+                    loss = loss + l_enc_stab
+                else:
+                    loss = (
+                        loss_task + l_router_stab + l_expert_stab + l_enc_stab + l_ood
+                    )
+                loss = loss + l_replay + l_gen + l_ema + l_lwf
 
                 loss.backward()
 
