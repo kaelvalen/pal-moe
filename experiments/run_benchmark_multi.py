@@ -45,6 +45,13 @@ def main():
     parser.add_argument("--lambda_e", type=float, default=2.5)
     parser.add_argument("--stability_every", type=int, default=1)
     parser.add_argument("--ood_every", type=int, default=1)
+    parser.add_argument(
+        "--buffer_sampling",
+        type=str,
+        default="recency",
+        choices=["recency", "reservoir"],
+    )
+    parser.add_argument("--ewc_online", action="store_true", default=False)
     parser.add_argument("--max_experts", type=int, default=6)
     parser.add_argument(
         "--proto_routing_threshold",
@@ -169,6 +176,10 @@ def main():
             cmd += ["--stability_every", str(args.stability_every)]
         if args.ood_every != 1:
             cmd += ["--ood_every", str(args.ood_every)]
+        if args.buffer_sampling != "recency":
+            cmd += ["--buffer_sampling", args.buffer_sampling]
+        if args.ewc_online:
+            cmd.append("--ewc_online")
         if args.max_experts != 6:
             cmd += ["--max_experts", str(args.max_experts)]
         if args.proto_routing_threshold is not None:
@@ -266,6 +277,8 @@ def main():
             "lambda_e": args.lambda_e,
             "stability_every": args.stability_every,
             "ood_every": args.ood_every,
+            "buffer_sampling": args.buffer_sampling,
+            "ewc_online": args.ewc_online,
             "max_experts": args.max_experts,
             "proto_routing_threshold": args.proto_routing_threshold,
         },

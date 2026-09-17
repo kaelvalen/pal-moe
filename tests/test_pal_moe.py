@@ -1621,6 +1621,58 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_sample_buffer_reservoir_balances_tasks():
+    """Reservoir mode keeps every task; recency evicts the oldest tasks."""
+    import random
+
+    from pal_moe.baselines.buffer import SampleBuffer, task_class_counts
+
+    random.seed(0)
+    torch.manual_seed(0)
+
+    reservoir = SampleBuffer(30, mode="reservoir")
+    recency = SampleBuffer(30, mode="recency")
+    for task in range(3):
+        x = torch.full((100, 2), float(task))
+        y = torch.full((100,), task)
+        reservoir.add_task(x, y)
+        recency.add_task(x, y)
+
+    counts = task_class_counts(reservoir, 3)
+    assert len(reservoir) == 30
+    assert all(c > 0 for c in counts), f"reservoir dropped a task: {counts}"
+    assert max(counts) < 25, f"reservoir is not uniform enough: {counts}"
+
+    counts_recency = task_class_counts(recency, 3)
+    assert counts_recency[0] == 0, "recency is expected to evict the first task"
+
+    with pytest.raises(ValueError):
+        SampleBuffer(10, mode="nope")
+
+
+def test_ewc_online_keeps_single_fisher():
+    """online=True accumulates one running Fisher instead of one per task."""
+    from pal_moe.baselines.ewc import EWC
+
+    model = nn.Linear(4, 3)
+    x = torch.randn(16, 4)
+    y = torch.randint(0, 3, (16,))
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(x, y), batch_size=8
+    )
+
+    online = EWC(model, online=True)
+    online.compute_fisher(loader, num_samples=8)
+    online.compute_fisher(loader, num_samples=8)
+    assert len(online.fisher_matrices) == 1
+    assert len(online.star_params) == 1
+
+    offline = EWC(model, online=False)
+    offline.compute_fisher(loader, num_samples=8)
+    offline.compute_fisher(loader, num_samples=8)
+    assert len(offline.fisher_matrices) == 2
+
+
 def test_test_time_adapter_restores_model_weights():
     """Test-time adaptation must not permanently modify router/expert weights."""
     torch.manual_seed(0)
@@ -1817,9 +1869,9 @@ def test_derpp_update_buffer_chunked_logits_are_consistent():
     trainer = DERPP(model, buffer_size=10, device=torch.device("cpu"))
     trainer.update_buffer(loader, seen_tasks=1, logit_batch_size=8)
 
-    assert trainer.buffer_x
+    assert trainer.buffer.x
     with torch.no_grad():
-        for bx, bl in zip(trainer.buffer_x, trainer.buffer_logits):
+        for bx, bl in zip(trainer.buffer.x, trainer.buffer.logits):
             expected = model(bx.unsqueeze(0)).squeeze(0)
             assert torch.allclose(bl, expected, atol=1e-5)
 
