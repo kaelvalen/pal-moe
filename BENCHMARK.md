@@ -189,6 +189,62 @@ registration produces identical prototypes) before being kept:
 | `--stability_every` / `--ood_every` (weight scaled by k) | optional amortisation of the two most expensive per-step terms (+35% / +10% measured at k=1) |
 | `--buffer_sampling reservoir`, `--ewc_online` | optional fairness/memory alternatives for the baselines (defaults preserve published behaviour) |
 
+### Research toolkit (new knobs, all opt-in)
+
+This revision adds the brainstorm toolkit: every mechanism defaults to the
+published behaviour and is covered by the test suite. The intent is "stronger,
+more stable, more accurate" without forking the code.
+
+| Area | Flag / API | Effect |
+| :--- | :--- | :--- |
+| Representation geometry | result `geometry` | nearest-other margin, silhouette, class-mean separation per run |
+| Router panel | result `router_diagnostics` | usage entropy, routing entropy, owner-routing accuracy, prototype geometry |
+| Metric router | `--router_learn_temperature` | learnable router temperature (all three routers) |
+| Owner-contrastive routing | `--router_anchor_margin M` | owner logit must beat the best competitor by M during distillation |
+| Lock control | `--router_weight_decay` | 0 = exact lock, 1e-5 = legacy implicit decay (design fact 15) |
+| Energy OOD | `--ood_mode energy --ood_margin` | logsumexp hinge instead of entropy maximisation |
+| Energy trigger | `--trigger energy --energy_threshold` | unsupervised novelty z-score trigger |
+| Auto anchoring | `--proto_routing_auto` | fits the prototype-anchoring alpha per task on stored latents |
+| Expert calibration | `--expert_temperature_calib` | per-expert temperature scaling on routed validation samples |
+| Generalist expert | `--shared_expert` | always-on expert mixed by a learned gate, never frozen |
+| Read-out heads | `--eval_head {ncm,bias}` | nearest-class-mean or bias-corrected logits at evaluation |
+| Generative replay | `--generative_replay N --generative_replay_mode {gaussian,vae}` | synthetic latent exemplars, zero raw data |
+| Coreset memory | `--proto_selection {kcenter,uncertainty} --proto_candidate_pool` | farthest-point / boundary exemplar selection |
+| Eviction policy | `--proto_eviction {task,balanced,reservoir}` | balanced protects the newest task |
+| ANN bridge | `PrototypeMemory.build_ann_index()` / `query_ann()` | optional FAISS for production-scale stores |
+| LwF | `--lambda_lwf --lwf_temperature` | snapshot distillation on the current batch |
+| EMA distillation | `--ema_encoder --lambda_ema` | trainable encoder anchored to its EMA copy |
+| Uncertainty weighting | `--loss_weighting uncertainty` | learned homoscedastic weights for task/router/expert/ood |
+| Adapter experts | `--freeze_expansion_base` | frozen clones, only the residual adapter trains |
+| Width growth | `--expansion_action widen --widen_by` | function-preserving growth instead of new experts |
+| Expert merging | `pal_moe.merge`, `experiments/merge_experts.py` | soup / TIES / task arithmetic into one serving head |
+| Generic streams | `pal_moe.data.split_folder`, `pal_moe.data.domain_shift` | ImageFolder splits and domain-shifting phases |
+| Task-free metrics | `pal_moe.evaluation.task_free.StreamingEvaluator` | online/recent accuracy, surprise, per-domain |
+| External encoders | `--encoder_checkpoint` | plug exported foundation-backbone weights into `SharedEncoder` |
+| Compute reporting | `trainable_params`, `fit_seconds`, `geometry` | compute-matched comparisons per run |
+
+First single-seed measurements of the new knobs (Split-MNIST, seed 42, 3
+epochs, `configs/mnist_default.json`; base = 79.69% / 6.85% forgetting):
+
+| Variant | Avg Acc | Forgetting | Verdict |
+| :-- | :--: | :--: | :--- |
+| `--router_anchor_margin 1.0` | 80.77% | 6.51% | looked best on seed 42, but a controlled 3-seed check (42 1 2: 79.40 ± 1.29 / 7.10 ± 0.30) is statistically indistinguishable from the base recipe (79.54 ± 1.30 / 6.97 ± 0.27): not adopted |
+| `--generative_replay 64` | 77.77% | 5.35% | trades ~2 accuracy for ~1.5 less forgetting |
+| `--eval_head ncm` | 76.89% | 10.11% | worse here (top-1 routing already recovers the classes) |
+| `--shared_expert` | 45.16% | 63.99% | harmful as configured: the always-on expert is never frozen, so it drifts into the newest task and the gate lets it dominate. Needs a stability penalty or a freeze schedule; staged. |
+| shared + margin + ncm + generative | 77.64% | 9.07% | combination does not rescue the shared-expert drift |
+
+These are single-seed measurements to guide the next validation round, not
+published claims.
+
+Deliberately staged (not implemented here): GPM/Adam-NSCL gradient projection
+(needs stored raw activations), hierarchical MoE-of-MoE routing, boundary-free
+*task-free training* (training still uses task ids; the streaming evaluator and
+energy trigger provide the measurement/novelty half), diffusion-based
+generative replay (the latent VAE is the cheaper stand-in), and foundation
+backbones whose architecture differs from `SharedEncoder` (they need an export
+adapter into that contract).
+
 ### Router/dynamics knobs and the ablation grid
 
 The mechanism stack (OOD negative-boundary loss, joint latent calibration and
@@ -456,7 +512,7 @@ ablation). Config selection supports case-insensitive substring filters
 
 `.github/workflows/ci.yml`:
 - **lint**: `ruff check` + `black --check` (versions pinned).
-- **test**: pytest (64 tests) on Python 3.10-3.12, with coverage.
+- **test**: pytest (88 tests) on Python 3.10-3.12, with coverage.
 - **benchmark-verify**: CPU smoke of the full 12-method benchmark (1 epoch)
   asserting it completes and that PAL-MoE hybrid ≥ 50% + pure ≥ 25%
   (sanity bounds, not state-of-the-art checks).
