@@ -43,6 +43,8 @@ def main():
     parser.add_argument("--joint_keep_routing_lock", action="store_true")
     parser.add_argument("--lambda_r", type=float, default=0.5)
     parser.add_argument("--lambda_e", type=float, default=2.5)
+    parser.add_argument("--stability_every", type=int, default=1)
+    parser.add_argument("--ood_every", type=int, default=1)
     parser.add_argument("--max_experts", type=int, default=6)
     parser.add_argument(
         "--proto_routing_threshold",
@@ -163,6 +165,10 @@ def main():
             cmd += ["--lambda_r", str(args.lambda_r)]
         if args.lambda_e != 2.5:
             cmd += ["--lambda_e", str(args.lambda_e)]
+        if args.stability_every != 1:
+            cmd += ["--stability_every", str(args.stability_every)]
+        if args.ood_every != 1:
+            cmd += ["--ood_every", str(args.ood_every)]
         if args.max_experts != 6:
             cmd += ["--max_experts", str(args.max_experts)]
         if args.proto_routing_threshold is not None:
@@ -258,6 +264,8 @@ def main():
             "keep_optimizer_state": args.keep_optimizer_state,
             "lambda_r": args.lambda_r,
             "lambda_e": args.lambda_e,
+            "stability_every": args.stability_every,
+            "ood_every": args.ood_every,
             "max_experts": args.max_experts,
             "proto_routing_threshold": args.proto_routing_threshold,
         },
