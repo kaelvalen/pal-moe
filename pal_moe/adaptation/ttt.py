@@ -49,6 +49,8 @@ class ContinualTrainer:
         proto_samples: int = 256,
         refresh_anchors_after_calib: bool = False,
         keep_optimizer_state: bool = False,
+        stability_every: int = 1,
+        ood_every: int = 1,
         checkpoint_dir: Optional[str] = None,
         device: torch.device = torch.device("cpu"),
     ):
@@ -91,6 +93,12 @@ class ContinualTrainer:
         self.proto_samples = proto_samples
         self.refresh_anchors_after_calib = refresh_anchors_after_calib
         self.keep_optimizer_state = keep_optimizer_state
+        # Amortisation knobs: the stability and OOD penalties are the two most
+        # expensive terms per step, and applying them every `k`-th step with the
+        # weight scaled by `k` keeps their time-averaged magnitude unchanged.
+        # Default 1 == every step (identical to the published recipes).
+        self.stability_every = max(1, int(stability_every))
+        self.ood_every = max(1, int(ood_every))
         self.checkpoint_dir = checkpoint_dir
         self.device = device
 
@@ -365,26 +373,37 @@ class ContinualTrainer:
         # Per-batch losses are accumulated on-device and converted once, instead
         # of four host synchronisations (.item()) per batch.
         _loss_rows: list = []
+        step_idx = 0
 
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, non_blocking=True), y.to(
+                    self.device, non_blocking=True
+                )
                 self.optimizer.zero_grad()
 
                 # Main task prediction
                 logits = self.model(x)
                 loss_task = F.cross_entropy(logits, y)
 
-                # Prototype stability losses (router, expert, and optional trainable encoder stability)
-                l_router_stab, l_expert_stab, l_enc_stab = (
-                    self.prototype_memory.compute_stability_losses(
-                        self.model,
-                        lambda_r=self.lambda_r,
-                        lambda_e=self.lambda_e,
-                        lambda_enc=self.lambda_enc,
-                        return_enc=True,
+                # Prototype stability losses (router, expert, and optional trainable
+                # encoder stability). With stability_every > 1 the term is applied
+                # every k-th step with the weight scaled by k, keeping the
+                # time-averaged penalty magnitude equal to the every-step recipe.
+                zero = torch.zeros((), device=self.device)
+                if step_idx % self.stability_every == 0:
+                    stab_scale = self.stability_every
+                    l_router_stab, l_expert_stab, l_enc_stab = (
+                        self.prototype_memory.compute_stability_losses(
+                            self.model,
+                            lambda_r=self.lambda_r * stab_scale,
+                            lambda_e=self.lambda_e * stab_scale,
+                            lambda_enc=self.lambda_enc * stab_scale,
+                            return_enc=True,
+                        )
                     )
-                )
+                else:
+                    l_router_stab = l_expert_stab = l_enc_stab = zero
 
                 loss = loss_task + l_router_stab + l_expert_stab + l_enc_stab
 
@@ -392,11 +411,13 @@ class ContinualTrainer:
                 # about historical tasks, so its predictions on old prototypes are
                 # pushed toward maximum entropy. This is the OOD penalty described
                 # in the README: the new expert learns the boundary of ITS OWN
-                # task, not a generalist solution.
-                l_ood = torch.tensor(0.0, device=self.device)
+                # task, not a generalist solution. Periodic application follows the
+                # same scaling convention as the stability losses above.
+                l_ood = zero
                 if (
                     self.lambda_ood > 0
                     and task_id > 0
+                    and step_idx % self.ood_every == 0
                     and not self.prototype_memory.is_empty()
                 ):
                     vp_old = self.prototype_memory.get_prototype_matrix(self.device)
@@ -410,7 +431,7 @@ class ContinualTrainer:
                             .sum(dim=-1)
                             .mean()
                         )
-                        l_ood = -self.lambda_ood * entropy_ood
+                        l_ood = -self.lambda_ood * self.ood_every * entropy_ood
                         loss = loss + l_ood
 
                 # Optional latent exemplar replay from prototype memory (hybrid mode)
@@ -449,6 +470,7 @@ class ContinualTrainer:
                         ]
                     )
                 )
+                step_idx += 1
 
         if _loss_rows:
             rows = torch.stack(_loss_rows).cpu().tolist()

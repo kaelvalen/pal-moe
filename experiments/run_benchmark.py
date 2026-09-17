@@ -758,6 +758,8 @@ def run_benchmark(
         proto_samples=args.proto_samples,
         refresh_anchors_after_calib=args.refresh_anchors_after_calib,
         keep_optimizer_state=args.keep_optimizer_state,
+        stability_every=args.stability_every,
+        ood_every=args.ood_every,
         device=device,
         checkpoint_dir=os.path.join(output_dir, "checkpoints_palmoe"),
     )
@@ -873,6 +875,8 @@ def run_benchmark(
         proto_samples=args.proto_samples,
         refresh_anchors_after_calib=args.refresh_anchors_after_calib,
         keep_optimizer_state=args.keep_optimizer_state,
+        stability_every=args.stability_every,
+        ood_every=args.ood_every,
         device=device,
         checkpoint_dir=os.path.join(output_dir, "checkpoints_hybrid"),
     )
@@ -1202,6 +1206,24 @@ if __name__ == "__main__":
         type=float,
         default=2.5,
         help="Expert stability loss weight (MSE to stored output anchors)",
+    )
+    parser.add_argument(
+        "--stability_every",
+        type=int,
+        default=1,
+        help=(
+            "Apply the stability losses every k-th step with weight scaled by k "
+            "(1 = every step, the published recipe)"
+        ),
+    )
+    parser.add_argument(
+        "--ood_every",
+        type=int,
+        default=1,
+        help=(
+            "Apply the OOD negative-boundary term every k-th step with weight "
+            "scaled by k (1 = every step, the published recipe)"
+        ),
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(

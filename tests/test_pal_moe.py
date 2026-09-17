@@ -1531,6 +1531,51 @@ def test_router_params_have_zero_weight_decay():
     assert router_group and router_group[0]["weight_decay"] == 0.0
 
 
+def test_periodic_stability_and_ood_knobs():
+    """stability_every/ood_every skip steps without breaking history shape."""
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2)
+    moe = DynamicMoE(
+        enc, router, [MLPExpert(8, 8, 3, i) for i in range(2)], use_ema_encoder=False
+    )
+
+    memory = PrototypeMemory(feature_dim=8)
+    feat = torch.randn(8)
+    memory.update_or_create_prototype(
+        feat, torch.tensor([1.0, 0.0]), torch.randn(2, 3), task_id=0
+    )
+    trainer = ContinualTrainer(
+        model=moe,
+        prototype_memory=memory,
+        trigger=QuantitativeTrigger(threshold_tau=1e9),
+        builder=ExpertBuilder(),
+        lambda_ood=0.5,
+        stability_every=2,
+        ood_every=2,
+        joint_calib_epochs=0,
+        device=torch.device("cpu"),
+    )
+
+    x = torch.randn(16, 16)
+    y = torch.randint(0, 3, (16,))
+    loader = [(x, y)] * 4  # four optimisation steps
+    hist = trainer.train_task(
+        task_id=1,
+        train_loader=loader,
+        val_loader=loader,
+        epochs=1,
+        enable_expansion=False,
+    )
+
+    assert len(hist["loss_router_stab"]) == 4
+    # Steps 0 and 2 apply the (scaled) stability loss, steps 1 and 3 skip it.
+    assert hist["loss_router_stab"][0] > 0.0
+    assert hist["loss_router_stab"][1] == 0.0
+    assert hist["loss_router_stab"][2] > 0.0
+    assert hist["loss_router_stab"][3] == 0.0
+
+
 def test_exemplar_batch_cache_invalidates_on_mutation():
     """The cached exemplar batch must be rebuilt after memory mutations."""
     mem = PrototypeMemory(feature_dim=4, store_raw=True)
