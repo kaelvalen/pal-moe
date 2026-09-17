@@ -119,7 +119,7 @@ jobs:
         assert pure > naive, f"pure PAL-MoE should beat naive fine-tuning: {pure:.2%} vs {naive:.2%}"
         print("benchmark-verify OK")
         PY
-    - name: CPU smoke: feature-cache + frozen encoder + router-anchor distillation
+    - name: "CPU smoke: feature-cache + frozen encoder + router-anchor distillation"
       run: |
         python experiments/run_benchmark.py --epochs 1 --device cpu --methods palmoe \
           --freeze_encoder --feature_cache --router_anchor_steps 50 \
