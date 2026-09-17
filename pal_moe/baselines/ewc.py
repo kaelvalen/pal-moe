@@ -80,10 +80,13 @@ class EWC:
         self, task_id: int, train_loader: Any, epochs: int = 5
     ) -> dict[str, Any]:
         self.model.train()
-        losses = []
+        total_loss = torch.zeros((), device=self.device)
+        n_updates = 0
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, non_blocking=True), y.to(
+                    self.device, non_blocking=True
+                )
                 self.optimizer.zero_grad()
 
                 logits = self.model(x)
@@ -93,8 +96,12 @@ class EWC:
 
                 loss.backward()
                 self.optimizer.step()
-                losses.append(loss.item())
+                total_loss += loss.detach()
+                n_updates += 1
 
         # Update Fisher for next tasks
         self.compute_fisher(train_loader)
-        return {"task_id": task_id, "loss": sum(losses) / max(len(losses), 1)}
+        return {
+            "task_id": task_id,
+            "loss": float(total_loss.item()) / max(n_updates, 1),
+        }

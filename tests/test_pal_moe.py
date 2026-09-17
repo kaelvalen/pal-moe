@@ -1505,6 +1505,48 @@ def test_router_params_have_zero_weight_decay():
     assert router_group and router_group[0]["weight_decay"] == 0.0
 
 
+def test_icarl_herding_matches_bruteforce():
+    """Vectorized herding must select the same exemplars as the greedy scan."""
+    from pal_moe.baselines.icarl import ICaRL
+
+    torch.manual_seed(0)
+    feats = torch.randn(64, 12)
+    k = 5
+    icarl = ICaRL.__new__(ICaRL)  # herding does not need the wrapped network
+    got = icarl._herding_select(feats, k)
+
+    current = torch.zeros_like(feats[0])
+    remaining = list(range(feats.size(0)))
+    ref = []
+    for _ in range(k):
+        best = min(remaining, key=lambda i: torch.norm(current + feats[i]).item())
+        ref.append(best)
+        remaining.remove(best)
+        current = current + feats[best]
+    assert got == ref
+
+
+def test_derpp_update_buffer_chunked_logits_are_consistent():
+    """Chunked buffer logits must equal a plain forward for the same sample."""
+    from pal_moe.baselines.der import DERPP
+
+    torch.manual_seed(0)
+    model = nn.Sequential(nn.Linear(8, 3))
+    x = torch.randn(100, 8)
+    y = torch.randint(0, 3, (100,))
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(x, y), batch_size=16
+    )
+    trainer = DERPP(model, buffer_size=10, device=torch.device("cpu"))
+    trainer.update_buffer(loader, seen_tasks=1, logit_batch_size=8)
+
+    assert trainer.buffer_x
+    with torch.no_grad():
+        for bx, bl in zip(trainer.buffer_x, trainer.buffer_logits):
+            expected = model(bx.unsqueeze(0)).squeeze(0)
+            assert torch.allclose(bl, expected, atol=1e-5)
+
+
 def test_config_validation_and_precedence(tmp_path):
     """--config is validated and explicit CLI flags win over config values."""
     import argparse

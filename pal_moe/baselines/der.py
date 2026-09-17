@@ -44,8 +44,16 @@ class DERPP:
         self.buffer_y: list[torch.Tensor] = []
         self.buffer_logits: list[torch.Tensor] = []
 
-    def update_buffer(self, train_loader: Any, seen_tasks: int) -> None:
-        """Stores random exemplars from current task with the CURRENT model's logits."""
+    def update_buffer(
+        self, train_loader: Any, seen_tasks: int, logit_batch_size: int = 512
+    ) -> None:
+        """
+        Stores random exemplars from current task with the CURRENT model's logits.
+
+        The logits are computed in fixed-size chunks: a single forward over the
+        whole task split (e.g. ~9000 CIFAR images) needs multi-GB activations
+        and can OOM even with the graph disabled.
+        """
         collected_x, collected_y = [], []
         for x, y in train_loader:
             collected_x.append(x)
@@ -58,8 +66,12 @@ class DERPP:
         random.shuffle(indices)
         selected = indices[:budget]
 
+        logit_chunks = []
         with torch.no_grad():
-            logits_all = self.model(cat_x.to(self.device)).detach().cpu()
+            for start in range(0, cat_x.size(0), logit_batch_size):
+                chunk = cat_x[start : start + logit_batch_size].to(self.device)
+                logit_chunks.append(self.model(chunk).detach().cpu())
+        logits_all = torch.cat(logit_chunks, dim=0)
 
         for idx in selected:
             self.buffer_x.append(cat_x[idx].clone())
@@ -87,10 +99,13 @@ class DERPP:
         self, task_id: int, train_loader: Any, epochs: int = 5
     ) -> dict[str, Any]:
         self.model.train()
-        losses = []
+        total_loss = torch.zeros((), device=self.device)
+        n_updates = 0
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, non_blocking=True), y.to(
+                    self.device, non_blocking=True
+                )
                 self.optimizer.zero_grad()
                 logits = self.model(x)
                 loss = F.cross_entropy(logits, y)
@@ -104,10 +119,14 @@ class DERPP:
 
                 loss.backward()
                 self.optimizer.step()
-                losses.append(loss.item())
+                total_loss += loss.detach()
+                n_updates += 1
 
         self.update_buffer(train_loader, seen_tasks=task_id + 1)
-        return {"task_id": task_id, "loss": sum(losses) / max(len(losses), 1)}
+        return {
+            "task_id": task_id,
+            "loss": float(total_loss.item()) / max(n_updates, 1),
+        }
 
 
 class ERACE:
