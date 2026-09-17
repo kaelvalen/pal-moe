@@ -76,6 +76,48 @@ class DynamicMoE(nn.Module):
         self.proto_routing_alpha = float(alpha)
         self.proto_routing_threshold = threshold
 
+    def set_expert_temperatures(self, temperatures: Optional[torch.Tensor]) -> None:
+        """
+        Optional per-expert logit temperatures (runtime attribute, shape [N]).
+
+        Used by `pal_moe.evaluation.calibration.calibrate_expert_temperatures`
+        to make top-k>1 mixing and confidence estimates better calibrated. It is
+        intentionally not a registered buffer so existing state dicts keep
+        loading; callers that persist models must save the tensor themselves.
+        """
+        self.expert_temperatures = temperatures
+
+    @torch.no_grad()
+    def calibrate_prototype_routing(
+        self,
+        grid: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0, 1.25),
+    ) -> float:
+        """
+        Picks the prototype-anchoring weight `alpha` by accuracy on the stored
+        latent exemplars (zero raw data, no training).
+
+        Returns the selected alpha and leaves `proto_routing_alpha` at it.
+        """
+        mem = self.prototype_memory
+        if mem is None or mem.is_empty():
+            return self.proto_routing_alpha
+        device = next(self.parameters()).device
+        batch = mem.get_exemplar_batch(device)
+        if batch is None:
+            return self.proto_routing_alpha
+        x, y = batch
+        was_training = self.training
+        self.eval()
+        best_alpha, best_acc = self.proto_routing_alpha, -1.0
+        for alpha in grid:
+            self.proto_routing_alpha = float(alpha)
+            acc = (self(latent_h=x).argmax(dim=-1) == y).float().mean().item()
+            if acc > best_acc:
+                best_acc, best_alpha = acc, float(alpha)
+        self.proto_routing_alpha = best_alpha
+        self.train(was_training)
+        return best_alpha
+
     @torch.no_grad()
     def _prototype_routing_anchor(
         self, h: torch.Tensor
@@ -207,6 +249,9 @@ class DynamicMoE(nn.Module):
             if mask.any():
                 h_sub = h[mask]
                 exp_out = self.experts[exp_idx](h_sub)
+                temps = getattr(self, "expert_temperatures", None)
+                if temps is not None:
+                    exp_out = exp_out / temps[exp_idx].clamp(min=1e-3)
                 g_sub = routing_weights[mask, exp_idx].unsqueeze(-1)
                 out[mask] += g_sub * exp_out
                 if return_routing_info:
@@ -260,7 +305,11 @@ class DynamicMoE(nn.Module):
 
             batched_forward = vmap(fmodel, in_dims=(0, 0, None))
             out = batched_forward(params, buffers, h)  # [E, B, C]
-            return out.transpose(0, 1)  # [B, E, C]
+            out = out.transpose(0, 1)  # [B, E, C]
+            temps = getattr(self, "expert_temperatures", None)
+            if temps is not None:
+                out = out / temps.to(out.device).clamp(min=1e-3).view(1, -1, 1)
+            return out
         except (RuntimeError, NotImplementedError):
             # vmap is unavailable or the experts are not stackable; fall back
             # to the loop. Narrow on purpose: shape/device bugs must surface.

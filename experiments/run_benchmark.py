@@ -37,6 +37,7 @@ from pal_moe.baselines.replay import ReplayTrainer
 from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.config import ConfigError, apply_config
 from pal_moe.data.split_mnist import get_split_mnist_tasks
+from pal_moe.evaluation.calibration import calibrate_expert_temperatures
 from pal_moe.evaluation.diagnostics import (
     print_router_diagnostics,
     router_diagnostics,
@@ -397,12 +398,16 @@ def _run_palmoe_variant(
         ),
     )
     evaluator = ContinualEvaluator(num_tasks=len(tasks), device=device)
-    if args.proto_routing_alpha > 0:
+    if args.proto_routing_alpha > 0 or args.proto_routing_auto:
         model.set_prototype_routing(
             memory,
-            alpha=args.proto_routing_alpha,
+            alpha=args.proto_routing_alpha if not args.proto_routing_auto else 0.5,
             threshold=args.proto_routing_threshold,
         )
+
+    calib_data = None
+    if args.expert_temperature_calib:
+        calib_data = [(x, y) for task in tasks for x, y in list(task.val_loader)[:2]]
 
     t0 = time.time()
     for t_idx, task in enumerate(tasks):
@@ -423,6 +428,19 @@ def _run_palmoe_variant(
             f"{hist['experts_added']} | Gate rejects: {hist['gate_rejections']} | "
             f"Total experts: {model.num_experts}"
         )
+        if args.proto_routing_auto:
+            alpha = model.calibrate_prototype_routing()
+            print(f"    [routing] calibrated prototype anchoring alpha = {alpha:.2f}")
+        if calib_data is not None:
+            calib = calibrate_expert_temperatures(model, calib_data, device=device)
+            model.set_expert_temperatures(
+                torch.tensor(calib["temperatures"], device=device)
+            )
+            print(
+                f"    [calibration] expert temperatures="
+                f"{[round(t, 2) for t in calib['temperatures']]} "
+                f"nll {calib['nll_before']:.3f} -> {calib['nll_after']:.3f}"
+            )
         accs = evaluator.evaluate_all_seen_tasks(model, t_idx, tasks)
         print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
 
@@ -1174,6 +1192,24 @@ if __name__ == "__main__":
         type=float,
         default=3.0,
         help="Energy-trigger z-score threshold (only used with --trigger energy)",
+    )
+    parser.add_argument(
+        "--proto_routing_auto",
+        action="store_true",
+        default=False,
+        help=(
+            "Calibrate the prototype-anchoring alpha at every task end by "
+            "accuracy on the stored latent exemplars (zero raw data)"
+        ),
+    )
+    parser.add_argument(
+        "--expert_temperature_calib",
+        action="store_true",
+        default=False,
+        help=(
+            "Fit one temperature per expert on its routed validation samples "
+            "at every task end (affects confidence and top-k>1 mixtures)"
+        ),
     )
     parser.add_argument(
         "--router_anchor_steps",
