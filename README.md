@@ -138,7 +138,7 @@ pal-moe/
 │   └── plot_results.py         # Figure generation (single + multi-seed JSON)
 ├── configs/                    # JSON configs (mnist_default, cifar10_default, ...)
 ├── BENCHMARK.md                # Methodology, protocol and measured design facts
-└── tests/test_pal_moe.py       # PyTest suite (90 tests)
+└── tests/test_pal_moe.py       # PyTest suite (94 tests)
 ```
 
 ---

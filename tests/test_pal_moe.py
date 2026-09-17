@@ -1712,6 +1712,65 @@ def test_streaming_task_free_evaluation():
     assert set(report["per_domain_accuracy"]) == {"0", "1"}
 
 
+def test_resnet_encoder_shapes():
+    """ResNet backbones accept 3-channel and adapted 1-channel inputs."""
+    from pal_moe.models.encoder import SharedEncoder
+
+    enc = SharedEncoder(input_dim=3072, output_dim=16, arch="resnet18")
+    enc.eval()
+    with torch.no_grad():
+        assert enc(torch.randn(4, 3, 32, 32)).shape == (4, 16)
+
+    enc1 = SharedEncoder(input_dim=784, output_dim=8, arch="resnet18")
+    enc1.eval()
+    with torch.no_grad():
+        assert enc1(torch.randn(2, 1, 28, 28)).shape == (2, 8)
+        assert enc1(torch.randn(2, 784)).shape == (2, 8)
+    assert enc1.net[0].conv1.in_channels == 1
+
+
+def test_diagnose_detects_resnet_and_encoder_meta(tmp_path):
+    from experiments.diagnose_checkpoint import (
+        _detect_encoder_arch,
+        build_model,
+        infer_config,
+    )
+
+    from pal_moe.factory import build_moe
+    from pal_moe.persistence import save_checkpoint
+
+    model = build_moe(
+        SharedEncoder(input_dim=3072, output_dim=8, arch="resnet18"),
+        8,
+        8,
+        3,
+        num_experts=1,
+    )
+    path = str(tmp_path / "resnet.pt")
+    save_checkpoint(path, model, PrototypeMemory(feature_dim=8), meta={"task_id": 0})
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    state = payload["model_state"]
+    assert payload["meta"]["encoder_arch"] == "resnet18"
+    assert _detect_encoder_arch(state) == "resnet18"
+
+    cfg = infer_config(state, "cifar10", encoder_arch=payload["meta"]["encoder_arch"])
+    assert cfg["arch"] == "resnet18"
+    build_model(cfg, torch.device("cpu")).load_state_dict(state)
+
+    # Heuristic fallbacks for checkpoints without encoder meta.
+    assert (
+        _detect_encoder_arch({"encoder.net.0.layer1.0.conv1.weight": torch.zeros(1)})
+        == "resnet18"
+    )
+    assert (
+        _detect_encoder_arch({"encoder.net.0.layer1.0.conv3.weight": torch.zeros(1)})
+        == "resnet50"
+    )
+    r34 = {f"encoder.net.0.layer2.{i}.conv1.weight": torch.zeros(1) for i in range(4)}
+    r34["encoder.net.0.layer1.0.conv1.weight"] = torch.zeros(1)
+    assert _detect_encoder_arch(r34) == "resnet34"
+
+
 def test_capacity_control_remaps_tracked_expert():
     """Prune/merge re-indexes experts; the tracked (new) expert must follow."""
     torch.manual_seed(0)

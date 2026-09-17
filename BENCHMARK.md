@@ -221,6 +221,9 @@ more stable, more accurate" without forking the code.
 | Generic streams | `pal_moe.data.split_folder`, `pal_moe.data.domain_shift` | ImageFolder splits and domain-shifting phases |
 | Task-free metrics | `pal_moe.evaluation.task_free.StreamingEvaluator` | online/recent accuracy, surprise, per-domain |
 | External encoders | `--encoder_checkpoint` | plug exported foundation-backbone weights into `SharedEncoder` |
+| Strong backbones | `--encoder_arch {resnet18,resnet34,resnet50} --encoder_weights imagenet` | frozen ImageNet ResNet features (1-channel adaptation for MNIST built in), no pretraining needed |
+| Domain-shift streams | `--domain_shift {permute,rotate}` | class-shared phase stream wired into the runner for stability stress tests |
+| Ready recipes | `experiments/recipes/*.sh` | CIFAR-100 full, CIFAR-10 ResNet-18 frozen, MNIST domain-shift + shared expert |
 | Compute reporting | `trainable_params`, `fit_seconds`, `geometry` | compute-matched comparisons per run |
 
 First single-seed measurements of the new knobs (Split-MNIST, seed 42, 3
@@ -526,7 +529,7 @@ ablation). Config selection supports case-insensitive substring filters
 
 `.github/workflows/ci.yml`:
 - **lint**: `ruff check` + `black --check` (versions pinned).
-- **test**: pytest (90 tests) on Python 3.10-3.12, with coverage.
+- **test**: pytest (94 tests) on Python 3.10-3.12, with coverage.
 - **benchmark-verify**: CPU smoke of the full 12-method benchmark (1 epoch)
   asserting it completes and that PAL-MoE hybrid ≥ 50% + pure ≥ 25%
   (sanity bounds, not state-of-the-art checks).

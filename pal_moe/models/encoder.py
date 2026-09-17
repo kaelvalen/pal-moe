@@ -5,7 +5,7 @@ Provides frozen or EMA representations to avoid representation drift during cont
 """
 
 import copy
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -18,21 +18,28 @@ class SharedEncoder(nn.Module):
     Supports MLP (for MNIST/tabular) and ConvNet (for CIFAR/images).
     """
 
+    RESNET_ARCHES = ("resnet18", "resnet34", "resnet50")
+
     def __init__(
         self,
         input_dim: int = 784,
         hidden_dims: tuple[int, ...] = (256, 128),
         output_dim: int = 128,
-        arch: Literal["mlp", "conv"] = "mlp",
+        arch: str = "mlp",
         dropout: float = 0.0,
         conv_channels: tuple[int, ...] = (32, 64, 128),
+        backbone_weights: str = "none",
     ):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.arch = arch
+        self.backbone_weights = backbone_weights
+        self.conv_channels = tuple(conv_channels)
 
-        if arch == "mlp":
+        if arch in self.RESNET_ARCHES:
+            self.net = self._build_resnet(arch, input_dim, output_dim, backbone_weights)
+        elif arch == "mlp":
             layers = []
             prev_dim = input_dim
             for h_dim in hidden_dims:
@@ -75,6 +82,61 @@ class SharedEncoder(nn.Module):
             self.net = nn.Sequential(*layers)
         else:
             raise ValueError(f"Unsupported architecture: {arch}")
+
+    def _build_resnet(
+        self,
+        arch: str,
+        input_dim: int,
+        output_dim: int,
+        backbone_weights: str,
+    ) -> nn.Sequential:
+        """
+        Torchvision ResNet backbone with a fresh projection head.
+
+        `backbone_weights="imagenet"` initialises from the ImageNet checkpoint
+        (strong frozen features), "none" keeps the random init (pair it with
+        SimCLR/AE pretraining). First-layer channels are adapted for 1-channel
+        inputs by averaging the pretrained RGB filters.
+        """
+        import torchvision.models as tvm
+
+        model_fn = getattr(tvm, arch, None)
+        if model_fn is None:
+            raise ValueError(f"torchvision has no model {arch!r}")
+        weights = None
+        if backbone_weights == "imagenet":
+            weight_enum = getattr(
+                tvm, arch.replace("resnet", "ResNet") + "_Weights", None
+            )
+            if weight_enum is None:
+                raise ValueError(f"no ImageNet weights for {arch!r}")
+            weights = weight_enum.IMAGENET1K_V1
+        backbone = model_fn(weights=weights)
+
+        in_channels = 3 if input_dim == 3072 else 1
+        if in_channels != 3:
+            old_conv = backbone.conv1
+            new_conv = nn.Conv2d(
+                in_channels,
+                old_conv.out_channels,
+                kernel_size=old_conv.kernel_size,
+                stride=old_conv.stride,
+                padding=old_conv.padding,
+                bias=False,
+            )
+            if weights is not None:
+                with torch.no_grad():
+                    new_conv.weight.copy_(old_conv.weight.mean(dim=1, keepdim=True))
+            backbone.conv1 = new_conv
+
+        feature_dim = backbone.fc.in_features
+        backbone.fc = nn.Identity()
+        return nn.Sequential(
+            backbone,
+            nn.Linear(feature_dim, output_dim),
+            nn.BatchNorm1d(output_dim),
+            nn.ReLU(inplace=True),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.arch == "mlp":

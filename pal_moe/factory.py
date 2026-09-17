@@ -94,6 +94,7 @@ def build_encoder(
     arch: str = "mlp",
     hidden_dims: Optional[Sequence[int]] = (256, 128),
     conv_channels: Sequence[int] = (32, 64, 128),
+    backbone_weights: str = "none",
     device: Optional[torch.device] = None,
 ) -> SharedEncoder:
     encoder = SharedEncoder(
@@ -102,6 +103,7 @@ def build_encoder(
         output_dim=feature_dim,
         arch=arch,
         conv_channels=tuple(conv_channels),
+        backbone_weights=backbone_weights,
     )
     return encoder.to(device) if device is not None else encoder
 

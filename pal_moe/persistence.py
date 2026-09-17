@@ -43,10 +43,16 @@ def save_checkpoint(
                 ),
             }
         )
+    encoder = getattr(model, "encoder", None)
+    encoder_meta = {
+        "encoder_arch": getattr(encoder, "arch", None),
+        "encoder_conv_channels": list(getattr(encoder, "conv_channels", ()) or ()),
+        "encoder_backbone_weights": getattr(encoder, "backbone_weights", "none"),
+    }
     payload = {
         "model_state": {k: v.detach().cpu() for k, v in model.state_dict().items()},
         "prototypes": mem_state,
-        "meta": meta or {},
+        "meta": {**(meta or {}), **encoder_meta},
     }
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     torch.save(payload, path)
