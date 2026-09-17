@@ -51,6 +51,7 @@ from pal_moe.models.encoder import SharedEncoder
 from pal_moe.models.expert import MLPExpert
 from pal_moe.models.moe import DynamicMoE
 from pal_moe.models.router import DynamicRouter
+from pal_moe.trigger.energy_trigger import EnergyTrigger
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
 
 
@@ -347,9 +348,12 @@ def _run_palmoe_variant(
         args.proto_per_class,
         (not args.feature_cache) if replay else False,
     )
-    trigger = QuantitativeTrigger(
-        alpha=1.0, beta=0.4, gamma=0.6, delta=0.5, threshold_tau=0.5
-    )
+    if args.trigger == "energy":
+        trigger = EnergyTrigger(threshold=args.energy_threshold)
+    else:
+        trigger = QuantitativeTrigger(
+            alpha=1.0, beta=0.4, gamma=0.6, delta=0.5, threshold_tau=0.5
+        )
     builder = ExpertBuilder(
         min_acc_threshold=0.45 if dataset in ("cifar10", "cifar100") else 0.60,
         max_proto_drop=max_proto_drop,
@@ -381,6 +385,8 @@ def _run_palmoe_variant(
         keep_optimizer_state=args.keep_optimizer_state,
         stability_every=args.stability_every,
         ood_every=args.ood_every,
+        ood_mode=args.ood_mode,
+        ood_margin=args.ood_margin,
         router_anchor_margin=args.router_anchor_margin,
         router_weight_decay=args.router_weight_decay,
         device=device,
@@ -1142,6 +1148,32 @@ if __name__ == "__main__":
             "Adam weight decay for router parameters; 0 keeps the historical "
             "routing lock exact, 1e-5 reproduces the pre-fix implicit decay"
         ),
+    )
+    parser.add_argument(
+        "--ood_mode",
+        type=str,
+        default="entropy",
+        choices=["entropy", "energy"],
+        help="Negative-boundary flavour: entropy maximisation or energy hinge",
+    )
+    parser.add_argument(
+        "--ood_margin",
+        type=float,
+        default=1.0,
+        help="Energy OOD hinge margin (only used with --ood_mode energy)",
+    )
+    parser.add_argument(
+        "--trigger",
+        type=str,
+        default="composite",
+        choices=["composite", "energy"],
+        help="Expansion trigger: supervised composite S(x) or energy novelty",
+    )
+    parser.add_argument(
+        "--energy_threshold",
+        type=float,
+        default=3.0,
+        help="Energy-trigger z-score threshold (only used with --trigger energy)",
     )
     parser.add_argument(
         "--router_anchor_steps",
