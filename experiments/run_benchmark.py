@@ -37,6 +37,10 @@ from pal_moe.baselines.replay import ReplayTrainer
 from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.config import ConfigError, apply_config
 from pal_moe.data.split_mnist import get_split_mnist_tasks
+from pal_moe.evaluation.diagnostics import (
+    print_router_diagnostics,
+    router_diagnostics,
+)
 from pal_moe.evaluation.metrics import ContinualEvaluator
 from pal_moe.factory import (
     build_prototype_memory,
@@ -86,8 +90,43 @@ def _record_baseline_result(
         "trainable_params": int(
             sum(p.numel() for p in model.parameters() if p.requires_grad)
         ),
+        "fit_seconds": getattr(evaluator, "fit_seconds", None),
+        "geometry": getattr(evaluator, "geometry", None),
         "acc_matrix": evaluator.R.tolist(),
     }
+
+
+def _method_features(model: nn.Module, x: torch.Tensor) -> Optional[torch.Tensor]:
+    """Best-effort representation accessor for the geometry report."""
+    if hasattr(model, "get_routing_features"):
+        return model.get_routing_features(x)
+    if isinstance(model, nn.Sequential) and len(model) > 0:
+        return model[0](x)
+    return None
+
+
+@torch.no_grad()
+def _test_geometry(
+    model: nn.Module, tasks: list, device: torch.device, max_batches_per_task: int = 4
+) -> Optional[dict]:
+    """Class-geometry report on a bounded slice of every task's test set."""
+    from pal_moe.evaluation.geometry import geometry_report
+
+    if model is None:
+        return None
+    feats, labels = [], []
+    for task in tasks:
+        for batch_idx, (x, y) in enumerate(task.test_loader):
+            if batch_idx >= max_batches_per_task:
+                break
+            h = _method_features(model, x.to(device))
+            if h is None:
+                return None
+            feats.append(h.detach().cpu())
+            labels.append(y)
+    if not feats:
+        return None
+    return geometry_report(torch.cat(feats, dim=0), torch.cat(labels, dim=0))
 
 
 def _run_baseline_loop(
@@ -100,6 +139,7 @@ def _run_baseline_loop(
     eval_model: Optional[Callable] = None,
 ) -> None:
     """Shared per-task training/evaluation loop for the single-head baselines."""
+    t0 = time.time()
     for t_idx, task in enumerate(tasks):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         kwargs = per_task_kwargs(task) if per_task_kwargs is not None else {}
@@ -107,6 +147,10 @@ def _run_baseline_loop(
         eval_net = eval_model() if eval_model is not None else model
         accs = evaluator.evaluate_all_seen_tasks(eval_net, t_idx, tasks)
         print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
+    evaluator.fit_seconds = round(time.time() - t0, 1)
+    evaluator.geometry = _test_geometry(
+        model, tasks, getattr(trainer, "device", None) or torch.device("cpu")
+    )
 
 
 def _pretrain_cache_path(
@@ -346,6 +390,7 @@ def _run_palmoe_variant(
             threshold=args.proto_routing_threshold,
         )
 
+    t0 = time.time()
     for t_idx, task in enumerate(tasks):
         print(
             f"  Training Task {t_idx} (classes {task.classes})... "
@@ -377,11 +422,17 @@ def _run_palmoe_variant(
         f"{footprint['total_elements']} floats ({footprint['size_kb']:.1f} KB)"
     )
 
+    evaluator.geometry = _test_geometry(model, tasks, device)
     result = _record_baseline_result(model, evaluator, final_experts=model.num_experts)
     result["router_stability_kl"] = router_kl
     result["specialization_mi"] = mi
     result["utilization"] = util
     result["prototype_elements"] = footprint["total_elements"]
+    result["fit_seconds"] = round(time.time() - t0, 1)
+
+    diagnostics = router_diagnostics(model, tasks, device, memory)
+    print_router_diagnostics(diagnostics)
+    result["router_diagnostics"] = diagnostics
     return result
 
 

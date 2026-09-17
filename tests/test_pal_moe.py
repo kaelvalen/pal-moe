@@ -1621,6 +1621,67 @@ def test_runner_baseline_helpers():
     assert res["acc"] == pytest.approx(0.5)
 
 
+def test_geometry_report_separates_clusters():
+    """Geometry metrics must separate clustered from overlapping features."""
+    from pal_moe.evaluation.geometry import (
+        geometry_report,
+        nearest_other_margin,
+        silhouette_score,
+    )
+
+    torch.manual_seed(0)
+    centers = torch.tensor([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]])
+    feats = torch.cat([c + torch.randn(50, 2) * 0.1 for c in centers])
+    labels = torch.repeat_interleave(torch.arange(3), 50)
+
+    margin = nearest_other_margin(feats, labels)
+    assert (margin > 0).float().mean() > 0.95
+    assert silhouette_score(feats, labels) > 0.8
+
+    report = geometry_report(feats, labels)
+    assert report["margin_mean"] > 0
+    assert report["class_mean_separation_ratio"] > 0.5
+
+    overlapping = geometry_report(torch.randn(150, 2), labels)
+    assert overlapping["silhouette"] < 0.2
+    assert report["silhouette"] > overlapping["silhouette"]
+
+
+def test_router_diagnostics_reports_owner_accuracy():
+    from pal_moe.evaluation.diagnostics import router_diagnostics
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    router = DynamicRouter(input_dim=8, num_experts=2)
+    moe = DynamicMoE(
+        enc, router, [MLPExpert(8, 8, 3, i) for i in range(2)], use_ema_encoder=False
+    )
+    memory = PrototypeMemory(feature_dim=8)
+    feats = torch.randn(6, 8)
+    for i, owner in enumerate([0, 0, 1, 1, 0, 1]):
+        memory.update_or_create_prototype(
+            feats[i],
+            torch.tensor([1.0, 0.0]) if owner == 0 else torch.tensor([0.0, 1.0]),
+            torch.randn(2, 3),
+            task_id=owner,
+            owner_expert=owner,
+        )
+
+    class FakeTask:
+        classes = (0, 1)
+        test_loader = [(torch.randn(16, 16), torch.randint(0, 3, (16,)))]
+        val_loader = test_loader
+
+    diag = router_diagnostics(
+        moe, [FakeTask(), FakeTask()], torch.device("cpu"), memory
+    )
+    assert diag["num_experts"] == 2
+    assert 0.0 <= diag["usage_entropy_normalized"] <= 1.0
+    assert diag["owners"]["num_owned_prototypes"] == 6
+    assert 0.0 <= diag["owners"]["owner_routing_accuracy"] <= 1.0
+    assert diag["prototype_geometry"]["n_samples"] == 6
+
+
 def test_sample_buffer_reservoir_balances_tasks():
     """Reservoir mode keeps every task; recency evicts the oldest tasks."""
     import random
@@ -1760,10 +1821,12 @@ def test_runner_baseline_loop_forwards_per_task_kwargs():
             assert tasks is TASKS
             return [1.0]
 
+    empty_batch = [(torch.randn(4, 16), torch.randint(0, 3, (4,)))]
+
     class FakeTask:
         classes = (0, 1)
         train_loader = [1]
-        test_loader = [1]
+        test_loader = empty_batch
 
     TASKS = [FakeTask(), FakeTask()]
     _run_baseline_loop(
