@@ -14,30 +14,29 @@ Usage:
     python experiments/run_pure_explore.py --lambda_ood 0.1 --device cuda
 """
 
-import os
-import sys
+import argparse
 import copy
 import json
-import argparse
+import os
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import torch
-import torch.nn as nn
 from torchvision import datasets, transforms
 
+from pal_moe.adaptation.ttt import ContinualTrainer
+from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.data.split_mnist import get_split_mnist_tasks
+from pal_moe.evaluation.metrics import ContinualEvaluator
+from pal_moe.memory.prototype_memory import PrototypeMemory
 from pal_moe.models.encoder import SharedEncoder
-from pal_moe.models.router import DynamicRouter, DistanceRouter
 from pal_moe.models.expert import MLPExpert
 from pal_moe.models.moe import DynamicMoE
-from pal_moe.memory.prototype_memory import PrototypeMemory
+from pal_moe.models.router import DistanceRouter, DynamicRouter
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
-from pal_moe.builder.expert_builder import ExpertBuilder
-from pal_moe.adaptation.ttt import ContinualTrainer
-from pal_moe.evaluation.metrics import ContinualEvaluator
 
 
 def set_seed(seed: int = 42):

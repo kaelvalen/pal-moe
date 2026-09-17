@@ -1,17 +1,16 @@
-from .naive import NaiveFineTuning
-from .ewc import EWC
-from .replay import ReplayTrainer
-from .standard_moe import StandardMoE
-from .der import DERPP, ERACE
 from .agem import AGEM
+from .der import DERPP, ERACE
+from .ewc import EWC
 from .icarl import ICaRL
+from .naive import NaiveFineTuning
+from .replay import ReplayTrainer
 
 __all__ = [
     "NaiveFineTuning",
     "EWC",
     "ReplayTrainer",
-    "StandardMoE",
     "DERPP",
     "ERACE",
     "AGEM",
+    "ICaRL",
 ]

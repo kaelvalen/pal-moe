@@ -13,16 +13,16 @@ Ensures:
    synchronized directly with prototype memory.
 """
 
-import copy
+from dataclasses import dataclass
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict, Any
 
+from ..memory.prototype_memory import PrototypeMemory
 from ..models.expert import MLPExpert
 from ..models.moe import DynamicMoE
-from ..memory.prototype_memory import PrototypeMemory
 
 
 @dataclass
@@ -97,7 +97,7 @@ class ExpertBuilder:
         avg_loss = 0.0
         total_batches = 0
 
-        for epoch in range(epochs):
+        for _ in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(device), y.to(device)
                 optimizer.zero_grad()
@@ -325,7 +325,7 @@ class ExpertBuilder:
         prototype_memory: Optional[PrototypeMemory] = None,
         max_experts: int = 8,
         min_usage_threshold: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Maintains expert capacity budget with prototype synchronization:
         - If model.num_experts > max_experts:

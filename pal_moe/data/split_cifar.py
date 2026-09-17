@@ -9,17 +9,18 @@ Task 4: [8, 9] (ship, truck)
 Supports Class-Incremental Learning in a 10-class global space.
 """
 
+from dataclasses import dataclass
+from typing import Optional
+
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
-from dataclasses import dataclass
-from typing import List, Tuple, Dict, Optional
 
 
 @dataclass
 class SplitCIFAR10Task:
     task_id: int
-    classes: Tuple[int, int]
+    classes: tuple[int, int]
     train_loader: DataLoader
     val_loader: DataLoader
     test_loader: DataLoader
@@ -33,7 +34,7 @@ def get_split_cifar10_tasks(
     max_train_samples_per_task: Optional[int] = None,
     num_workers: int = 0,
     pin_memory: bool = False,
-) -> List[SplitCIFAR10Task]:
+) -> list[SplitCIFAR10Task]:
     """
     Creates 5 sequential tasks for Split-CIFAR-10 benchmark.
 

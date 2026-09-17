@@ -5,10 +5,11 @@ Provides frozen or EMA representations to avoid representation drift during cont
 """
 
 import copy
+from typing import Any, Literal, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Literal, Any
 
 
 class SharedEncoder(nn.Module):

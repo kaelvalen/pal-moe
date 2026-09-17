@@ -4,18 +4,17 @@ Mode A: Continual Training (labeled stream with prototype router/expert stabilit
 Mode B: Test-Time Adaptation (unlabeled stream with entropy minimization, consistency, self-supervised)
 """
 
-import copy
 import os
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional, Dict, Any, List
+from typing import Any, Optional
 
-from ..models.moe import DynamicMoE
-from ..memory.prototype_memory import PrototypeMemory
-from ..trigger.expert_trigger import QuantitativeTrigger
+import torch
+import torch.nn.functional as F
+
 from ..builder.expert_builder import ExpertBuilder
+from ..memory.prototype_memory import PrototypeMemory
+from ..models.moe import DynamicMoE
 from ..persistence import save_checkpoint
+from ..trigger.expert_trigger import QuantitativeTrigger
 
 
 class ContinualTrainer:
@@ -193,7 +192,7 @@ class ContinualTrainer:
         epochs: int = 5,
         enable_expansion: bool = True,
         enable_anchor: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Trains the DynamicMoE model on a given task.
         """
@@ -339,7 +338,7 @@ class ContinualTrainer:
         # of four host synchronisations (.item()) per batch.
         _loss_rows: list = []
 
-        for epoch in range(epochs):
+        for _ in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
                 self.optimizer.zero_grad()

@@ -61,6 +61,25 @@ Repository = "https://github.com/kaelvalen/pal-moe.git"
 where = ["."]
 include = ["pal_moe*"]
 
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+src = ["pal_moe", "experiments", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # line length is enforced by black; long help strings stay intact
+    "B008",  # torch.device("cpu") defaults are idiomatic in this codebase
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pal_moe"]
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]

@@ -14,33 +14,34 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import argparse
 import copy
+import datetime
 import json
 import time
-import datetime
-import argparse
+
 import numpy as np
 import torch
 import torch.nn as nn
 from tabulate import tabulate
 
+from pal_moe.adaptation.ttt import ContinualTrainer
+from pal_moe.baselines.agem import AGEM
+from pal_moe.baselines.der import DERPP, ERACE
+from pal_moe.baselines.ewc import EWC
+from pal_moe.baselines.icarl import ICaRL
+from pal_moe.baselines.naive import NaiveFineTuning
+from pal_moe.baselines.replay import ReplayTrainer
+from pal_moe.builder.expert_builder import ExpertBuilder
+from pal_moe.config import ConfigError, apply_config
 from pal_moe.data.split_mnist import get_split_mnist_tasks
+from pal_moe.evaluation.metrics import ContinualEvaluator
+from pal_moe.memory.prototype_memory import PrototypeMemory
 from pal_moe.models.encoder import SharedEncoder
-from pal_moe.models.router import DynamicRouter, DistanceRouter, AttentionRouter
 from pal_moe.models.expert import MLPExpert
 from pal_moe.models.moe import DynamicMoE
-from pal_moe.memory.prototype_memory import PrototypeMemory
+from pal_moe.models.router import AttentionRouter, DistanceRouter, DynamicRouter
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
-from pal_moe.builder.expert_builder import ExpertBuilder
-from pal_moe.adaptation.ttt import ContinualTrainer
-from pal_moe.config import ConfigError, apply_config
-from pal_moe.baselines.naive import NaiveFineTuning
-from pal_moe.baselines.der import DERPP, ERACE
-from pal_moe.baselines.agem import AGEM
-from pal_moe.baselines.icarl import ICaRL
-from pal_moe.baselines.ewc import EWC
-from pal_moe.baselines.replay import ReplayTrainer
-from pal_moe.evaluation.metrics import ContinualEvaluator
 
 
 def _git_commit() -> str:
@@ -652,7 +653,7 @@ def run_benchmark(
     for t_idx, task in enumerate(tasks if run("stdmoe") else []):
         print(f"  Training Task {t_idx} (classes {task.classes})...")
         std_moe.train()
-        for epoch in range(epochs_per_task):
+        for _ in range(epochs_per_task):
             for x, y in task.train_loader:
                 x, y = x.to(device), y.to(device)
                 opt_std.zero_grad()
@@ -944,12 +945,16 @@ def run_benchmark(
                 f"{m['acc']:.2%}",
                 f"{m['forgetting']:.2%}",
                 f"{m['bwt']:.2%}",
-                f"{m['router_stability_kl']:.4f}"
-                if not np.isnan(m["router_stability_kl"])
-                else "-",
-                f"{m['specialization_mi']:.3f}"
-                if not np.isnan(m["specialization_mi"])
-                else "-",
+                (
+                    f"{m['router_stability_kl']:.4f}"
+                    if not np.isnan(m["router_stability_kl"])
+                    else "-"
+                ),
+                (
+                    f"{m['specialization_mi']:.3f}"
+                    if not np.isnan(m["specialization_mi"])
+                    else "-"
+                ),
                 f"{m['utilization']:.3f}" if not np.isnan(m["utilization"]) else "-",
                 str(m["final_experts"]),
             ]
@@ -1202,7 +1207,7 @@ if __name__ == "__main__":
         try:
             apply_config(args, parser, sys.argv[1:], args.config)
         except ConfigError as _cfg_err:
-            raise SystemExit(f"[config] {_cfg_err}")
+            raise SystemExit(f"[config] {_cfg_err}") from None
 
     if args.feature_cache and not args.freeze_encoder:
         raise SystemExit(

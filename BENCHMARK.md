@@ -398,7 +398,7 @@ ablation). Config selection supports case-insensitive substring filters
 ## CI verification
 
 `.github/workflows/ci.yml`:
-- **test**: pytest (42 tests) on Python 3.10-3.12, with coverage.
+- **test**: pytest (47 tests) on Python 3.10-3.12, with coverage.
 - **benchmark-verify**: CPU smoke of the full 12-method benchmark (1 epoch)
   asserting it completes and that PAL-MoE hybrid ≥ 50% + pure ≥ 25%
   (sanity bounds, not state-of-the-art checks).

@@ -4,10 +4,11 @@ Maintains a small buffer of raw input exemplars from previous tasks and replays 
 """
 
 import random
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, List, Tuple, Optional
 
 
 class ReplayTrainer:
@@ -28,8 +29,8 @@ class ReplayTrainer:
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        self.buffer_x: List[torch.Tensor] = []
-        self.buffer_y: List[torch.Tensor] = []
+        self.buffer_x: list[torch.Tensor] = []
+        self.buffer_y: list[torch.Tensor] = []
 
     def update_buffer(
         self, train_loader: Any, per_task_budget: Optional[int] = None
@@ -63,7 +64,7 @@ class ReplayTrainer:
 
     def get_replay_batch(
         self, batch_size: int = 32
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         if not self.buffer_x:
             return None, None
         indices = [
@@ -76,10 +77,10 @@ class ReplayTrainer:
 
     def train_task(
         self, task_id: int, train_loader: Any, epochs: int = 5
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         self.model.train()
         losses = []
-        for epoch in range(epochs):
+        for _ in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
                 self.optimizer.zero_grad()

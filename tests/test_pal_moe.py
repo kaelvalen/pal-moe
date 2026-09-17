@@ -10,15 +10,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from pal_moe.models.encoder import SharedEncoder, EMAEncoder
-from pal_moe.models.expert import MLPExpert
-from pal_moe.models.router import DynamicRouter
-from pal_moe.models.moe import DynamicMoE, PALMoE
-from pal_moe.memory.prototype_memory import PrototypeMemory
-from pal_moe.trigger.expert_trigger import QuantitativeTrigger
-from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.adaptation.ttt import TestTimeAdapter
+from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.evaluation.metrics import ContinualEvaluator
+from pal_moe.memory.prototype_memory import PrototypeMemory
+from pal_moe.models.encoder import EMAEncoder, SharedEncoder
+from pal_moe.models.expert import MLPExpert
+from pal_moe.models.moe import DynamicMoE
+from pal_moe.models.router import DynamicRouter
+from pal_moe.trigger.expert_trigger import QuantitativeTrigger
 
 
 def test_shared_and_ema_encoder():
@@ -119,9 +119,9 @@ def test_prototype_routing_confidence_scales_with_ambiguity():
     model.set_prototype_routing(memory, alpha=1.0)
     with torch.no_grad():
         anchors, confidence = model._prototype_routing_anchor(query.unsqueeze(0))
-    assert confidence.item() < 0.05, (
-        f"ambiguous input should not be anchored: {confidence}"
-    )
+    assert (
+        confidence.item() < 0.05
+    ), f"ambiguous input should not be anchored: {confidence}"
     assert anchors.shape == (1, 2)
 
 
@@ -207,10 +207,11 @@ def test_rejected_expansion_owner_is_newest_expert():
     conflated two tasks on one expert and collapsed the rejected task
     (MNIST hybrid 81.1% -> 71.1% before the fix).
     """
+    from torch.utils.data import DataLoader, TensorDataset
+
     from pal_moe.adaptation.ttt import ContinualTrainer
     from pal_moe.builder.expert_builder import ValidationGateResult
     from pal_moe.trigger.expert_trigger import TriggerEvaluationResult
-    from torch.utils.data import DataLoader, TensorDataset
 
     torch.manual_seed(0)
     enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
@@ -282,8 +283,9 @@ def test_rejected_expansion_owner_is_newest_expert():
 
 
 def test_feature_cache_matches_raw_encoder():
-    from pal_moe.data.feature_cache import build_feature_cache
     from torch.utils.data import DataLoader, TensorDataset
+
+    from pal_moe.data.feature_cache import build_feature_cache
 
     class DummyTask:
         def __init__(self, task_id, loader):
@@ -1083,9 +1085,11 @@ def test_get_raw_exemplar_batch_and_hybrid_replay():
 
 
 def test_split_cifar10_tasks():
-    from pal_moe.data.split_cifar import get_split_cifar10_tasks
+    from unittest.mock import MagicMock, patch
+
     import torch
-    from unittest.mock import patch, MagicMock
+
+    from pal_moe.data.split_cifar import get_split_cifar10_tasks
 
     with patch("torchvision.datasets.CIFAR10") as MockCIFAR:
         mock_dataset = MagicMock()
@@ -1112,9 +1116,9 @@ def test_split_cifar10_tasks():
 
 
 def test_freeze_historical_experts():
-    from pal_moe.models.moe import DynamicMoE
     from pal_moe.models.encoder import SharedEncoder
     from pal_moe.models.expert import MLPExpert
+    from pal_moe.models.moe import DynamicMoE
     from pal_moe.models.router import DynamicRouter
 
     enc = SharedEncoder(input_dim=64, hidden_dims=(32,), output_dim=16)
@@ -1179,16 +1183,17 @@ def test_add_expert_null_space_basis():
         new_expert=new_exp, prototype_feat=torch.randn(16), null_space_basis=basis
     )
     assert model.num_experts == 2
+    # The new routing row must be (numerically) orthogonal to the basis span:
+    # its projection onto each normalized basis direction vanishes.
     dirs = F.normalize(basis, p=2, dim=1)
     new_row = model.router.gate.weight.data[1]
-    # row 1 may be warm-started; at minimum it must not be dominated by basis directions
-    assert model.router.num_experts == 2
+    assert (dirs @ new_row).abs().max().item() < 1e-4
 
 
 def test_persistence_roundtrip():
     """save_checkpoint/load_checkpoint round-trips model + prototype memory."""
-    from pal_moe.persistence import save_checkpoint, load_checkpoint
     from pal_moe.memory.prototype_memory import Prototype
+    from pal_moe.persistence import load_checkpoint, save_checkpoint
 
     torch.manual_seed(0)
     enc = SharedEncoder(input_dim=64, hidden_dims=(32,), output_dim=16)
@@ -1233,8 +1238,8 @@ def test_persistence_roundtrip():
 
 def test_der_erace_agem_smoke():
     """DER++, ER-ACE and AGEM train a full task without error and improve loss."""
-    from pal_moe.baselines.der import DERPP, ERACE
     from pal_moe.baselines.agem import AGEM
+    from pal_moe.baselines.der import DERPP, ERACE
 
     torch.manual_seed(0)
     xs = torch.randn(24, 64)
@@ -1461,7 +1466,8 @@ def test_config_validation_and_precedence(tmp_path):
 def test_split_cifar100_loader():
     """CIFAR-100 splitter produces 20 tasks x 5 disjoint classes (offline mock)."""
     import torchvision.datasets as tvd
-    from pal_moe.data.split_cifar100 import get_split_cifar100_tasks, NUM_TASKS
+
+    from pal_moe.data.split_cifar100 import NUM_TASKS, get_split_cifar100_tasks
 
     class FakeCIFAR100:
         def __init__(self, root, train=True, download=False, transform=None):

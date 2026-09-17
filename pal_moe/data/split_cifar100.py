@@ -6,17 +6,18 @@ sequential tasks of 5 classes each (standard Split-CIFAR-100 protocol):
 Supports Class-Incremental Learning in a 100-class global space.
 """
 
+from dataclasses import dataclass
+from typing import Optional
+
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 
 @dataclass
 class SplitCIFAR100Task:
     task_id: int
-    classes: Tuple[int, ...]
+    classes: tuple[int, ...]
     train_loader: DataLoader
     val_loader: DataLoader
     test_loader: DataLoader
@@ -36,7 +37,7 @@ def get_split_cifar100_tasks(
     max_train_samples_per_task: Optional[int] = None,
     num_workers: int = 0,
     pin_memory: bool = False,
-) -> List[SplitCIFAR100Task]:
+) -> list[SplitCIFAR100Task]:
     """
     Creates 20 sequential tasks for the Split-CIFAR-100 benchmark (5 classes each).
 

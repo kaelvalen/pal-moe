@@ -28,25 +28,26 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import argparse
 import copy
 import json
-import argparse
-from typing import Optional, List
+from typing import Optional
+
 import numpy as np
 import torch
-from torchvision import datasets, transforms
 from tabulate import tabulate
+from torchvision import datasets, transforms
 
+from pal_moe.adaptation.ttt import ContinualTrainer
+from pal_moe.builder.expert_builder import ExpertBuilder
 from pal_moe.data.split_mnist import get_split_mnist_tasks
+from pal_moe.evaluation.metrics import ContinualEvaluator
+from pal_moe.memory.prototype_memory import PrototypeMemory
 from pal_moe.models.encoder import SharedEncoder
-from pal_moe.models.router import DynamicRouter
 from pal_moe.models.expert import MLPExpert
 from pal_moe.models.moe import DynamicMoE
-from pal_moe.memory.prototype_memory import PrototypeMemory
+from pal_moe.models.router import DynamicRouter
 from pal_moe.trigger.expert_trigger import QuantitativeTrigger
-from pal_moe.builder.expert_builder import ExpertBuilder
-from pal_moe.adaptation.ttt import ContinualTrainer
-from pal_moe.evaluation.metrics import ContinualEvaluator
 
 
 def set_seed(seed: int = 42):
@@ -421,12 +422,13 @@ CONFIGS = [
 
 def run_all_ablations(
     epochs: int = 3,
-    seeds: list[int] = [42],
+    seeds: Optional[list[int]] = None,
     selected_configs: Optional[list[str]] = None,
     device_str: str = "auto",
     output_dir: str = "./results",
     dataset: str = "mnist",
 ):
+    seeds = [42] if seeds is None else list(seeds)
     os.makedirs(output_dir, exist_ok=True)
     if device_str == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -71,6 +71,9 @@ logs/
 runs/
 wandb/
 
+# Agent / tooling workspaces
+.dsh-outputs/
+
 # Jupyter / IPython
 .ipynb_checkpoints/
 *-checkpoint.ipynb

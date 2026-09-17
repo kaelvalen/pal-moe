@@ -2,10 +2,11 @@
 Generates publication-quality figures from benchmark and ablation JSON results.
 """
 
-import os
 import json
-import numpy as np
+import os
+
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def plot_benchmark_results(
@@ -16,7 +17,7 @@ def plot_benchmark_results(
         print(f"Results file {results_file} not found.")
         return
 
-    with open(results_file, "r") as f:
+    with open(results_file) as f:
         data = json.load(f)
 
     # Multi-seed format: results/benchmark_multi.json -> {"aggregated": {method: {...}}}
@@ -109,7 +110,7 @@ def plot_ablation_results(
         print(f"Ablation file {results_file} not found.")
         return
 
-    with open(results_file, "r") as f:
+    with open(results_file) as f:
         data = json.load(f)
 
     configs = list(data.keys())

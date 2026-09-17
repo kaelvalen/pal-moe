@@ -3,10 +3,11 @@ Naive Sequential Fine-tuning baseline.
 Trains sequentially across tasks without any forgetting mitigation mechanism.
 """
 
+from typing import Any
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict
 
 
 class NaiveFineTuning:
@@ -28,10 +29,10 @@ class NaiveFineTuning:
 
     def train_task(
         self, task_id: int, train_loader: Any, epochs: int = 5
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         self.model.train()
         losses = []
-        for epoch in range(epochs):
+        for _ in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
                 self.optimizer.zero_grad()

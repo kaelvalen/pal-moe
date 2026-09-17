@@ -3,15 +3,14 @@ Dynamic Mixture of Experts (DynamicMoE) model.
 Orchestrates Shared Encoder, Dynamic Router, and Experts with dynamic expansion capabilities.
 """
 
-import copy
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional, Dict, Any, List, Tuple
 
-from .encoder import SharedEncoder, EMAEncoder
-from .router import DynamicRouter
+from .encoder import EMAEncoder, SharedEncoder
 from .expert import MLPExpert
+from .router import DynamicRouter
 
 
 class DynamicMoE(nn.Module):
@@ -26,7 +25,7 @@ class DynamicMoE(nn.Module):
         self,
         encoder: SharedEncoder,
         router: DynamicRouter,
-        experts: List[MLPExpert],
+        experts: list[MLPExpert],
         use_ema_encoder: bool = True,
         ema_decay: float = 0.99,
     ):
@@ -46,9 +45,9 @@ class DynamicMoE(nn.Module):
         self.proto_routing_alpha = 0.0
         self.proto_routing_threshold = None
 
-        assert len(self.experts) == self.router.num_experts, (
-            f"Expert count mismatch: {len(self.experts)} experts vs {self.router.num_experts} router heads"
-        )
+        assert (
+            len(self.experts) == self.router.num_experts
+        ), f"Expert count mismatch: {len(self.experts)} experts vs {self.router.num_experts} router heads"
 
     @property
     def num_experts(self) -> int:
@@ -80,7 +79,7 @@ class DynamicMoE(nn.Module):
     @torch.no_grad()
     def _prototype_routing_anchor(
         self, h: torch.Tensor
-    ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
         """
         Returns (anchors [B, N], confidence [B, 1]) from a k-NN vote over the
         stored prototypes.
@@ -138,7 +137,7 @@ class DynamicMoE(nn.Module):
         h: torch.Tensor,
         top_k: Optional[int] = None,
         need_logits: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Routing dispatch. Uses prototype anchoring in eval mode when enabled,
         otherwise the learned router. `need_logits` avoids the extra router call
@@ -179,7 +178,7 @@ class DynamicMoE(nn.Module):
         top_k: Optional[int] = None,
         return_routing_info: bool = False,
         latent_h: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor | tuple[torch.Tensor, Dict[str, Any]]:
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, Any]]:
         """
         Forward pass with sparse top-k mixture.
         If latent_h is provided, bypasses the encoder (useful for Latent Replay).
@@ -250,7 +249,7 @@ class DynamicMoE(nn.Module):
 
         # Optimization: use vmap for O(1) kernel launch batched forward pass
         try:
-            from torch.func import stack_module_state, functional_call, vmap
+            from torch.func import functional_call, stack_module_state, vmap
 
             params, buffers = stack_module_state(self.experts)
 

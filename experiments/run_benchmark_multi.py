@@ -9,14 +9,12 @@ across seeds for every method:
 Output: <output_dir>/benchmark_multi.json  (per-method means/stds + per-seed)
 """
 
-import os
-import sys
-import json
-import copy
 import argparse
+import json
+import os
 import subprocess
+import sys
 from pathlib import Path
-from collections import defaultdict
 
 import numpy as np
 

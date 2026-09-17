@@ -2,10 +2,11 @@
 Dynamic Router with dynamic expert growth, top-k sparsity, and entropy computation.
 """
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
 
 
 def _project_to_null_space(
@@ -91,7 +92,7 @@ class DynamicRouter(nn.Module):
 
     def forward(
         self, h: torch.Tensor, top_k: Optional[int] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
             h: [batch_size, input_dim]
@@ -279,7 +280,7 @@ class DistanceRouter(nn.Module):
 
     def forward(
         self, h: torch.Tensor, top_k: Optional[int] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         k = top_k if top_k is not None else self.top_k
         k = min(k, self.num_experts)
 
@@ -455,7 +456,7 @@ class AttentionRouter(nn.Module):
 
     def forward(
         self, h: torch.Tensor, top_k: Optional[int] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         k = top_k if top_k is not None else self.top_k
         k = min(k, self.num_experts)
 

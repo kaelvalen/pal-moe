@@ -12,12 +12,13 @@ Implements:
 """
 
 import math
+from dataclasses import dataclass
+from typing import Any, Optional
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Tuple
 
 from ..memory.prototype_memory import PrototypeMemory
 from ..models.moe import DynamicMoE
@@ -34,7 +35,7 @@ class BenchmarkResult:
     expert_specialization_mi: float  # I(Task; Expert)
     expert_utilization_entropy: float  # Normalized H(Expert)
     num_final_experts: int
-    task_accuracies: List[float]
+    task_accuracies: list[float]
 
 
 class ContinualEvaluator:
@@ -62,8 +63,8 @@ class ContinualEvaluator:
         return correct / max(total, 1)
 
     def evaluate_all_seen_tasks(
-        self, model: nn.Module, current_task_id: int, tasks: List[Any]
-    ) -> List[float]:
+        self, model: nn.Module, current_task_id: int, tasks: list[Any]
+    ) -> list[float]:
         """Evaluates model on all tasks up to current_task_id and updates matrix R."""
         task_accs = []
         for i in range(current_task_id + 1):
@@ -172,8 +173,8 @@ class ContinualEvaluator:
 
     @staticmethod
     def compute_expert_specialization_and_utilization(
-        model: DynamicMoE, tasks: List[Any], device: torch.device
-    ) -> Tuple[float, float]:
+        model: DynamicMoE, tasks: list[Any], device: torch.device
+    ) -> tuple[float, float]:
         """
         Calculates:
         1. Task-Expert Mutual Information I(Task; Expert):

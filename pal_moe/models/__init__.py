@@ -1,13 +1,14 @@
-from .encoder import SharedEncoder, EMAEncoder
-from .expert import ExpertAdapter, MLPExpert
-from .router import DynamicRouter
+from .encoder import EMAEncoder, SharedEncoder
+from .expert import MLPExpert
 from .moe import DynamicMoE
+from .router import AttentionRouter, DistanceRouter, DynamicRouter
 
 __all__ = [
     "SharedEncoder",
     "EMAEncoder",
-    "ExpertAdapter",
     "MLPExpert",
     "DynamicRouter",
+    "DistanceRouter",
+    "AttentionRouter",
     "DynamicMoE",
 ]

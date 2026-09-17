@@ -13,11 +13,11 @@ so it plugs directly into ContinualEvaluator.
 """
 
 import copy
-import random
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, List, Optional, Tuple
 
 
 class ICaRLWrapper(nn.Module):
@@ -47,7 +47,7 @@ class ICaRLWrapper(nn.Module):
         # pass through every module except the last Linear classification layer
         out = x
         named = list(self.network.named_children())
-        for name, mod in named[:-1]:
+        for _, mod in named[:-1]:
             out = mod(out)
         return out
 
@@ -75,8 +75,8 @@ class ICaRL:
         self.distil_weight = distil_weight
         self.device = device
         self.optimizer = torch.optim.Adam(self.wrapper.parameters(), lr=self.lr)
-        self.exemplars: Dict[int, List[torch.Tensor]] = {}
-        self.seen_classes: List[int] = []
+        self.exemplars: dict[int, list[torch.Tensor]] = {}
+        self.seen_classes: list[int] = []
         self.old_model: Optional[ICaRLWrapper] = None
 
     # ---- exemplar management (herding) ----
@@ -89,7 +89,7 @@ class ICaRL:
                 feats = self.wrapper.extract_features(stack)
                 self.wrapper.class_means[c] = feats.mean(dim=0)
 
-    def _herding_select(self, feats: torch.Tensor, k: int) -> List[int]:
+    def _herding_select(self, feats: torch.Tensor, k: int) -> list[int]:
         """Select k exemplars whose mean best matches the class mean."""
         mean = feats.mean(dim=0)
         selected = []
@@ -106,10 +106,10 @@ class ICaRL:
                 pass
         return selected
 
-    def update_exemplars(self, train_loader: Any, current_classes: List[int]) -> None:
+    def update_exemplars(self, train_loader: Any, current_classes: list[int]) -> None:
         # collect features of ALL current-class samples
-        class_feats: Dict[int, List[torch.Tensor]] = {c: [] for c in current_classes}
-        class_raw: Dict[int, List[torch.Tensor]] = {c: [] for c in current_classes}
+        class_feats: dict[int, list[torch.Tensor]] = {c: [] for c in current_classes}
+        class_raw: dict[int, list[torch.Tensor]] = {c: [] for c in current_classes}
         with torch.no_grad():
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
@@ -136,15 +136,15 @@ class ICaRL:
         task_id: int,
         train_loader: Any,
         epochs: int = 5,
-        current_classes: Optional[List[int]] = None,
-    ) -> Dict[str, Any]:
+        current_classes: Optional[list[int]] = None,
+    ) -> dict[str, Any]:
         if current_classes is None:
             current_classes = [2 * task_id, 2 * task_id + 1]
         self.seen_classes = sorted(set(self.seen_classes + current_classes))
         self.wrapper.train()
         losses = []
 
-        for epoch in range(epochs):
+        for _ in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
                 self.optimizer.zero_grad()

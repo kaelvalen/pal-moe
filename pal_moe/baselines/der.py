@@ -13,10 +13,11 @@ Same interface as pal_moe.baselines.replay.ReplayTrainer:
 """
 
 import random
+from typing import Any, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, List, Tuple, Optional
 
 
 class DERPP:
@@ -39,9 +40,9 @@ class DERPP:
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        self.buffer_x: List[torch.Tensor] = []
-        self.buffer_y: List[torch.Tensor] = []
-        self.buffer_logits: List[torch.Tensor] = []
+        self.buffer_x: list[torch.Tensor] = []
+        self.buffer_y: list[torch.Tensor] = []
+        self.buffer_logits: list[torch.Tensor] = []
 
     def update_buffer(self, train_loader: Any, seen_tasks: int) -> None:
         """Stores random exemplars from current task with the CURRENT model's logits."""
@@ -72,7 +73,7 @@ class DERPP:
 
     def get_replay_batch(
         self, batch_size: int
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
         if not self.buffer_x:
             return None, None, None
         n = min(batch_size, len(self.buffer_x))
@@ -84,10 +85,10 @@ class DERPP:
 
     def train_task(
         self, task_id: int, train_loader: Any, epochs: int = 5
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         self.model.train()
         losses = []
-        for epoch in range(epochs):
+        for _ in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
                 self.optimizer.zero_grad()
@@ -125,12 +126,12 @@ class ERACE:
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        self.buffer_x: List[torch.Tensor] = []
-        self.buffer_y: List[torch.Tensor] = []
-        self.classes_per_task: List[List[int]] = []
+        self.buffer_x: list[torch.Tensor] = []
+        self.buffer_y: list[torch.Tensor] = []
+        self.classes_per_task: list[list[int]] = []
 
     def update_buffer(
-        self, train_loader: Any, seen_tasks: int, current_classes: List[int]
+        self, train_loader: Any, seen_tasks: int, current_classes: list[int]
     ) -> None:
         collected_x, collected_y = [], []
         for x, y in train_loader:
@@ -153,7 +154,7 @@ class ERACE:
 
     def get_replay_batch(
         self, batch_size: int
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         if not self.buffer_x:
             return None, None
         n = min(batch_size, len(self.buffer_x))
@@ -167,15 +168,15 @@ class ERACE:
         task_id: int,
         train_loader: Any,
         epochs: int = 5,
-        current_classes: Optional[List[int]] = None,
-    ) -> Dict[str, Any]:
+        current_classes: Optional[list[int]] = None,
+    ) -> dict[str, Any]:
         if current_classes is None:
             # heuristic default: 10-class problems split into +2 classes per task
             current_classes = [2 * task_id, 2 * task_id + 1]
         self.model.train()
         self.classes_per_task.append(list(current_classes))
         losses = []
-        for epoch in range(epochs):
+        for _ in range(epochs):
             for x, y in train_loader:
                 x, y = x.to(self.device), y.to(self.device)
                 self.optimizer.zero_grad()
