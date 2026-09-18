@@ -267,6 +267,11 @@ python experiments/run_benchmark.py --config configs/cifar10_big_frozen.json --d
 python experiments/run_benchmark.py --config configs/cifar10_big_frozen.json \
   --feature_cache --device cuda
 
+# PAL-MoE v2: frozen ImageNet ViT-B/16, one expert per task, persistent cache
+python experiments/run_benchmark.py --config configs/cifar10_vit.json --device cuda
+python experiments/run_benchmark_multi.py --seeds "42 1 2" \
+  --config configs/cifar100_vit.json --device cuda
+
 # Run only a subset of methods (fast iteration)
 python experiments/run_benchmark.py --dataset cifar10 --methods palmoe,hybrid --device cuda
 

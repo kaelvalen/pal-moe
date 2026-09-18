@@ -10,8 +10,8 @@ This document defines the protocol used to produce every number in
 | Benchmark | Splits | Classes/task | Input | Base encoder |
 | :-- | :-- | :-- | :-- | :-- |
 | Split-MNIST | 5 tasks, 2 classes each | 0-9 | 784-d MLP | 256-to-128 autoencoder pretrain (1 epoch), frozen |
-| Split-CIFAR-10 | 5 tasks, 2 classes each | 0-9 | 3×32×32 | 50-epoch SimCLR conv encoder, frozen; optional frozen ImageNet ResNet-18 |
-| Split-CIFAR-100 | 20 tasks, 5 classes each | 0-99 | 3×32×32 | 50-epoch SimCLR conv encoder, frozen; optional frozen ImageNet ResNet-18 |
+| Split-CIFAR-10 | 5 tasks, 2 classes each | 0-9 | 3×32×32 | 50-epoch SimCLR conv encoder, frozen; optional frozen ImageNet ResNet-18 / ViT-B/16 |
+| Split-CIFAR-100 | 20 tasks, 5 classes each | 0-99 | 3×32×32 | 50-epoch SimCLR conv encoder, frozen; optional frozen ImageNet ResNet-18 / ViT-B/16 |
 
 All methods share the **same frozen base encoder** (pretrained once, then reused
 for every method). This isolates the continual-learning mechanisms.
@@ -92,6 +92,11 @@ bash experiments/recipes/multiseed_cifar.sh
 
 # CIFAR-100 + frozen ImageNet ResNet-18, 20 tasks (~15-25 min)
 bash experiments/recipes/cifar100_resnet18_frozen.sh
+
+# PAL-MoE v2: frozen ImageNet ViT-B/16, one expert per task, persistent cache
+bash experiments/recipes/vit_cifar_quick.sh          # CIFAR-10, single seed
+bash experiments/recipes/vit_cifar_multiseed.sh      # 3-seed CIFAR-10 + CIFAR-100
+bash experiments/recipes/memory_pareto.sh            # bytes-vs-accuracy sweep
 ```
 
 Results: `results/benchmark_results_seed{s}.json` (single),
@@ -114,6 +119,9 @@ which overrides CLI defaults):
 | `--methods` | all | comma-separated subset: `naive, ewc, replay60, replay360, replay250, derpp, erace, agem, icarl, stdmoe, palmoe, hybrid` |
 | `--num_workers` | 0 | DataLoader workers (results-neutral, see design fact 8) |
 | `--feature_cache` | off | Precompute frozen-encoder features and run the whole pipeline on them (requires `--freeze_encoder`; mathematically equivalent, removes all encoder work from training) |
+| `--feature_cache_dir` | off | Persist/load that cache (`feature_cache.pt`); seed-invariant encoders (identity head, e.g. ViT at `feature_dim == width`) share it across seeds |
+| `--expand_every_task` | off | One expert per task: implies `--trigger always` and bypasses the validation gate up to `--max_experts` (long-horizon protocol) |
+| `--encoder_arch` | dataset default | `mlp`/`conv`/`resnet18/34/50`/`vit_b_16`/`vit_b_32`/`vit_l_16`; ViTs resize to 224 and re-normalise to ImageNet statistics |
 | `--proto_samples` | 256 | Training samples registered into prototype memory per task |
 | `--proto_threshold` | 0.5 | Prototype merge distance; `auto` = median nearest-neighbour distance of the registration batch (scale-free) |
 | `--proto_per_class` | off | Class-balanced eviction group size (None = per-task eviction) |
@@ -227,9 +235,11 @@ more stable, more accurate" without forking the code.
 | Generic streams | `pal_moe.data.split_folder`, `pal_moe.data.domain_shift` | ImageFolder splits and domain-shifting phases |
 | Task-free metrics | `pal_moe.evaluation.task_free.StreamingEvaluator` | online/recent accuracy, surprise, per-domain |
 | External encoders | `--encoder_checkpoint` | plug exported foundation-backbone weights into `SharedEncoder` |
-| Strong backbones | `--encoder_arch {resnet18,resnet34,resnet50} --encoder_weights imagenet` | frozen ImageNet ResNet features (1-channel adaptation for MNIST built in), no pretraining needed |
+| Strong backbones | `--encoder_arch {resnet18,resnet34,resnet50,vit_b_16,vit_b_32,vit_l_16} --encoder_weights imagenet` | frozen ImageNet features (1-channel adaptation for MNIST built in; ViTs resize to 224 and re-normalise to ImageNet statistics), no pretraining needed |
+| Persistent feature cache | `--feature_cache_dir DIR` | save/load the frozen-feature cache; seed-invariant encoders (identity head, e.g. ViT at `feature_dim == width`) share one cache across seeds |
+| One expert per task | `--expand_every_task` (implies `--trigger always`) | bypass the validation gate so every task gets a dedicated expert up to `--max_experts` (long-horizon protocol; removes expert sharing) |
 | Domain-shift streams | `--domain_shift {permute,rotate}` | class-shared phase stream wired into the runner for stability stress tests |
-| Ready recipes | `experiments/recipes/*.sh` | CIFAR-100 full, CIFAR-10 ResNet-18 frozen, MNIST domain-shift + shared expert |
+| Ready recipes | `experiments/recipes/*.sh` | CIFAR-100 full, CIFAR-10 ResNet-18, ViT-B/16 quick + multiseed, memory Pareto, read-out ablation, MNIST domain-shift + shared expert, one-expert-per-task |
 | Relative validation gate | `--gate_mode relative --gate_margin` | effective threshold `min(absolute, majority + margin)`: relaxes the bar for weak-majority tasks (5-way CIFAR-100) without changing 2-way behaviour |
 | Compute reporting | `total_params`, `trainable_params`, `active_params`, `fit_seconds`, `geometry` | full size, gradient-receiving size and per-sample forward cost per run |
 
