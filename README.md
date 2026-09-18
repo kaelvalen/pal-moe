@@ -76,86 +76,116 @@ should be re-run.
 
 ### 2. Split-CIFAR-10 (5 tasks, wide CNN encoder, frozen)
 
-All methods use the same geometry and schedule (single seed 42): conv encoder 64/128/256 with 256-dimensional latents (50 SimCLR epochs), experts with hidden size 512, 5 epochs per task, and a frozen encoder with `--feature_cache`. PAL-MoE additionally distills its router onto the prototype owners at each task end (`--router_anchor_steps 300`, zero raw replay).
+All methods use the same geometry and schedule: conv encoder 64/128/256 with 256-dimensional latents (50 SimCLR epochs), experts with hidden size 512, 5 epochs per task, and a frozen encoder. PAL-MoE additionally distills its router onto the prototype owners at each task end (`--router_anchor_steps 300`, zero raw replay).
 
-> The PAL-MoE rows were re-run with the current code (exact routing lock and
-> the recipe from design fact 15; `results/cifar10_lockfix`) and **improved**:
-> pure 37.03% / 23.90% forgetting and hybrid 39.11% / 23.26%. Baseline rows are
-> from the earlier run; their code paths were verified unchanged (buffer,
-> herding and chunking edits are numerically equivalent and covered by tests).
+| Method | Avg Acc (↑) | Forgetting (↓) | Raw exemplars | Seeds |
+| :--- | :---: | :---: | :---: | :---: |
+| Naive Fine-tuning | 17.21% | 83.84% | none | 42 |
+| EWC | 17.17% | 83.89% | none | 42 |
+| Standard MoE (4 experts) | 17.23% | 82.10% | none | 42 |
+| iCaRL (k=25) | 24.90 ± 0.58% | 15.75 ± 1.76% | 250 | 3 |
+| ER-ACE (P=250) | 25.27% | 70.75% | 250 | 42 |
+| Experience Replay (P=250) | 25.70 ± 0.76% | 72.10 ± 0.50% | 250 | 3 |
+| AGEM (P=250) | 28.27% | 69.03% | 250 | 42 |
+| DER++ (P=250) | 31.83 ± 0.32% | 60.98 ± 0.74% | 250 + logits | 3 |
+| **PAL-MoE (pure)** | **37.30 ± 0.11%** | **21.98 ± 1.75%** | **0 (latent only)** | 3 |
+| **PAL-MoE + Replay (Hybrid)** | **38.66 ± 0.33%** | **22.62 ± 0.92%** | 250 | 3 |
 
-| Method | Avg Acc (↑) | Forgetting (↓) | Raw exemplars |
-| :--- | :---: | :---: | :---: |
-| Naive Fine-tuning | 17.21% | 83.84% | none |
-| EWC | 17.17% | 83.89% | none |
-| Standard MoE (4 experts) | 17.23% | 82.10% | none |
-| ER-ACE (P=250) | 25.27% | 70.75% | 250 |
-| Experience Replay (P=250) | 25.37% | 73.13% | 250 |
-| iCaRL (k=25) | 26.09% | 16.23% | 250 |
-| AGEM (P=250) | 28.27% | 69.03% | 250 |
-| DER++ (P=250) | 32.82% | 60.49% | 250 + logits |
-| **PAL-MoE (pure)** | **37.03%** | **23.90%** | **0 (latent only)** |
-| PAL-MoE + Replay (Hybrid) | **39.11%** | **23.26%** | 0 raw (latent replay; `--feature_cache` stores no images) |
+The 3-seed rows are means ± std over seeds 42 1 2 (`results/cifar10_conv_multiseed`, current code); the single-seed 42 rows are from the earlier full-suite run (`results/cifar10_final_full`), whose code paths were verified numerically equivalent.
 
-Note: The pure variant stores no raw inputs (latent prototypes and task ids only) and reaches 37.03%, ahead of the strongest baseline DER++ (32.82%) by 4.2 accuracy points with 2.5 times less forgetting (23.90% vs 60.49%). The hybrid variant leads by another 2.1 points. With `--feature_cache` the "hybrid" replay samples latents only (no raw exemplars can be stored), which the table's last column now reflects. An earlier revision of this table showed an approximately 14-point gap; that measurement was affected by a baseline-side BatchNorm artifact (the "frozen" encoder drifted during the baselines' own training loops) and has been corrected here (see `BENCHMARK.md`, design fact 14). The remaining gap to the per-expert oracle (~67%) reflects expert and representation quality rather than routing.
+Note: The pure variant stores no raw inputs (latent prototypes and task ids only) and reaches 37.30%, ahead of the strongest baseline DER++ (31.83 ± 0.32%) by 5.5 accuracy points with ~2.8 times less forgetting (21.98% vs 60.98%). The hybrid adds 250 raw exemplars and leads by another 1.4 points at the same forgetting level. An earlier revision of this table showed an approximately 14-point gap; that measurement was affected by a baseline-side BatchNorm artifact (the "frozen" encoder drifted during the baselines' own training loops) and has been corrected here (see `BENCHMARK.md`, design fact 14). The remaining gap to the per-expert oracle (~67%) reflects expert and representation quality rather than routing.
 
-Note on the training regime: the frozen-representation setting is part of the method's design on CIFAR-10; with an unfrozen encoder, the earlier pure/hybrid runs scored 17.75% / 25.54%. At the longer 15-epoch schedule the calibrated recipe reaches 37.35 ± 0.56% pure and 38.87 ± 0.47% hybrid across 5 seeds (forgetting 24.3 ± 0.5 and 23.2 ± 0.6; the feature cache was verified neutral on seed 42: 37.60% vs 36.72%).
+Note on the training regime: the frozen-representation setting is part of the method's design on CIFAR-10; with an unfrozen encoder, the earlier pure/hybrid runs scored 17.75% / 25.54%. At the longer 15-epoch schedule (150 SimCLR epochs) an earlier 5-seed run reached 37.35 ± 0.56% pure and 38.87 ± 0.47% hybrid, i.e. the longer schedule does not add over the 5-epoch numbers above; the feature cache was verified neutral on seed 42 (37.60% vs 36.72%; `BENCHMARK.md`, design facts 11-13).
 
 ### 3. Split-CIFAR-10 with a strong frozen backbone (ImageNet ResNet-18)
 
 The same protocol, but the encoder is a frozen ImageNet ResNet-18 (no
-pretraining, feature cache; `experiments/recipes/cifar10_resnet18_frozen.sh`).
+pretraining, feature cache; `experiments/recipes/cifar10_resnet18_frozen.sh`),
+3-seed means ± std over seeds 42 1 2 (`results/cifar10_resnet18_multiseed`).
 Representation quality is the single biggest lever: pure PAL-MoE jumps from
-37.03% to **47.53%** with *half* the forgetting of DER++.
+37.30% to 48.82% with half the forgetting of DER++.
 
 | Method | Avg Acc (↑) | Forgetting (↓) |
 | :--- | :---: | :---: |
-| Naive Fine-tuning | 17.71% | 89.02% |
-| EWC | 17.52% | 89.14% |
-| iCaRL (k=25) | 30.33% | 24.56% |
-| Experience Replay (P=250) | 40.51% | 58.46% |
-| DER++ (P=250) | 45.29% | 44.27% |
-| **PAL-MoE (pure, zero raw replay)** | **47.53%** | **22.95%** |
-| **PAL-MoE + Replay (Hybrid)** | **47.94%** | **21.44%** |
+| Naive Fine-tuning | 17.71 ± 0.04% | 88.95 ± 0.12% |
+| EWC | 17.66 ± 0.12% | 88.90 ± 0.19% |
+| iCaRL (k=25) | 30.70 ± 3.71% | 26.89 ± 1.65% |
+| Experience Replay (P=250) | 39.92 ± 0.76% | 58.87 ± 1.01% |
+| DER++ (P=250) | 45.29 ± 0.48% | 43.81 ± 0.70% |
+| **PAL-MoE (pure, zero raw replay)** | **48.82 ± 1.42%** | **21.05 ± 1.44%** |
+| **PAL-MoE + Replay (Hybrid)** | **49.66 ± 1.47%** | **19.56 ± 1.36%** |
+
+PAL-MoE pure beats DER++ by 3.5 accuracy points with **half** its forgetting;
+the hybrid reaches 49.66% at 19.56% forgetting. iCaRL has comparable forgetting
+(26.89%) at 18 points lower accuracy while still storing raw exemplars.
 
 ### 4. Split-CIFAR-100 (20 tasks, 5 classes each, frozen conv encoder)
 
 Full 20-task recipe (`configs/cifar100_big_frozen.json`, 50 SimCLR epochs,
-5 epochs/task, feature cache; `results/cifar100_big_frozen/`). This is the
-long-horizon test: vanilla replay forgets almost everything (≈63-69%), while
-PAL-MoE keeps 4-5× less forgetting.
+5 epochs/task, feature cache). This is the long-horizon test: vanilla replay
+forgets almost everything (≈63-69%), while PAL-MoE keeps 2.7-5× less forgetting.
+
+| Method | Avg Acc (↑) | Forgetting (↓) | Seeds |
+| :--- | :---: | :---: | :---: |
+| Naive Fine-tuning | 3.58% | 66.74% | 42 |
+| EWC | 3.71% | 68.94% | 42 |
+| Standard MoE (4 experts) | 3.67% | 66.00% | 42 |
+| ER-ACE (P=250) | 4.70% | 62.37% | 42 |
+| AGEM (P=250) | 4.96% | 65.07% | 42 |
+| Experience Replay (P=250) | 6.43% | 62.91% | 42 |
+| DER++ (P=250) | 5.92 ± 0.28% | 63.42 ± 0.48% | 3 |
+| **PAL-MoE (pure, zero raw replay)** | **9.48 ± 0.25%** | **23.19 ± 0.56%** | 3 |
+| **PAL-MoE + Replay (Hybrid, P=250)** | **9.98 ± 0.47%** | **11.93 ± 0.66%** | 3 |
+| iCaRL (k=25, 2500 raw exemplars) | 10.13 ± 0.40% | 10.54 ± 0.30% | 3 |
+
+The 3-seed rows are seeds 42 1 2 (`results/cifar100_multiseed`, config-default
+relative gate); the single-seed 42 rows are the earlier full-suite run
+(`results/cifar100_big_frozen`, absolute gate, same schedule).
+
+Notes: PAL-MoE pure beats every replay baseline by 3.6 accuracy points
+(DER++ 5.92%) with roughly 2.7× less forgetting, without storing a single raw
+image. The hybrid is within 0.15 points of iCaRL — which stores 10× more raw
+exemplars — with comparable forgetting. Router distillation reaches 91-93%
+owner-routing accuracy across the 6 experts; the negative prototype margin
+(−0.13) shows the 256-d conv representation is still the limiting factor (see
+the next section).
+
+> **Validation-gate note:** the 3-seed rows use the config-default relative
+> gate (`min(absolute, majority + 0.10)`); the single-seed reference rows used
+> the absolute gate, which rejected 7 of 20 expansions. A 3-seed ablation of
+> the two policies (`results/cifar100_gate_relative` vs
+> `cifar100_gate_absolute`) shows no material difference: pure 9.25 ± 0.27 /
+> 22.57 ± 2.65 versus 9.61 ± 0.71 / 24.79 ± 1.72, hybrid 10.16 ± 1.25 /
+> 13.97 ± 3.16 versus 9.94 ± 0.65 / 13.44 ± 2.13. All gaps are within one
+> standard deviation — **the gate policy is not the bottleneck; the
+> representation is**. The config keeps the relative gate (slightly better
+> pure forgetting) and the knob stays configurable.
+
+### 5. Split-CIFAR-100 with a strong frozen backbone (ImageNet ResNet-18)
+
+Same 20-task protocol with a frozen ImageNet ResNet-18 encoder and feature
+cache (`configs/cifar100_resnet18_frozen.json`, single seed 42,
+`results/cifar100_resnet18/`). The backbone swap is the single biggest
+improvement measured so far: pure PAL-MoE rises from 9.48 ± 0.25% (conv,
+3-seed) to **16.01%**, and the hybrid from 9.98 ± 0.47% to **18.96%**.
 
 | Method | Avg Acc (↑) | Forgetting (↓) |
 | :--- | :---: | :---: |
-| Naive Fine-tuning | 3.58% | 66.74% |
-| EWC | 3.71% | 68.94% |
-| Standard MoE (4 experts) | 3.67% | 66.00% |
-| ER-ACE (P=250) | 4.70% | 62.37% |
-| AGEM (P=250) | 4.96% | 65.07% |
-| DER++ (P=250) | 5.76% | 63.19% |
-| Experience Replay (P=250) | 6.43% | 62.91% |
-| **PAL-MoE (pure, zero raw replay)** | **8.31%** | **17.06%** |
-| **PAL-MoE + Replay (Hybrid, P=250)** | **9.83%** | **13.68%** |
-| iCaRL (k=25, 2500 raw exemplars) | 10.18% | 11.05% |
+| Naive Fine-tuning | 4.32% | 76.11% |
+| EWC | 4.31% | 79.07% |
+| Experience Replay (P=250) | 10.93% | 66.91% |
+| DER++ (P=250) | 12.57% | 67.28% |
+| iCaRL (k=25) | 13.24% | 11.03% |
+| **PAL-MoE (pure, zero raw replay)** | **16.01%** | **28.89%** |
+| **PAL-MoE + Replay (Hybrid, P=250)** | **18.96%** | **19.78%** |
 
-Notes: PAL-MoE pure beats every replay baseline by 2-5 accuracy points with
-roughly 4× less forgetting, without storing a single raw image; the hybrid is a
-close second behind iCaRL (which stores 10× more raw exemplars) with 1.5 points
-more forgetting than iCaRL but 5× less than DER++. Router distillation reaches
-76.7% owner-routing accuracy across the 6 experts; the negative prototype
-margin (−0.13) shows the 256-d representation is still the limiting factor.
+With the stronger representation the hybrid beats iCaRL by 5.7 accuracy points
+(18.96% vs 13.24%) and the pure variant beats every replay baseline; iCaRL
+still has the lowest forgetting (11.03%). The prototype margin improves from
+−0.13 (conv) to −0.076, confirming the representation diagnosis. Caveat: this
+run is single-seed; a 3-seed validation is the next scheduled step.
 
-> **Validation-gate note:** the table above uses the absolute gate
-> (`min_acc_threshold=0.45`), which rejected 7 of 20 expansions. A 3-seed
-> ablation of the new relative gate (threshold = `min(absolute, majority +
-> 0.10)`; `results/cifar100_gate_relative` vs `cifar100_gate_absolute`) shows
-> no material difference: pure 9.25 ± 0.27 / 22.57 ± 2.65 versus 9.61 ± 0.71 /
-> 24.79 ± 1.72, hybrid 10.16 ± 1.25 / 13.97 ± 3.16 versus 9.94 ± 0.65 /
-> 13.44 ± 2.13. All gaps are within one standard deviation — **the gate policy
-> is not the bottleneck; the representation is**. The config keeps the relative
-> gate (slightly better pure forgetting) and the knob stays configurable.
-
-### 5. Class-shared domain shift (Split-MNIST with rotating phases)
+### 6. Class-shared domain shift (Split-MNIST with rotating phases)
 
 Every task keeps the same 10 classes but rotates the inputs 90°·k
 (`--domain_shift rotate`), with the stabilized generalist expert frozen from
@@ -205,7 +235,7 @@ pal-moe/
 │   └── plot_results.py         # Figure generation (single + multi-seed JSON)
 ├── configs/                    # JSON configs (mnist_default, cifar10_default, ...)
 ├── BENCHMARK.md                # Methodology, protocol and measured design facts
-└── tests/test_pal_moe.py       # PyTest suite (94 tests)
+└── tests/test_pal_moe.py       # PyTest suite (96 tests)
 ```
 
 ---

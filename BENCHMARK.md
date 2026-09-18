@@ -10,8 +10,8 @@ This document defines the protocol used to produce every number in
 | Benchmark | Splits | Classes/task | Input | Base encoder |
 | :-- | :-- | :-- | :-- | :-- |
 | Split-MNIST | 5 tasks, 2 classes each | 0-9 | 784-d MLP | 256-to-128 autoencoder pretrain (1 epoch), frozen |
-| Split-CIFAR-10 | 5 tasks, 2 classes each | 0-9 | 3×32×32 | 50-epoch SimCLR conv encoder, adaptive |
-| Split-CIFAR-100 | 20 tasks, 5 classes each | 0-99 | 3×32×32 | 50-epoch SimCLR conv encoder, adaptive (loader implemented; benchmark pending) |
+| Split-CIFAR-10 | 5 tasks, 2 classes each | 0-9 | 3×32×32 | 50-epoch SimCLR conv encoder, frozen; optional frozen ImageNet ResNet-18 |
+| Split-CIFAR-100 | 20 tasks, 5 classes each | 0-99 | 3×32×32 | 50-epoch SimCLR conv encoder, frozen; optional frozen ImageNet ResNet-18 |
 
 All methods share the **same frozen base encoder** (pretrained once, then reused
 for every method). This isolates the continual-learning mechanisms.
@@ -86,6 +86,12 @@ python experiments/run_ablation.py --seeds 42 1 2 --device cuda
 # CIFAR runs: overlap CPU decode/transform with GPU compute (results-neutral)
 python experiments/run_benchmark.py --dataset cifar10 --device cuda --num_workers 8
 python experiments/run_benchmark_multi.py --dataset cifar10 --device cuda --num_workers 8
+
+# 3-seed CIFAR error bars: CIFAR-10 ResNet/conv + CIFAR-100 (~1.5-2 h)
+bash experiments/recipes/multiseed_cifar.sh
+
+# CIFAR-100 + frozen ImageNet ResNet-18, 20 tasks (~15-25 min)
+bash experiments/recipes/cifar100_resnet18_frozen.sh
 ```
 
 Results: `results/benchmark_results_seed{s}.json` (single),
@@ -242,31 +248,29 @@ These are single-seed measurements to guide the next validation round, not
 published claims.
 
 **20-task Split-CIFAR-100, full recipe** (`configs/cifar100_big_frozen.json`,
-`results/cifar100_big_frozen/`): 50 SimCLR epochs, 5 epochs/task, all methods.
-PAL-MoE pure 8.31% / 17.06% forgetting; hybrid 9.83% / 13.68%; DER++ 5.76% /
-63.19%; ER 6.43% / 62.91%; iCaRL 10.18% / 11.05%. Pure beats every replay
-baseline by 2-5 points with ~4× less forgetting and zero raw storage; the
-validation gate rejected 7 of 20 expansions because `min_acc_threshold=0.45`
-is too strict for 5-way CIFAR-100 tasks. The relative gate
-(`min(absolute, majority + margin)`, now the config default) accepts more
-expansions, but the 3-seed ablation (42 1 2) shows the policy is a wash:
-relative pure 9.25 ± 0.27 / 22.57 ± 2.65 vs absolute 9.61 ± 0.71 / 24.79 ±
-1.72; hybrid 10.16 ± 1.25 / 13.97 ± 3.16 vs 9.94 ± 0.65 / 13.44 ± 2.13 (all
-gaps within one std, `results/cifar100_gate_relative` vs
-`results/cifar100_gate_absolute`). The bottleneck is the representation, not
-the gate. Router
-distillation reaches 76.7% owner-routing accuracy over 6 experts; the negative
-prototype margin (−0.13) again points at the representation as the limiting
-factor. Parameters are reported three ways now: total (1.65M across 6 experts),
-trainable (275k after freezing history) and active per sample (275k, one
-expert).
+3 seeds 42 1 2, `results/cifar100_multiseed/`): 50 SimCLR epochs, 5
+epochs/task. PAL-MoE pure 9.48 ± 0.25% / 23.19 ± 0.56% forgetting; hybrid
+9.98 ± 0.47% / 11.93 ± 0.66%; DER++ 5.92 ± 0.28% / 63.42 ± 0.48%; iCaRL
+10.13 ± 0.40% / 10.54 ± 0.30%. Pure beats every replay baseline by 3.6 points
+with ~2.7× less forgetting and zero raw storage; the hybrid is within 0.15
+points of iCaRL (which stores 10× more raw exemplars). The earlier single-seed
+run (absolute gate, which rejected 7 of 20 expansions) is in
+`results/cifar100_big_frozen/`; the 3-seed gate ablation shows the policy is a
+wash (design fact 16) and the bottleneck is the representation, not the gate.
+Router distillation reaches 91-93% owner-routing accuracy over 6 experts; the
+negative prototype margin (−0.13) again points at the representation as the
+limiting factor. Parameters are reported three ways now: total (1.65M across 6
+experts), trainable (275k after freezing history) and active per sample (275k,
+one expert).
 
 **Strong-backbone CIFAR-10** (`configs/cifar10_resnet18_frozen.json`,
-ImageNet ResNet-18, frozen, feature cache): pure **47.53%** / 22.95% forgetting
-and hybrid **47.94%** / 21.44%, versus DER++ 45.29% / 44.27% and ER 40.51% /
-58.46%. The representation upgrade from the 3-block conv net to a frozen
-ImageNet backbone lifts pure accuracy by ~10.5 points — the strongest single
-lever observed in this project (brainstorm 1.1).
+ImageNet ResNet-18, frozen, feature cache, 3 seeds 42 1 2,
+`results/cifar10_resnet18_multiseed/`): pure **48.82 ± 1.42%** / 21.05 ± 1.44
+forgetting and hybrid **49.66 ± 1.47%** / 19.56 ± 1.36, versus DER++ 45.29 ±
+0.48% / 43.81 ± 0.70% and ER 39.92 ± 0.76% / 58.87 ± 1.01%. The 20-task
+CIFAR-100 equivalent (single seed 42, `results/cifar100_resnet18/`) lifts pure
+from 9.48 ± 0.25 to 16.01 and hybrid from 9.98 ± 0.47 to 18.96 — the strongest
+single lever observed in this project (brainstorm 1.1, design fact 17).
 
 **Class-shared domain shift** (`--domain_shift rotate`, MNIST, shared expert
 frozen after the first task): pure 86.07% / 5.64% forgetting, boundary-free
@@ -428,12 +432,13 @@ the single-head baselines cannot drift apart.
     81.1% to 71.1% before the fix, 83.0% after).
 
     **Same-budget comparison (5 epochs/task, 50 SimCLR epochs, frozen encoder,
-    seed 42, single run, all methods):** pure PAL-MoE reaches **37.52% / 23.5%
-    forgetting** and outperforms every baseline: AGEM 23.0%, DER++ 21.6%,
-    ER 20.6%, ER-ACE 19.6%, EWC 17.3%, Standard-MoE 17.2%, Naive 17.2%,
-    iCaRL 8.6%. It stores **zero raw exemplars**. The hybrid (P=250) is
-    statistically indistinguishable (37.85%), so the latent anchors carry the
-    readout at this geometry. Multi-seed validation is the remaining step.
+    3 seeds 42 1 2, `results/cifar10_conv_multiseed`):** pure PAL-MoE reaches
+    **37.30 ± 0.11% / 21.98 ± 1.75% forgetting** and outperforms every baseline:
+    DER++ 31.83 ± 0.32%, AGEM 28.3% (seed 42), ER 25.70 ± 0.76%, ER-ACE 25.3%
+    (seed 42), iCaRL 24.90 ± 0.58%, EWC 17.3% (seed 42), Standard-MoE 17.2%
+    (seed 42), Naive 17.2% (seed 42). It stores **zero raw exemplars**. The
+    hybrid (P=250) adds 1.4 points (38.66 ± 0.33% / 22.62 ± 0.92%); the latent
+    anchors already carry the readout at this geometry.
 
 12. **The training recipe simplifies: distillation replaces joint
     calibration.** Controlled grid on Split-CIFAR-10 (pure, frozen encoder,
@@ -500,9 +505,10 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     margin over the best baseline is therefore ~2.7 accuracy points with ~2.5x
     less forgetting; the earlier ~14-point gap was a baseline-side BatchNorm
     drift artifact. The PAL-MoE rows were later re-run with the exact routing
-    lock (design fact 15) and reach **37.03% / 23.9% forgetting** pure and
-    **39.11% / 23.3%** hybrid (`results/cifar10_lockfix`), i.e. the lock fix
-    improved CIFAR-10 as well.
+    lock (design fact 15); the 3-seed error-bar run puts pure at
+    **37.30 ± 0.11% / 21.98 ± 1.75% forgetting** and hybrid at
+    **38.66 ± 0.33% / 22.62 ± 0.92%** (`results/cifar10_conv_multiseed`),
+    reproducing the seed-42 rows (`results/cifar10_lockfix`) within noise.
 
 15. **The historical-routing lock must exclude optimizer weight decay.** Router
     rows of frozen experts are protected by backward hooks that zero their task
@@ -539,6 +545,40 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     before the fix should be re-run before citing them. Split-CIFAR-100 runs a
     scaled 20-task protocol on the fixed code (`results/cifar100_20task`).
 
+16. **CIFAR 3-seed error bars close the validation loop.** All CIFAR headline
+    rows now average seeds 42 1 2 (`experiments/recipes/multiseed_cifar.sh`):
+
+    | Benchmark / method | Avg Acc | Forgetting | Seeds |
+    | :-- | :--: | :--: | :--: |
+    | CIFAR-10 conv, pure | 37.30 ± 0.11 | 21.98 ± 1.75 | 42 1 2 |
+    | CIFAR-10 conv, hybrid | 38.66 ± 0.33 | 22.62 ± 0.92 | 42 1 2 |
+    | CIFAR-10 ResNet-18, pure | 48.82 ± 1.42 | 21.05 ± 1.44 | 42 1 2 |
+    | CIFAR-10 ResNet-18, hybrid | 49.66 ± 1.47 | 19.56 ± 1.36 | 42 1 2 |
+    | CIFAR-100 conv, pure | 9.48 ± 0.25 | 23.19 ± 0.56 | 42 1 2 |
+    | CIFAR-100 conv, hybrid | 9.98 ± 0.47 | 11.93 ± 0.66 | 42 1 2 |
+
+    Run-to-run drift on the same config and seeds (same code, different process)
+    was measured at up to ~1 accuracy point and ~3.5 forgetting points on one
+    CIFAR-100 seed (the gate-ablation PAL rows versus this multiseed run);
+    same-code CIFAR-10 repeats matched exactly. Comparisons inside one driver
+    session (baselines and PAL-MoE in the same run, as in all headline tables)
+    are unaffected, and repeated configs must stay in one session to be
+    comparable. The CIFAR-100 ResNet-18 table is still single-seed.
+
+17. **A stronger frozen backbone is the largest single lever on Split-CIFAR-100.**
+    Swapping the frozen 50-epoch SimCLR conv encoder for a frozen ImageNet
+    ResNet-18 (no pretraining, feature cache) lifts the 20-task result from
+    9.48 ± 0.25 (conv, 3 seeds) to **16.01** pure and from 9.98 ± 0.47 to
+    **18.96** hybrid (single seed 42, `results/cifar100_resnet18/`,
+    `configs/cifar100_resnet18_frozen.json`). The baselines improve too
+    (DER++ 12.57, iCaRL 13.24 with the lowest forgetting at 11.03), so the
+    ranking story is unchanged while the absolute level roughly doubles. The
+    prototype margin improves from −0.13 (conv) to −0.076, confirming that the
+    conv representation — not the router or the validation gate — was the
+    long-horizon bottleneck. The hybrid now beats iCaRL by 5.7 points; iCaRL
+    keeps the lowest forgetting. 3-seed validation of this backbone is the next
+    run.
+
 ## Ablations
 
 `experiments/run_ablation.py` sweeps loss components, expert-init strategy,
@@ -552,7 +592,7 @@ ablation). Config selection supports case-insensitive substring filters
 
 `.github/workflows/ci.yml`:
 - **lint**: `ruff check` + `black --check` (versions pinned).
-- **test**: pytest (94 tests) on Python 3.10-3.12, with coverage.
+- **test**: pytest (96 tests) on Python 3.10-3.12, with coverage.
 - **benchmark-verify**: CPU smoke of the full 12-method benchmark (1 epoch)
   asserting it completes and that PAL-MoE hybrid ≥ 50% + pure ≥ 25%
   (sanity bounds, not state-of-the-art checks).
