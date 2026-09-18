@@ -19,6 +19,17 @@ class SharedEncoder(nn.Module):
     """
 
     RESNET_ARCHES = ("resnet18", "resnet34", "resnet50")
+    # Vision transformers (torchvision, ImageNet weights). They require 224x224
+    # inputs, so the encoder resizes internally and maps the dataset
+    # normalization back to ImageNet statistics (see `_vit_features`).
+    VIT_ARCHES = ("vit_b_16", "vit_b_32", "vit_l_16")
+    VIT_WEIGHT_ENUMS = {
+        "vit_b_16": "ViT_B_16_Weights",
+        "vit_b_32": "ViT_B_32_Weights",
+        "vit_l_16": "ViT_L_16_Weights",
+    }
+    IMAGENET_MEAN = (0.485, 0.456, 0.406)
+    IMAGENET_STD = (0.229, 0.224, 0.225)
 
     def __init__(
         self,
@@ -29,6 +40,8 @@ class SharedEncoder(nn.Module):
         dropout: float = 0.0,
         conv_channels: tuple[int, ...] = (32, 64, 128),
         backbone_weights: str = "none",
+        input_mean: Optional[tuple[float, ...]] = None,
+        input_std: Optional[tuple[float, ...]] = None,
     ):
         super().__init__()
         self.input_dim = input_dim
@@ -36,9 +49,20 @@ class SharedEncoder(nn.Module):
         self.arch = arch
         self.backbone_weights = backbone_weights
         self.conv_channels = tuple(conv_channels)
+        # Dataset normalisation applied upstream (e.g. the CIFAR mean/std used
+        # by the task loaders). Only the ViT preprocessor consumes these: it
+        # undoes the dataset normalisation and re-applies ImageNet statistics.
+        self.input_mean = tuple(input_mean) if input_mean is not None else None
+        self.input_std = tuple(input_std) if input_std is not None else None
+        # Backbone output width before the projection head (None for mlp/conv).
+        # Used to detect an identity projection (feature_dim == backbone width),
+        # which makes the frozen features seed-independent.
+        self.backbone_feature_dim: Optional[int] = None
 
         if arch in self.RESNET_ARCHES:
             self.net = self._build_resnet(arch, input_dim, output_dim, backbone_weights)
+        elif arch in self.VIT_ARCHES:
+            self.net = self._build_vit(arch, output_dim, backbone_weights)
         elif arch == "mlp":
             layers = []
             prev_dim = input_dim
@@ -138,7 +162,86 @@ class SharedEncoder(nn.Module):
             nn.ReLU(inplace=True),
         )
 
+    def _build_vit(
+        self,
+        arch: str,
+        output_dim: int,
+        backbone_weights: str,
+    ) -> nn.Sequential:
+        """
+        Torchvision ViT backbone with a fresh projection head.
+
+        Frozen ImageNet ViTs are the strongest representation available without
+        extra dependencies. Inputs are resized to the checkpoint's native
+        resolution (224) and re-normalised to ImageNet statistics inside
+        `_vit_features`; when ``output_dim`` equals the backbone width the head
+        is the identity, so the frozen features are seed-independent and a
+        persistent feature cache can be shared across seeds.
+        """
+        import torchvision.models as tvm
+
+        model_fn = getattr(tvm, arch, None)
+        if model_fn is None:
+            raise ValueError(f"torchvision has no model {arch!r}")
+        weights = None
+        if backbone_weights == "imagenet":
+            enum_name = self.VIT_WEIGHT_ENUMS.get(arch)
+            weight_enum = getattr(tvm, enum_name, None) if enum_name else None
+            if weight_enum is None:
+                raise ValueError(f"no ImageNet weights for {arch!r}")
+            weights = weight_enum.IMAGENET1K_V1
+        backbone = model_fn(weights=weights)
+
+        self._vit_input_size = 224
+        if weights is not None:
+            try:
+                crop = weights.transforms().crop_size
+                if isinstance(crop, (list, tuple)):
+                    crop = crop[-1]
+                self._vit_input_size = int(crop)
+            except Exception:  # pragma: no cover - defensive, weights differ by version
+                pass
+
+        feature_dim = backbone.heads.head.in_features
+        self.backbone_feature_dim = int(feature_dim)
+        backbone.heads.head = nn.Identity()
+        if output_dim == feature_dim:
+            head: nn.Module = nn.Identity()
+        else:
+            head = nn.Sequential(
+                nn.Linear(feature_dim, output_dim),
+                nn.BatchNorm1d(output_dim),
+                nn.ReLU(inplace=True),
+            )
+        return nn.Sequential(backbone, head)
+
+    def _vit_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Resize + re-normalise inputs to ImageNet statistics, then run the ViT."""
+        if x.dim() == 3:  # unbatched input
+            x = x.unsqueeze(0)
+        if x.size(1) == 1:  # grayscale -> RGB by channel repetition
+            x = x.repeat(1, 3, 1, 1)
+        size = getattr(self, "_vit_input_size", 224)
+        if x.size(-1) != size or x.size(-2) != size:
+            x = F.interpolate(
+                x,
+                size=(size, size),
+                mode="bilinear",
+                align_corners=False,
+                antialias=True,
+            )
+        if self.input_mean is not None and self.input_std is not None:
+            mean = x.new_tensor(self.input_mean).view(1, -1, 1, 1)
+            std = x.new_tensor(self.input_std).view(1, -1, 1, 1)
+            x = x * std + mean  # undo the dataset normalisation -> [0, 1]
+        mean = x.new_tensor(self.IMAGENET_MEAN).view(1, -1, 1, 1)
+        std = x.new_tensor(self.IMAGENET_STD).view(1, -1, 1, 1)
+        x = (x - mean) / std
+        return self.net(x)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.arch in self.VIT_ARCHES:
+            return self._vit_features(x)
         if self.arch == "mlp":
             if x.dim() > 2:
                 x = x.view(x.size(0), -1)

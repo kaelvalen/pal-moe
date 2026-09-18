@@ -54,7 +54,7 @@ from pal_moe.models.expert import MLPExpert
 from pal_moe.models.moe import DynamicMoE
 from pal_moe.models.router import DynamicRouter
 from pal_moe.trigger.energy_trigger import EnergyTrigger
-from pal_moe.trigger.expert_trigger import QuantitativeTrigger
+from pal_moe.trigger.expert_trigger import AlwaysTrigger, QuantitativeTrigger
 
 
 def _git_commit() -> str:
@@ -416,6 +416,11 @@ def _run_palmoe_variant(
     )
     if args.trigger == "energy":
         trigger = EnergyTrigger(threshold=args.energy_threshold)
+    elif args.trigger == "always" or args.expand_every_task:
+        # One-expert-per-task protocol: always expand on a new task (up to
+        # --max_experts). Pair with --expand_every_task to also bypass the
+        # validation gate, so a weak task can never lose its dedicated expert.
+        trigger = AlwaysTrigger()
     else:
         trigger = QuantitativeTrigger(
             alpha=1.0, beta=0.4, gamma=0.6, delta=0.5, threshold_tau=0.5
@@ -429,6 +434,7 @@ def _run_palmoe_variant(
         freeze_expansion_base=args.freeze_expansion_base,
         gate_mode=args.gate_mode,
         gate_margin=args.gate_margin,
+        enable_gate=not args.expand_every_task,
     )
     trainer = ContinualTrainer(
         model=model,
@@ -670,6 +676,13 @@ def run_benchmark(
     )
 
     def _build_base_encoder(input_dim: int) -> SharedEncoder:
+        # Dataset normalisation is re-applied for ViT encoders (they need
+        # ImageNet statistics at 224x224); ResNet/conv use the inputs as-is.
+        dataset_norm = {
+            "cifar10": ((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)),
+            "cifar100": ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+            "mnist": ((0.1307,), (0.3081,)),
+        }.get(dataset)
         return SharedEncoder(
             input_dim=input_dim,
             hidden_dims=(256, 128) if encoder_arch == "mlp" else None,
@@ -677,6 +690,8 @@ def run_benchmark(
             arch=encoder_arch,
             conv_channels=conv_channels,
             backbone_weights=args.encoder_weights,
+            input_mean=dataset_norm[0] if dataset_norm else None,
+            input_std=dataset_norm[1] if dataset_norm else None,
         ).to(device)
 
     if dataset == "cifar10":
@@ -816,16 +831,61 @@ def run_benchmark(
     )
 
     if args.feature_cache:
-        from pal_moe.data.feature_cache import build_feature_cache
-
-        cache = build_feature_cache(
-            base_encoder,
-            tasks,
-            device,
-            dtype=torch.float16 if device.type == "cuda" else torch.float32,
-            num_workers=args.num_workers,
-            pin_memory=pin_memory,
+        from pal_moe.data.feature_cache import (
+            build_feature_cache,
+            load_feature_cache,
+            save_feature_cache,
         )
+
+        # A frozen encoder whose output is not projected (feature_dim equals the
+        # backbone width, e.g. ViT-B/16 with 768) produces seed-independent
+        # features, so the persistent cache can be shared across seeds.
+        seed_invariant = (
+            external_encoder_state is None
+            and args.encoder_weights == "imagenet"
+            and getattr(base_encoder, "backbone_feature_dim", None) == feature_dim
+        )
+        cache_meta = {
+            "dataset": dataset,
+            "encoder_arch": encoder_arch,
+            "encoder_weights": args.encoder_weights,
+            "encoder_checkpoint": args.encoder_checkpoint,
+            "pretrain_epochs": (
+                None
+                if args.encoder_weights == "imagenet"
+                or external_encoder_state is not None
+                else pretrain_epochs
+            ),
+            "feature_dim": feature_dim,
+            "seed": None if seed_invariant else args.seed,
+            "num_tasks": len(tasks),
+        }
+        cache_path = (
+            os.path.join(args.feature_cache_dir, "feature_cache.pt")
+            if args.feature_cache_dir
+            else None
+        )
+        cache = None
+        if cache_path:
+            cache = load_feature_cache(
+                cache_path,
+                device,
+                num_workers=args.num_workers,
+                pin_memory=pin_memory,
+                expected_meta=cache_meta,
+            )
+        if cache is None:
+            cache = build_feature_cache(
+                base_encoder,
+                tasks,
+                device,
+                dtype=torch.float16 if device.type == "cuda" else torch.float32,
+                num_workers=args.num_workers,
+                pin_memory=pin_memory,
+            )
+            if cache_path:
+                save_feature_cache(cache, cache_path, cache_meta)
+                print(f"  [feature-cache] saved to {cache_path}")
         tasks = cache.tasks
         base_encoder = cache.encoder
         print(
@@ -1325,8 +1385,23 @@ if __name__ == "__main__":
         "--trigger",
         type=str,
         default="composite",
-        choices=["composite", "energy"],
-        help="Expansion trigger: supervised composite S(x) or energy novelty",
+        choices=["composite", "energy", "always"],
+        help=(
+            "Expansion trigger: supervised composite S(x), energy novelty, or "
+            "'always' (one expert per task in the supervised protocol)"
+        ),
+    )
+    parser.add_argument(
+        "--expand_every_task",
+        action="store_true",
+        default=False,
+        help=(
+            "One-expert-per-task protocol: forces --trigger always and bypasses "
+            "the validation gate, so every task gets its own expert up to "
+            "--max_experts. Recommended for long horizons (20-task CIFAR-100), "
+            "where a small expert cap otherwise forces later tasks onto shared "
+            "experts"
+        ),
     )
     parser.add_argument(
         "--energy_threshold",
@@ -1497,10 +1572,21 @@ if __name__ == "__main__":
         "--encoder_arch",
         type=str,
         default=None,
-        choices=[None, "mlp", "conv", "resnet18", "resnet34", "resnet50"],
+        choices=[
+            None,
+            "mlp",
+            "conv",
+            "resnet18",
+            "resnet34",
+            "resnet50",
+            "vit_b_16",
+            "vit_b_32",
+            "vit_l_16",
+        ],
         help=(
             "Encoder architecture (None = dataset default: mlp for MNIST, conv "
-            "for CIFAR). ResNet options give a much stronger backbone."
+            "for CIFAR). ResNet/ViT options give a much stronger backbone; ViT "
+            "resizes inputs to 224 and re-normalises to ImageNet statistics"
         ),
     )
     parser.add_argument(
@@ -1509,7 +1595,7 @@ if __name__ == "__main__":
         default="none",
         choices=["none", "imagenet"],
         help=(
-            "Backbone initialisation for ResNet encoders: 'imagenet' loads "
+            "Backbone initialisation for ResNet/ViT encoders: 'imagenet' loads "
             "ImageNet weights and skips the built-in pretraining (recommended "
             "with --freeze_encoder)"
         ),
@@ -1566,6 +1652,17 @@ if __name__ == "__main__":
             "Frozen-encoder feature caching: precompute h(x) once and run the whole "
             "pipeline on cached features (requires --freeze_encoder; mathematically "
             "equivalent, removes all encoder work from the training loop)"
+        ),
+    )
+    parser.add_argument(
+        "--feature_cache_dir",
+        type=str,
+        default=None,
+        help=(
+            "Persist the feature cache in this directory (feature_cache.pt): if a "
+            "matching cache exists it is loaded instead of re-encoding, otherwise "
+            "it is built and saved. Seed-invariant frozen encoders (e.g. ViT with "
+            "identity projection) share one cache across seeds"
         ),
     )
     parser.add_argument(

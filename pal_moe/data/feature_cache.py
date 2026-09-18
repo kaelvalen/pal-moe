@@ -180,3 +180,113 @@ def build_feature_cache(
         encoder=CachedFeatureEncoder(output_dim=int(output_dim)),
         feature_dim=int(output_dim),
     )
+
+
+def save_feature_cache(cache: FeatureCache, path: str, meta: dict[str, Any]) -> None:
+    """
+    Persists a feature cache to `path` (a single .pt file with tensors + meta).
+
+    Used with ``--feature_cache_dir`` so repeated runs of the same encoder (and
+    seed-invariant encoders across seeds) skip the feature-extraction pass.
+    """
+    import os
+
+    payload: dict[str, Any] = {"meta": dict(meta), "tasks": []}
+    for task in cache.tasks:
+        row: dict[str, Any] = {
+            "task_id": task.task_id,
+            "classes": list(task.classes) if task.classes is not None else None,
+            "splits": {},
+        }
+        for split, loader in (
+            ("train", task.train_loader),
+            ("val", task.val_loader),
+            ("test", task.test_loader),
+        ):
+            dataset = loader.dataset
+            if not isinstance(dataset, FeatureTensorDataset):  # pragma: no cover
+                raise TypeError("feature cache can only be saved from cached tasks")
+            row["splits"][split] = (dataset.features, dataset.labels)
+        payload["tasks"].append(row)
+
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    torch.save(payload, tmp_path)
+    os.replace(tmp_path, path)
+
+
+def load_feature_cache(
+    path: str,
+    device: torch.device,
+    batch_size: int = 128,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+    expected_meta: Optional[dict[str, Any]] = None,
+    verbose: bool = True,
+) -> Optional[FeatureCache]:
+    """
+    Loads a persisted feature cache, or returns None when `path` is absent.
+
+    `expected_meta` is compared field-by-field against the stored metadata;
+    any mismatch raises, so a stale cache can never silently be reused for a
+    different encoder/seed/split.
+    """
+    import os
+
+    if not os.path.exists(path):
+        return None
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    meta = payload.get("meta", {})
+    if expected_meta is not None:
+        mismatch = {
+            key: (meta.get(key), value)
+            for key, value in expected_meta.items()
+            if meta.get(key) != value
+        }
+        if mismatch:
+            raise ValueError(
+                f"feature cache {path} does not match this run "
+                f"(field: stored != expected): {mismatch}; "
+                "delete the cache or point --feature_cache_dir elsewhere"
+            )
+
+    cached_tasks: list[CachedTask] = []
+    for row in payload["tasks"]:
+        loaders = {}
+        for split in ("train", "val", "test"):
+            features, labels = row["splits"][split]
+            dataset = FeatureTensorDataset(features, labels)
+            loaders[split] = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=(split == "train"),
+                drop_last=(split == "train"),
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                collate_fn=_collate_features,
+            )
+        cached_tasks.append(
+            CachedTask(
+                task_id=row["task_id"],
+                classes=row["classes"],
+                train_loader=loaders["train"],
+                val_loader=loaders["val"],
+                test_loader=loaders["test"],
+            )
+        )
+
+    feature_dim = int(
+        meta.get("feature_dim", cached_tasks[0].train_loader.dataset.features.size(1))
+    )
+    if verbose:
+        print(
+            f"  [feature-cache] loaded {len(cached_tasks)} tasks from {path} "
+            f"(feature_dim={feature_dim}, seed={meta.get('seed')})"
+        )
+    return FeatureCache(
+        tasks=cached_tasks,
+        encoder=CachedFeatureEncoder(output_dim=feature_dim),
+        feature_dim=feature_dim,
+    )

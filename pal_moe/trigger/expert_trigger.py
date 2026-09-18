@@ -133,3 +133,33 @@ class QuantitativeTrigger:
                 max_confidence=max_confidence,
                 best_parent_expert_idx=best_parent_idx,
             )
+
+
+class AlwaysTrigger:
+    """
+    Expansion trigger that always fires on a new task.
+
+    Used with ``--expand_every_task`` in the supervised task-incremental
+    protocol: every task gets its own expert (up to ``--max_experts``), which
+    removes expert sharing on long horizons — 20-task CIFAR-100 with a
+    six-expert cap forced the later tasks onto already-used experts and cost
+    accuracy. The parent for the function-preserving expansion is the newest
+    expert (the one that just finished the previous task).
+    """
+
+    def evaluate(
+        self,
+        model: Any,
+        x: Optional[torch.Tensor] = None,
+        y: Optional[torch.Tensor] = None,
+        prototype_memory: Optional[Any] = None,
+    ) -> TriggerEvaluationResult:
+        return TriggerEvaluationResult(
+            should_trigger=True,
+            composite_score=1.0,
+            loss_best_expert=0.0,
+            router_entropy=0.0,
+            proto_distance=0.0,
+            max_confidence=0.0,
+            best_parent_expert_idx=max(0, model.num_experts - 1),
+        )

@@ -2957,3 +2957,101 @@ def test_split_cifar100_loader():
     x, y = next(iter(tasks[0].train_loader))
     assert x.shape == (32, 3, 32, 32)
     assert all(c in tasks[0].classes for c in y.unique().tolist())
+
+
+def test_vit_encoder_shapes_and_projection():
+    """ViT backbones resize inputs and keep an identity head at matched width."""
+    enc = SharedEncoder(
+        input_dim=3072,
+        output_dim=768,
+        arch="vit_b_32",
+        backbone_weights="none",
+        input_mean=(0.4914, 0.4822, 0.4465),
+        input_std=(0.2470, 0.2435, 0.2616),
+    )
+    enc.eval()
+    assert enc.backbone_feature_dim == 768
+    assert isinstance(enc.net[1], nn.Identity)
+    with torch.no_grad():
+        out = enc(torch.randn(2, 3, 32, 32))
+    assert out.shape == (2, 768)
+
+    # A non-matching output width gets a frozen projection head.
+    proj = SharedEncoder(
+        input_dim=3072, output_dim=32, arch="vit_b_32", backbone_weights="none"
+    )
+    proj.eval()
+    with torch.no_grad():
+        assert proj(torch.randn(2, 3, 32, 32)).shape == (2, 32)
+    assert proj.backbone_feature_dim == 768
+    assert not isinstance(proj.net[1], nn.Identity)
+
+
+def test_always_trigger_fires_on_new_task():
+    from types import SimpleNamespace
+
+    from pal_moe.trigger.expert_trigger import AlwaysTrigger
+
+    trigger = AlwaysTrigger()
+    result = trigger.evaluate(SimpleNamespace(num_experts=3))
+    assert result.should_trigger
+    assert result.best_parent_expert_idx == 2
+
+
+def test_feature_cache_persistence_roundtrip(tmp_path):
+    from torch.utils.data import DataLoader, TensorDataset
+
+    from pal_moe.data.feature_cache import (
+        build_feature_cache,
+        load_feature_cache,
+        save_feature_cache,
+    )
+
+    class DummyTask:
+        def __init__(self, task_id, loader):
+            self.task_id = task_id
+            self.classes = (0, 1)
+            self.train_loader = loader
+            self.val_loader = loader
+            self.test_loader = loader
+
+    torch.manual_seed(0)
+    enc = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=8)
+    enc.freeze()
+    x = torch.randn(8, 16)
+    y = torch.randint(0, 4, (8,))
+    loader = DataLoader(TensorDataset(x, y), batch_size=4, shuffle=False)
+    tasks = [DummyTask(0, loader), DummyTask(1, loader)]
+    cache = build_feature_cache(
+        enc, tasks, torch.device("cpu"), dtype=torch.float32, verbose=False
+    )
+    path = str(tmp_path / "feature_cache.pt")
+    meta = {"dataset": "toy", "feature_dim": 8, "seed": 42}
+    save_feature_cache(cache, path, meta)
+
+    loaded = load_feature_cache(
+        path, torch.device("cpu"), expected_meta=meta, verbose=False
+    )
+    assert loaded is not None
+    assert loaded.feature_dim == 8
+    assert len(loaded.tasks) == 2
+    h0, y0 = next(iter(loaded.tasks[0].test_loader))
+    h_ref, y_ref = next(iter(cache.tasks[0].test_loader))
+    assert torch.allclose(h0, h_ref, atol=1e-6)
+    assert torch.equal(y0, y_ref)
+
+    # A mismatched meta is a hard error: no silent reuse of a stale cache.
+    with pytest.raises(ValueError):
+        load_feature_cache(
+            path,
+            torch.device("cpu"),
+            expected_meta={"dataset": "toy", "feature_dim": 16},
+            verbose=False,
+        )
+
+    assert (
+        load_feature_cache(
+            str(tmp_path / "missing.pt"), torch.device("cpu"), verbose=False
+        )
+        is None
+    )
