@@ -249,9 +249,12 @@ baseline by 2-5 points with ~4× less forgetting and zero raw storage; the
 validation gate rejected 7 of 20 expansions because `min_acc_threshold=0.45`
 is too strict for 5-way CIFAR-100 tasks. The relative gate
 (`min(absolute, majority + margin)`, now the config default) accepts more
-expansions; a single-seed check gives pure 9.05% / 26.65% forgetting and hybrid
-9.13% / 12.77% (`results/cifar100_relgate`) - mixed, so the 3-seed ablation in
-`experiments/recipes/cifar100_gate_ablation.sh` is the next step. Router
+expansions, but the 3-seed ablation (42 1 2) shows the policy is a wash:
+relative pure 9.25 ± 0.27 / 22.57 ± 2.65 vs absolute 9.61 ± 0.71 / 24.79 ±
+1.72; hybrid 10.16 ± 1.25 / 13.97 ± 3.16 vs 9.94 ± 0.65 / 13.44 ± 2.13 (all
+gaps within one std, `results/cifar100_gate_relative` vs
+`results/cifar100_gate_absolute`). The bottleneck is the representation, not
+the gate. Router
 distillation reaches 76.7% owner-routing accuracy over 6 experts; the negative
 prototype margin (−0.13) again points at the representation as the limiting
 factor. Parameters are reported three ways now: total (1.65M across 6 experts),
