@@ -14,6 +14,7 @@ export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}"
 
 .venv/bin/python experiments/run_benchmark.py \
   --config configs/cifar10_vit.json \
+  --output_dir results/cifar10_vit \
   --device cuda
 
 echo "VIT_CIFAR10_QUICK_DONE"
