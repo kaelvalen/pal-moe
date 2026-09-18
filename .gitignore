@@ -96,3 +96,8 @@ Thumbs.db
 repo_dump.txt
 *.dump.txt
 
+# Personal notes (not part of the project)
+GORUSME_NOTLARI.md
+*_NOTLARI.md
+meeting_notes.md
+
