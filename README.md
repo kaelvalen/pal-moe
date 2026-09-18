@@ -146,12 +146,14 @@ more forgetting than iCaRL but 5× less than DER++. Router distillation reaches
 margin (−0.13) shows the 256-d representation is still the limiting factor.
 
 > **Validation-gate note:** the table above uses the absolute gate
-> (`min_acc_threshold=0.45`), which rejected 7 of 20 expansions. With the new
-> relative gate (`--gate_mode relative`, now the config default; threshold =
-> `min(absolute, majority + 0.10)`) a single-seed check gives pure 9.05% /
-> 26.65% forgetting and hybrid 9.13% / 12.77% (`results/cifar100_relgate`) — a
-> mixed trade-off, so the 3-seed verdict is queued in
-> `experiments/recipes/cifar100_gate_ablation.sh`.
+> (`min_acc_threshold=0.45`), which rejected 7 of 20 expansions. A 3-seed
+> ablation of the new relative gate (threshold = `min(absolute, majority +
+> 0.10)`; `results/cifar100_gate_relative` vs `cifar100_gate_absolute`) shows
+> no material difference: pure 9.25 ± 0.27 / 22.57 ± 2.65 versus 9.61 ± 0.71 /
+> 24.79 ± 1.72, hybrid 10.16 ± 1.25 / 13.97 ± 3.16 versus 9.94 ± 0.65 /
+> 13.44 ± 2.13. All gaps are within one standard deviation — **the gate policy
+> is not the bottleneck; the representation is**. The config keeps the relative
+> gate (slightly better pure forgetting) and the knob stays configurable.
 
 ### 5. Class-shared domain shift (Split-MNIST with rotating phases)
 
