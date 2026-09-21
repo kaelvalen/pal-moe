@@ -150,8 +150,9 @@ same flags support):
 python experiments/run_benchmark.py --config configs/cifar10_big.json --device cuda
 ```
 
-Note: a config file wins over CLI flags, so use explicit flags (not `--config`)
-when you need a different long schedule for a smoke test.
+Note: explicit CLI flags win over the config file (and config values win over
+argparse defaults; see `pal_moe/config.py`), so any knob can be overridden on a
+`--config` run.
 
 ### Diagnosing forgetting from checkpoints
 
