@@ -1416,8 +1416,8 @@ def run_benchmark(
     # 12. Proposed Extension: PAL-MoE + Replay (Hybrid, P=250)
     # -------------------------------------------------------------
     if run("hybrid"):
-        _banner("Running Method 8: PAL-MoE + Replay (Hybrid, P=250 Exemplars)")
-        results["PAL-MoE + Replay (Hybrid, P=250)"] = _run_palmoe_variant(
+        _banner("Running Method 8: PAL-MoE + Replay (Hybrid)")
+        results[method_keys["hybrid"]] = _run_palmoe_variant(
             base_encoder,
             tasks,
             device,
@@ -1438,6 +1438,9 @@ def run_benchmark(
 
     # Drop skipped methods so the table/JSON only contain what actually ran.
     kept = {name for mid, name in method_keys.items() if run(mid)}
+    dropped = sorted(k for k in results if k not in kept)
+    if dropped:
+        print(f"  [warn] dropping result entries with no matching method id: {dropped}")
     results = {k: v for k, v in results.items() if k in kept}
 
     # -------------------------------------------------------------

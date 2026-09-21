@@ -14,6 +14,33 @@ mkdir -p results/mir results/tinyimagenet_multiseed results/latency results/mnis
 
 step() { echo; echo "===== $(date '+%F %T') :: $* ====="; }
 
+# ---------------------------------------------------------------- repair
+# E1a/E1b ran before the hybrid result-key fix, so their hybrid rows were
+# dropped by the runner's method filter. Re-run only the hybrid variant per
+# seed (same config/seed => same row the full run would have produced), merge
+# it into the existing per-seed JSONs and rebuild the aggregate.
+step "REPAIR: hybrid rows for E1a (CIFAR-10 ViT), seeds 42 1 2"
+for SEED in 42 1 2; do
+  $PY experiments/run_benchmark.py --config configs/cifar10_vit.json \
+    --device cuda --methods hybrid --seed "$SEED" \
+    --output_dir "results/repair/c10vit_hybrid/seed${SEED}" || echo "FAILED repair c10vit ${SEED}"
+done
+$PY experiments/repair_missing_rows.py --target_dir results/cifar10_vit_multiseed \
+  --source_dir results/repair/c10vit_hybrid --write
+$PY experiments/run_benchmark_multi.py --seeds "42 1 2" \
+  --output_dir results/cifar10_vit_multiseed --aggregate_only
+
+step "REPAIR: hybrid rows for E1b (CIFAR-100 ViT), seeds 42 1 2"
+for SEED in 42 1 2; do
+  $PY experiments/run_benchmark.py --config configs/cifar100_vit.json \
+    --device cuda --methods hybrid --seed "$SEED" \
+    --output_dir "results/repair/c100vit_hybrid/seed${SEED}" || echo "FAILED repair c100vit ${SEED}"
+done
+$PY experiments/repair_missing_rows.py --target_dir results/cifar100_vit_multiseed \
+  --source_dir results/repair/c100vit_hybrid --write
+$PY experiments/run_benchmark_multi.py --seeds "42 1 2" \
+  --output_dir results/cifar100_vit_multiseed --aggregate_only
+
 # ---------------------------------------------------------------- E12
 step "E12 MIR (Maximally Interfered Retrieval), CIFAR-10/100 ResNet-18, seeds 42 1 2"
 for SEED in 42 1 2; do

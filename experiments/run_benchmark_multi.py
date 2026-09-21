@@ -179,6 +179,15 @@ def main():
         default="",
         help="Comma-separated method ids (empty = all); forwarded to run_benchmark.py",
     )
+    parser.add_argument(
+        "--aggregate_only",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip running: read the existing seed*/benchmark_results_seed*.json "
+            "files under --output_dir and rebuild benchmark_multi.json"
+        ),
+    )
     parser.add_argument("--output_dir", type=str, default="./results")
     parser.add_argument(
         "--config",
@@ -200,6 +209,19 @@ def main():
     for s in seeds:
         seed_dir = os.path.join(args.output_dir, f"seed{s}")
         os.makedirs(seed_dir, exist_ok=True)
+        json_path = os.path.join(seed_dir, f"benchmark_results_seed{s}.json")
+        meta_path = os.path.join(seed_dir, f"benchmark_meta_seed{s}.json")
+
+        if args.aggregate_only:
+            if not os.path.exists(json_path):
+                raise SystemExit(f"--aggregate_only: missing {json_path}")
+            with open(json_path) as f:
+                per_seed[s] = json.load(f)
+            if os.path.exists(meta_path):
+                with open(meta_path) as f:
+                    seeds_meta[str(s)] = json.load(f)
+            continue
+
         cmd = [
             sys.executable,
             str(RUNNER),
@@ -369,11 +391,9 @@ def main():
         print(f"\n########## Seed {s} ##########")
         subprocess.run(cmd, check=True)
 
-        json_path = os.path.join(seed_dir, f"benchmark_results_seed{s}.json")
         with open(json_path) as f:
             per_seed[s] = json.load(f)
 
-        meta_path = os.path.join(seed_dir, f"benchmark_meta_seed{s}.json")
         if os.path.exists(meta_path):
             with open(meta_path) as f:
                 seeds_meta[str(s)] = json.load(f)
@@ -422,44 +442,50 @@ def main():
             "final_experts": int(round(float(np.mean(experts)))),
         }
 
+    config_block = {
+        "epochs": args.epochs,
+        "dataset": args.dataset,
+        "router_type": args.router_type,
+        "lambda_ood": args.lambda_ood,
+        "max_proto_drop": args.max_proto_drop,
+        "max_proto_acc_drop": args.max_proto_acc_drop,
+        "joint_freeze_router": args.joint_freeze_router,
+        "joint_keep_routing_lock": args.joint_keep_routing_lock,
+        "feature_dim": args.feature_dim,
+        "expert_hidden": args.expert_hidden,
+        "conv_channels": args.conv_channels,
+        "proto_size": args.proto_size,
+        "methods": args.methods,
+        "pretrain_epochs": args.pretrain_epochs,
+        "freeze_encoder": args.freeze_encoder,
+        "router_anchor_steps": args.router_anchor_steps,
+        "router_anchor_lr": args.router_anchor_lr,
+        "proto_routing_alpha": args.proto_routing_alpha,
+        "feature_cache": args.feature_cache,
+        "proto_samples": args.proto_samples,
+        "proto_threshold": args.proto_threshold,
+        "proto_per_class": args.proto_per_class,
+        "top_k": args.top_k,
+        "joint_calib_epochs": args.joint_calib_epochs,
+        "refresh_anchors_after_calib": args.refresh_anchors_after_calib,
+        "keep_optimizer_state": args.keep_optimizer_state,
+        "lambda_r": args.lambda_r,
+        "lambda_e": args.lambda_e,
+        "stability_every": args.stability_every,
+        "ood_every": args.ood_every,
+        "buffer_sampling": args.buffer_sampling,
+        "ewc_online": args.ewc_online,
+        "max_experts": args.max_experts,
+        "proto_routing_threshold": args.proto_routing_threshold,
+    }
+    if args.aggregate_only and seeds_meta:
+        # The CLI does not carry the original recipe in aggregate-only mode;
+        # take it from the first seed's run metadata instead.
+        config_block = seeds_meta[str(seeds[0])].get("args", config_block)
+
     out = {
         "seeds": seeds,
-        "config": {
-            "epochs": args.epochs,
-            "dataset": args.dataset,
-            "router_type": args.router_type,
-            "lambda_ood": args.lambda_ood,
-            "max_proto_drop": args.max_proto_drop,
-            "max_proto_acc_drop": args.max_proto_acc_drop,
-            "joint_freeze_router": args.joint_freeze_router,
-            "joint_keep_routing_lock": args.joint_keep_routing_lock,
-            "feature_dim": args.feature_dim,
-            "expert_hidden": args.expert_hidden,
-            "conv_channels": args.conv_channels,
-            "proto_size": args.proto_size,
-            "methods": args.methods,
-            "pretrain_epochs": args.pretrain_epochs,
-            "freeze_encoder": args.freeze_encoder,
-            "router_anchor_steps": args.router_anchor_steps,
-            "router_anchor_lr": args.router_anchor_lr,
-            "proto_routing_alpha": args.proto_routing_alpha,
-            "feature_cache": args.feature_cache,
-            "proto_samples": args.proto_samples,
-            "proto_threshold": args.proto_threshold,
-            "proto_per_class": args.proto_per_class,
-            "top_k": args.top_k,
-            "joint_calib_epochs": args.joint_calib_epochs,
-            "refresh_anchors_after_calib": args.refresh_anchors_after_calib,
-            "keep_optimizer_state": args.keep_optimizer_state,
-            "lambda_r": args.lambda_r,
-            "lambda_e": args.lambda_e,
-            "stability_every": args.stability_every,
-            "ood_every": args.ood_every,
-            "buffer_sampling": args.buffer_sampling,
-            "ewc_online": args.ewc_online,
-            "max_experts": args.max_experts,
-            "proto_routing_threshold": args.proto_routing_threshold,
-        },
+        "config": config_block,
         "per_seed": per_seed,
         "aggregated": agg,
         "seeds_meta": seeds_meta,
