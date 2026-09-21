@@ -91,6 +91,7 @@ def aggregate_dir(directory: str) -> dict[str, dict]:
         acc_m, acc_s = _agg(cols["acc"])
         f_m, f_s = _agg(cols["forgetting"])
         b_m, b_s = _agg(cols["stored_bytes"])
+        d_m, d_s = _agg(cols["memory_bytes"])
         out[method] = {
             "acc_mean": acc_m,
             "acc_std": acc_s,
@@ -98,6 +99,8 @@ def aggregate_dir(directory: str) -> dict[str, dict]:
             "forgetting_std": f_s,
             "stored_bytes_mean": b_m,
             "stored_bytes_std": b_s,
+            "memory_bytes_mean": d_m,
+            "memory_bytes_std": d_s,
             "final_experts": cols["final_experts"],
             "fit_seconds": cols["fit_seconds"],
             "routing_retention": cols["routing_retention"],
@@ -126,8 +129,8 @@ def fmt_bytes(value: float) -> str:
 
 def _method_table(rows: dict[str, dict]) -> list[str]:
     lines = [
-        "| Method | Avg Acc | Forgetting | Stored bytes | Experts | Seeds |",
-        "| :-- | :--: | :--: | :--: | :--: | :--: |",
+        "| Method | Avg Acc | Forgetting | Data bytes | Total stored | Experts | Seeds |",
+        "| :-- | :--: | :--: | :--: | :--: | :--: | :--: |",
     ]
     for method in sorted(rows):
         r = rows[method]
@@ -135,6 +138,7 @@ def _method_table(rows: dict[str, dict]) -> list[str]:
         lines.append(
             f"| {method} | {fmt_pct(r['acc_mean'], r['acc_std'])} | "
             f"{fmt_pct(r['forgetting_mean'], r['forgetting_std'])} | "
+            f"{fmt_bytes(r['memory_bytes_mean'])} | "
             f"{fmt_bytes(r['stored_bytes_mean'])} | {experts} | {r['num_seeds']} |"
         )
     return lines
@@ -159,7 +163,7 @@ def equal_byte_section(root: str, dataset_key: str, lines: list[str]) -> Optiona
                     r["acc_std"],
                     r["forgetting_mean"],
                     r["forgetting_std"],
-                    r["stored_bytes_mean"],
+                    r["memory_bytes_mean"],
                 )
             )
         _ = seed
@@ -167,7 +171,7 @@ def equal_byte_section(root: str, dataset_key: str, lines: list[str]) -> Optiona
         return None
     lines.append(f"### Equal-byte Pareto — {dataset_key}")
     lines.append("")
-    lines.append("| Method | Budget | Realised bytes | Avg Acc | Forgetting |")
+    lines.append("| Method | Budget | Realised data bytes | Avg Acc | Forgetting |")
     lines.append("| :-- | --: | --: | :--: | :--: |")
     for method in sorted(points):
         for _, acc, acc_s, f, f_s, b in sorted(points[method]):
@@ -269,6 +273,34 @@ def simple_group_section(root: str, group: str, title: str, lines: list[str]) ->
         lines.append("")
 
 
+def latency_section(root: str, lines: list[str]) -> None:
+    base = os.path.join(root, "latency")
+    if not os.path.isdir(base):
+        return
+    lines.append("## Forward latency (per sample)")
+    lines.append("")
+    for path in sorted(glob.glob(os.path.join(base, "*.json"))):
+        try:
+            with open(path) as fh:
+                payload = json.load(fh)
+        except Exception:
+            continue
+        lines.append(
+            f"**{os.path.basename(path)}** — {payload.get('encoder_arch')}, "
+            f"feature_dim={payload.get('feature_dim')}, "
+            f"input={payload.get('input_shape')}, device={payload.get('device')}"
+        )
+        lines.append("")
+        lines.append("| Model | Experts | Total params | Batch | ms/sample |")
+        lines.append("| :-- | --: | --: | --: | --: |")
+        for row in payload.get("rows", []):
+            lines.append(
+                f"| {row['model']} | {row['experts']} | {row['total_params']:,} | "
+                f"{row['batch_size']} | {row['latency_ms_per_sample']:.4f} |"
+            )
+        lines.append("")
+
+
 def multi_seed_section(root: str, lines: list[str]) -> None:
     lines.append("## Multi-seed tables")
     lines.append("")
@@ -331,6 +363,7 @@ def main() -> None:
     lines.append("")
     simple_group_section(args.results_dir, "drift", "Anchor refresh cells", lines)
     lines.append("")
+    latency_section(args.results_dir, lines)
     multi_seed_section(args.results_dir, lines)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
