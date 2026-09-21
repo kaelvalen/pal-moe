@@ -116,7 +116,7 @@ jobs:
         datasets.MNIST("./data", train=True, download=True,
                        transform=transforms.Compose([transforms.ToTensor()]))
         PY
-    - name: CPU benchmark smoke (1 epoch, all 12 methods)
+    - name: CPU benchmark smoke (1 epoch, all methods)
       run: |
         python experiments/run_benchmark.py --epochs 1 --device cpu --output_dir /tmp/ci-bench
     - name: Assert benchmark sanity bounds

@@ -723,8 +723,16 @@ def run_benchmark(
     )
 
     def run(method_id: str) -> bool:
-        """Whether a method block is enabled (empty --methods = run everything)."""
-        return selected is None or method_id in selected
+        """
+        Whether a method block is enabled (empty --methods = run everything).
+
+        The generic 'replay' id is explicit-only: at the default budget it
+        would duplicate replay250 and collide with its display name, so
+        "run everything" keeps the published ids.
+        """
+        if selected is None:
+            return method_id != "replay"
+        return method_id in selected
 
     # Replay-family budget: --buffer_size overrides the generic ids (replay,
     # derpp, erace, agem, latent_replay) while replay60/replay360 keep their

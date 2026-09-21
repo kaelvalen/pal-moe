@@ -32,7 +32,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=str, default="data/tiny-imagenet-200/train")
     parser.add_argument("--dest", type=str, default="data/tiny-imagenet-200/train_flat")
-    parser.add_argument("--copy", action="store_true", help="copy files instead of symlinks")
+    parser.add_argument(
+        "--copy", action="store_true", help="copy files instead of symlinks"
+    )
     args = parser.parse_args()
 
     source = Path(args.source)
