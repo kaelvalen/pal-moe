@@ -3095,6 +3095,29 @@ def test_stored_memory_accounting():
     assert icarl.snapshot_bytes() > 0
 
 
+def test_mir_selects_interfered_samples():
+    from pal_moe.baselines.mir import MIR
+
+    encoder = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=4)
+    net = nn.Sequential(
+        encoder, MLPExpert(input_dim=4, hidden_dim=8, num_classes=3, expert_id=0)
+    )
+    trainer = MIR(
+        net,
+        buffer_size=10,
+        lr=1e-3,
+        device=torch.device("cpu"),
+        candidate_pool=8,
+    )
+    assert trainer.memory_bytes() == 0
+    loader = [(torch.randn(6, 16), torch.randint(0, 3, (6,))) for _ in range(2)]
+    trainer.train_task(0, loader, epochs=1)
+    assert trainer.memory_bytes() > 0
+    rx, ry = trainer._select_interfered(batch_size=4)
+    assert rx is not None and rx.shape[0] <= 4
+    assert ry is not None and ry.shape[0] == rx.shape[0]
+
+
 def test_latent_replay_trainer():
     from pal_moe.baselines.latent_replay import LatentReplayTrainer
 

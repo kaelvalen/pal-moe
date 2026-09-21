@@ -33,6 +33,7 @@ from pal_moe.baselines.der import DERPP, ERACE
 from pal_moe.baselines.ewc import EWC
 from pal_moe.baselines.icarl import ICaRL
 from pal_moe.baselines.latent_replay import LatentReplayTrainer
+from pal_moe.baselines.mir import MIR
 from pal_moe.baselines.naive import NaiveFineTuning
 from pal_moe.baselines.replay import ReplayTrainer
 from pal_moe.builder.expert_builder import ExpertBuilder
@@ -743,6 +744,7 @@ def run_benchmark(
         "agem": f"AGEM (P={replay_budget})",
         "icarl": f"iCaRL (k={icarl_k})",
         "latent_replay": f"Latent Replay (P={replay_budget})",
+        "mir": f"MIR (P={replay_budget})",
         "stdmoe": "Standard MoE",
         "palmoe": "PAL-MoE (Ours)",
         "hybrid": f"PAL-MoE + Replay (Hybrid, P={args.proto_size})",
@@ -1285,6 +1287,30 @@ def run_benchmark(
         )
 
     # -------------------------------------------------------------
+    # 8b. Baseline: MIR (Maximally Interfered Retrieval, P=250)
+    # -------------------------------------------------------------
+    if run("mir"):
+        _banner(
+            f"Running Baseline 8b: MIR (Maximally Interfered Retrieval, P={replay_budget})"
+        )
+        set_seed(args.seed)
+        mir_net = build_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
+        )
+        mir_trainer = MIR(
+            mir_net,
+            buffer_size=replay_budget,
+            lr=1e-3,
+            device=device,
+            sampling=args.buffer_sampling,
+        )
+        evaluator_mir = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(mir_trainer, mir_net, evaluator_mir, tasks, epochs_per_task)
+        results[f"MIR (P={replay_budget})"] = _record_baseline_result(
+            mir_net, evaluator_mir, memory_bytes=mir_trainer.memory_bytes()
+        )
+
+    # -------------------------------------------------------------
     # 9. Baseline: iCaRL (Incremental Classifier & Representation Learning)
     # -------------------------------------------------------------
     if run("icarl"):
@@ -1560,8 +1586,8 @@ if __name__ == "__main__":
         default="",
         help=(
             "Comma-separated method ids to run (empty = all). Ids: naive, ewc, "
-            "replay60, replay360, replay250, replay, derpp, erace, agem, icarl, "
-            "latent_replay, stdmoe, palmoe, hybrid"
+            "replay60, replay360, replay250, replay, derpp, erace, agem, mir, "
+            "icarl, latent_replay, stdmoe, palmoe, hybrid"
         ),
     )
     parser.add_argument(

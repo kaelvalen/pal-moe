@@ -1,0 +1,343 @@
+"""
+Paper report generator.
+
+Scans the result directories produced by the paper experiment plan and writes
+one Markdown report plus figures:
+
+- equal-byte Pareto (accuracy/forgetting vs realised stored bytes);
+- expert growth and routing retention under gated vs forced expansion;
+- component-ablation ladder;
+- capacity/parameter scaling;
+- anchor-drift cells;
+- every multi-seed table directory found under results/.
+
+Usage:
+    python experiments/paper_report.py --results_dir results \
+        --output results/paper_report.md --figures_dir results/figures
+
+The script is read-only and idempotent: directories that do not exist yet are
+simply skipped, so it can be re-run while the queue is still producing results.
+"""
+
+import argparse
+import glob
+import json
+import os
+from collections import defaultdict
+from typing import Optional
+
+import numpy as np
+
+try:  # optional: figures are nice-to-have, the report must still be written
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except Exception:  # pragma: no cover - matplotlib is a declared dependency
+    plt = None
+
+
+def _load_results(path: str) -> Optional[dict]:
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def _iter_result_files(root: str):
+    """Yield (directory, seed, results) for every benchmark JSON under root."""
+    for path in sorted(
+        glob.glob(
+            os.path.join(root, "**", "benchmark_results_seed*.json"), recursive=True
+        )
+    ):
+        seed = (
+            os.path.basename(path)
+            .replace("benchmark_results_seed", "")
+            .replace(".json", "")
+        )
+        data = _load_results(path)
+        if data:
+            yield os.path.dirname(path), seed, data
+
+
+def _agg(values: list[float]) -> tuple[float, float]:
+    arr = np.asarray(
+        [v for v in values if v is not None and not np.isnan(v)], dtype=float
+    )
+    if arr.size == 0:
+        return float("nan"), float("nan")
+    return float(arr.mean()), float(arr.std())
+
+
+def aggregate_dir(directory: str) -> dict[str, dict]:
+    """Mean +/- std over seeds for every method in a result directory."""
+    per_method: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    seeds = []
+    for _, seed, data in _iter_result_files(directory):
+        seeds.append(seed)
+        for method, row in data.items():
+            per_method[method]["acc"].append(row.get("acc"))
+            per_method[method]["forgetting"].append(row.get("forgetting"))
+            per_method[method]["stored_bytes"].append(row.get("stored_bytes"))
+            per_method[method]["memory_bytes"].append(row.get("memory_bytes"))
+            per_method[method]["final_experts"].append(row.get("final_experts"))
+            per_method[method]["fit_seconds"].append(row.get("fit_seconds"))
+            per_method[method]["routing_retention"].append(row.get("routing_retention"))
+            per_method[method]["experts_per_task"].append(row.get("experts_per_task"))
+    out = {}
+    for method, cols in per_method.items():
+        acc_m, acc_s = _agg(cols["acc"])
+        f_m, f_s = _agg(cols["forgetting"])
+        b_m, b_s = _agg(cols["stored_bytes"])
+        out[method] = {
+            "acc_mean": acc_m,
+            "acc_std": acc_s,
+            "forgetting_mean": f_m,
+            "forgetting_std": f_s,
+            "stored_bytes_mean": b_m,
+            "stored_bytes_std": b_s,
+            "final_experts": cols["final_experts"],
+            "fit_seconds": cols["fit_seconds"],
+            "routing_retention": cols["routing_retention"],
+            "experts_per_task": cols["experts_per_task"],
+            "num_seeds": len(cols["acc"]),
+        }
+    return out
+
+
+def fmt_pct(value: float, std: float = float("nan")) -> str:
+    if np.isnan(value):
+        return "-"
+    if np.isnan(std):
+        return f"{value * 100:.2f}%"
+    return f"{value * 100:.2f} ± {std * 100:.2f}%"
+
+
+def fmt_bytes(value: float) -> str:
+    if np.isnan(value):
+        return "-"
+    for unit, scale in (("MiB", 1024**2), ("KiB", 1024), ("B", 1)):
+        if value >= scale or unit == "B":
+            return f"{value / scale:.2f} {unit}"
+    return f"{value:.0f} B"
+
+
+def _method_table(rows: dict[str, dict]) -> list[str]:
+    lines = [
+        "| Method | Avg Acc | Forgetting | Stored bytes | Experts | Seeds |",
+        "| :-- | :--: | :--: | :--: | :--: | :--: |",
+    ]
+    for method in sorted(rows):
+        r = rows[method]
+        experts = r["final_experts"][-1] if r["final_experts"] else "-"
+        lines.append(
+            f"| {method} | {fmt_pct(r['acc_mean'], r['acc_std'])} | "
+            f"{fmt_pct(r['forgetting_mean'], r['forgetting_std'])} | "
+            f"{fmt_bytes(r['stored_bytes_mean'])} | {experts} | {r['num_seeds']} |"
+        )
+    return lines
+
+
+def equal_byte_section(root: str, dataset_key: str, lines: list[str]) -> Optional[list]:
+    """Collect (bytes, acc, forgetting) points for the Pareto figure."""
+    pattern = os.path.join(root, "equalbyte", dataset_key, "s*_b*_*")
+    points: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
+    for directory in sorted(glob.glob(pattern)):
+        base = os.path.basename(directory)
+        parts = base.split("_")
+        if len(parts) < 3:
+            continue
+        seed, budget, method = parts[0], parts[1], "_".join(parts[2:])
+        rows = aggregate_dir(directory)
+        for _name, r in rows.items():
+            points[method].append(
+                (
+                    float(budget[1:]),
+                    r["acc_mean"],
+                    r["acc_std"],
+                    r["forgetting_mean"],
+                    r["forgetting_std"],
+                    r["stored_bytes_mean"],
+                )
+            )
+        _ = seed
+    if not points:
+        return None
+    lines.append(f"### Equal-byte Pareto — {dataset_key}")
+    lines.append("")
+    lines.append("| Method | Budget | Realised bytes | Avg Acc | Forgetting |")
+    lines.append("| :-- | --: | --: | :--: | :--: |")
+    for method in sorted(points):
+        for _, acc, acc_s, f, f_s, b in sorted(points[method]):
+            lines.append(
+                f"| {method} | {fmt_bytes(_)} | {fmt_bytes(b)} | "
+                f"{fmt_pct(acc, acc_s)} | {fmt_pct(f, f_s)} |"
+            )
+    lines.append("")
+    if plt is not None:
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+        for method in sorted(points):
+            pts = sorted(points[method])
+            xs = [max(p[5], 1.0) for p in pts]
+            ys = [p[1] for p in pts]
+            es = [p[2] for p in pts]
+            ax.errorbar(xs, ys, yerr=es, marker="o", capsize=3, label=method)
+        ax.set_xscale("log")
+        ax.set_xlabel("Stored bytes (data memory)")
+        ax.set_ylabel("Avg accuracy")
+        ax.set_title(f"Equal-byte Pareto — {dataset_key}")
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        figures_dir = os.path.join(root, "figures")
+        os.makedirs(figures_dir, exist_ok=True)
+        path = os.path.join(figures_dir, f"pareto_{dataset_key}.png")
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+        lines.append(f"![pareto](figures/pareto_{dataset_key}.png)")
+        lines.append("")
+    return lines
+
+
+def growth_section(root: str, lines: list[str]) -> None:
+    base = os.path.join(root, "growth")
+    if not os.path.isdir(base):
+        return
+    lines.append("### Expert growth and routing retention (gated vs forced)")
+    lines.append("")
+    lines.append(
+        "| Protocol | Method | Experts per task (mean over seeds) | Final retention |"
+    )
+    lines.append("| :-- | :-- | :-- | :--: |")
+    plot_data = {}
+    for protocol in sorted(os.listdir(base)):
+        proto_dir = os.path.join(base, protocol)
+        rows = aggregate_dir(proto_dir)
+        for method in sorted(rows):
+            r = rows[method]
+            curves = [c for c in r["experts_per_task"] if c]
+            if not curves:
+                continue
+            max_len = max(len(c) for c in curves)
+            mean_curve = []
+            for i in range(max_len):
+                vals = [c[i] for c in curves if len(c) > i]
+                mean_curve.append(float(np.mean(vals)))
+            retention = [x for x in r["routing_retention"] if x]
+            last_ret = (
+                retention[-1][-1] if retention and retention[-1] else float("nan")
+            )
+            lines.append(
+                f"| {protocol} | {method} | {', '.join(str(round(v, 2)) for v in mean_curve)} | "
+                f"{'-' if np.isnan(last_ret) else f'{last_ret:.3f}'} |"
+            )
+            plot_data[f"{protocol}:{method}"] = mean_curve
+    lines.append("")
+    if plt is not None and plot_data:
+        fig, ax = plt.subplots(figsize=(7, 4))
+        for label, curve in plot_data.items():
+            ax.plot(range(1, len(curve) + 1), curve, marker="o", label=label)
+        ax.set_xlabel("Task index (after training)")
+        ax.set_ylabel("Number of experts")
+        ax.set_title("Expert growth under gated vs forced expansion")
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        figures_dir = os.path.join(root, "figures")
+        os.makedirs(figures_dir, exist_ok=True)
+        fig.savefig(os.path.join(figures_dir, "expert_growth.png"), dpi=150)
+        plt.close(fig)
+        lines.append("![growth](figures/expert_growth.png)")
+        lines.append("")
+
+
+def simple_group_section(root: str, group: str, title: str, lines: list[str]) -> None:
+    base = os.path.join(root, group)
+    if not os.path.isdir(base):
+        return
+    lines.append(f"### {title}")
+    lines.append("")
+    for cell in sorted(os.listdir(base)):
+        rows = aggregate_dir(os.path.join(base, cell))
+        if not rows:
+            continue
+        lines.append(f"**{cell}**")
+        lines.append("")
+        lines.extend(_method_table(rows))
+        lines.append("")
+
+
+def multi_seed_section(root: str, lines: list[str]) -> None:
+    lines.append("## Multi-seed tables")
+    lines.append("")
+    for directory in sorted(glob.glob(os.path.join(root, "*"))):
+        if not os.path.isdir(directory):
+            continue
+        if not glob.glob(
+            os.path.join(directory, "**", "benchmark_results_seed*.json"),
+            recursive=True,
+        ):
+            continue
+        rows = aggregate_dir(directory)
+        if not rows:
+            continue
+        lines.append(f"**{os.path.relpath(directory, root)}**")
+        lines.append("")
+        lines.extend(_method_table(rows))
+        lines.append("")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--results_dir", type=str, default="results")
+    parser.add_argument("--output", type=str, default="results/paper_report.md")
+    parser.add_argument("--figures_dir", type=str, default="results/figures")
+    args = parser.parse_args()
+    _ = args.figures_dir
+
+    lines = [
+        "# PAL-MoE paper report (auto-generated)",
+        "",
+        "Generated by `experiments/paper_report.py` from the result JSONs under "
+        f"`{args.results_dir}/`. Means ± std over the seeds present in each directory.",
+        "",
+    ]
+    lines.append("## Equal-byte Pareto")
+    lines.append("")
+    equal_byte_section(args.results_dir, "c10r18", lines)
+    equal_byte_section(args.results_dir, "c100r18", lines)
+    lines.append("## Expert growth / reuse")
+    lines.append("")
+    growth_section(args.results_dir, lines)
+    lines.append("## Component ablation (final recipe)")
+    lines.append("")
+    simple_group_section(
+        args.results_dir,
+        "ablation_final",
+        "Component ablation, CIFAR-10 ResNet-18",
+        lines,
+    )
+    lines.append("## Capacity and parameter matching")
+    lines.append("")
+    simple_group_section(
+        args.results_dir,
+        "capacity",
+        "Capacity sweep and parameter-matched baselines",
+        lines,
+    )
+    lines.append("## Anchor drift / refresh")
+    lines.append("")
+    simple_group_section(args.results_dir, "drift", "Anchor refresh cells", lines)
+    lines.append("")
+    multi_seed_section(args.results_dir, lines)
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    with open(args.output, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    print(f"Wrote {args.output}")
+
+
+if __name__ == "__main__":
+    main()
