@@ -9,6 +9,31 @@
 > measured design facts). Every number quoted here is from the repo; nothing in
 > this file may be cited as a result until it points at a `results/` artifact.
 
+## Status (applied 2026-09-21)
+
+| Item | Status | Artifact |
+| :-- | :-- | :-- |
+| M1 byte accounting + budget overrides | **Done** | `memory_bytes`/`state_bytes`/`stored_bytes` in every result; `--buffer_size`, `--icarl_k`; generic `replay`/`latent_replay`/`mir` ids |
+| M2 per-task instrumentation | **Done** | `--track_routing` records `experts_per_task`, expansion/gate counts and routing retention `RR_t` |
+| M3 folder streams | **Done** | `--dataset folder --data_dir ... --classes_per_task --image_size`; Tiny-ImageNet flattened via `experiments/prepare_tiny_imagenet.py` |
+| M4 latency | **Done** | `experiments/measure_latency.py` |
+| E1 ViT promotion | **Running** (wave 1) | `results/cifar10_vit_multiseed`, `results/cifar100_vit_multiseed` |
+| E2 CIFAR-100 ResNet-18 3-seed | **Running** (wave 1) | `results/cifar100_resnet18_multiseed` |
+| E4 equal-byte Pareto | **Running** (waves 1+2) | `results/equalbyte/{c10r18,c100r18}` |
+| E5 component ablation | **Running** (wave 1) | `results/ablation_final/` |
+| E6 routing retention | **Running** (piggyback) | `routing_retention` fields |
+| E7 growth/reuse | **Running** (wave 1) | `results/growth/` |
+| E8 anchor drift | **Running** (wave 1) | `results/drift/` |
+| E9 capacity/param matching | **Running** (wave 1) | `results/capacity/` |
+| E10 Tiny-ImageNet | **Queued** (wave 2) | `results/tinyimagenet_multiseed` |
+| E11 domain-incremental | **Pilot queued** (wave 2, MNIST rotate 5 seeds); CORe50 blocked on a domain-stream loader | `results/mnist_domainshift_multiseed` |
+| E12 modern baselines | **Partial**: MIR implemented and queued; prompt-based methods deferred (scope decision) | `pal_moe/baselines/mir.py` |
+| E13 report/release | **Partial**: `experiments/paper_report.py` writes `results/paper_report.md` + figures; final tables pending | `results/paper_report.md` |
+
+Run queues: `experiments/recipes/paper_wave1.sh` (E1/E2/E4/E7/E5/E8/E9/E3-fast)
+and `experiments/recipes/paper_wave2.sh` (E12-MIR/E4c/E10/E3-slow/M4/E11-pilot),
+chained to run back to back. Logs: `results/paper_wave{1,2}.log`.
+
 ## 0. Framing
 
 **Research question.** Under a fixed memory budget, *when* should a
