@@ -610,3 +610,11 @@ ablation). Config selection supports case-insensitive substring filters
 
 Full multi-seed reproductions are run on the GPU machine before every README
 update; a full CI reproduction job can be enabled with a GPU runner.
+
+## Paper-track plan
+
+[`EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md) audits the results in this document
+and `README.md` against the paper's claims (what is strong, what is
+apples-to-oranges, what is missing) and freezes the outstanding runs: the
+equal-byte memory protocol, the component ablation at the final recipe, expert
+growth/reuse curves and the long-horizon benchmarks.
