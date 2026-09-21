@@ -565,8 +565,9 @@ class ContinualTrainer:
 
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(self.device, non_blocking=True), y.to(
-                    self.device, non_blocking=True
+                x, y = (
+                    x.to(self.device, non_blocking=True),
+                    y.to(self.device, non_blocking=True),
                 )
                 self.optimizer.zero_grad()
 

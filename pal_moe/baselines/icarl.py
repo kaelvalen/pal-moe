@@ -118,8 +118,9 @@ class ICaRL:
         class_raw: dict[int, list[torch.Tensor]] = {c: [] for c in current_classes}
         with torch.no_grad():
             for x, y in train_loader:
-                x, y = x.to(self.device, non_blocking=True), y.to(
-                    self.device, non_blocking=True
+                x, y = (
+                    x.to(self.device, non_blocking=True),
+                    y.to(self.device, non_blocking=True),
                 )
                 feats = self.wrapper.extract_features(x)
                 for c in current_classes:
@@ -155,8 +156,9 @@ class ICaRL:
 
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(self.device, non_blocking=True), y.to(
-                    self.device, non_blocking=True
+                x, y = (
+                    x.to(self.device, non_blocking=True),
+                    y.to(self.device, non_blocking=True),
                 )
                 self.optimizer.zero_grad()
 

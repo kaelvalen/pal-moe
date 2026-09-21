@@ -16,6 +16,23 @@ This document defines the protocol used to produce every number in
 All methods share the **same frozen base encoder** (pretrained once, then reused
 for every method). This isolates the continual-learning mechanisms.
 
+### Storage semantics under `--feature_cache` (fairness note)
+
+With `--feature_cache` the task loaders yield cached frozen features, so every
+replay baseline and iCaRL store **feature vectors** (`feature_dim*4 + 8` bytes
+per item), not raw images, and the hybrid's raw store is disabled
+(`store_raw = not feature_cache`). Under the feature cache the "hybrid" variant
+is therefore *pure + latent-exemplar replay*; new runs name it
+`PAL-MoE + Latent Replay`. Consequences:
+
+- `memory_bytes` in each result JSON is the honest per-run byte count; item
+  counts are not byte counts and must not be compared across protocols;
+- the raw-vs-latent storage comparison needs the raw pipeline
+  (`configs/cifar{10,100}_resnet18_frozen_raw.json`): raw ER stores 12,296 B
+  per item while PAL pure stores ~2,184 B per prototype;
+- hybrid rows in feature-cached tables published before 2026-09-22 did not
+  store raw exemplars; treat them as pure + latent replay (see design fact 19).
+
 ### Memory budget
 
 - **PAL-MoE prototypes:** latent vectors in the 128-d encoder space
@@ -613,6 +630,23 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     matched. The equal-byte Pareto (EXPERIMENT_PLAN.md, E4) is the fair
     comparison. iCaRL's zero variance is expected: the frozen ViT features are
     seed-independent and herding is deterministic.
+
+19. **Feature-cached runs store features, not raw inputs — and the hybrid's raw
+    store is disabled there.** `--feature_cache` replaces the loaders with
+    cached encoder outputs, so (a) every replay baseline and iCaRL store
+    `feature_dim*4 + 8` bytes per item (256-d ResNet: 1,032 B; 768-d ViT:
+    3,080 B) instead of raw 32x32 images (12,296 B), and (b)
+    `store_raw = not feature_cache`, so the hybrid variant trains with latent
+    exemplars only. Measured confirmation: on CIFAR-100 ResNet-18 the replay
+    baselines' `memory_bytes` at P=250 is 258 KB (ER) — 250 stored features —
+    not the 3.07 MB a raw-image buffer would need; and the ViT CIFAR-10
+    promotion table's latent-replay row is a pure + latent-replay variant, not
+    raw replay. This was found while preparing the equal-byte sweep (E4): the
+    first sweep assumed raw-image item sizes and underfilled the baselines by
+    ~12x. The corrected protocol uses feature item sizes for feature-cached
+    runs and the raw pipeline (`configs/*_frozen_raw.json`) for the
+    raw-vs-latent comparison. New PAL runs record `stores_raw` so the JSON is
+    self-documenting.
 
 ## Ablations
 

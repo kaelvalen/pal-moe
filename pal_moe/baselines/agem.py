@@ -76,8 +76,9 @@ class AGEM:
         n_updates = 0
         for _ in range(epochs):
             for x, y in train_loader:
-                x, y = x.to(self.device, non_blocking=True), y.to(
-                    self.device, non_blocking=True
+                x, y = (
+                    x.to(self.device, non_blocking=True),
+                    y.to(self.device, non_blocking=True),
                 )
 
                 # 1. Gradient on the current batch

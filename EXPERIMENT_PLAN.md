@@ -9,30 +9,58 @@
 > measured design facts). Every number quoted here is from the repo; nothing in
 > this file may be cited as a result until it points at a `results/` artifact.
 
-## Status (applied 2026-09-21)
+## Status (code ready 2026-09-21; runs deferred to 2026-09-22)
 
 | Item | Status | Artifact |
 | :-- | :-- | :-- |
 | M1 byte accounting + budget overrides | **Done** | `memory_bytes`/`state_bytes`/`stored_bytes` in every result; `--buffer_size`, `--icarl_k`; generic `replay`/`latent_replay`/`mir` ids |
 | M2 per-task instrumentation | **Done** | `--track_routing` records `experts_per_task`, expansion/gate counts and routing retention `RR_t` |
-| M3 folder streams | **Done** | `--dataset folder --data_dir ... --classes_per_task --image_size`; Tiny-ImageNet flattened via `experiments/prepare_tiny_imagenet.py` |
+| M3 folder streams | **Done** | `--dataset folder --data_dir ... --classes_per_task --image_size`; Tiny-ImageNet flattened via `experiments/prepare_tiny_imagenet.py` (100k images ready under `data/`) |
 | M4 latency | **Done** | `experiments/measure_latency.py` |
-| E1 ViT promotion | **Running** (wave 1) | `results/cifar10_vit_multiseed`, `results/cifar100_vit_multiseed` |
-| E2 CIFAR-100 ResNet-18 3-seed | **Running** (wave 1) | `results/cifar100_resnet18_multiseed` |
-| E4 equal-byte Pareto | **Running** (waves 1+2) | `results/equalbyte/{c10r18,c100r18}` |
-| E5 component ablation | **Running** (wave 1) | `results/ablation_final/` |
-| E6 routing retention | **Running** (piggyback) | `routing_retention` fields |
-| E7 growth/reuse | **Running** (wave 1) | `results/growth/` |
-| E8 anchor drift | **Running** (wave 1) | `results/drift/` |
-| E9 capacity/param matching | **Running** (wave 1) | `results/capacity/` |
-| E10 Tiny-ImageNet | **Queued** (wave 2) | `results/tinyimagenet_multiseed` |
-| E11 domain-incremental | **Pilot queued** (wave 2, MNIST rotate 5 seeds); CORe50 blocked on a domain-stream loader | `results/mnist_domainshift_multiseed` |
+| E1a CIFAR-10 ViT 3-seed | **Done** (commit `fb69e63`) | pure **91.74 ± 0.28 / 5.61**; iCaRL 84.18 / 10.38; ER 82.89 / 20.29 (`results/cifar10_vit_multiseed`) |
+| E1b CIFAR-100 ViT 3-seed | **Done, latent-replay row queued** | pure **59.34 ± 0.32 / 18.17**; iCaRL 64.94 / 12.25 (8.0 MB vs PAL 14.2 MB); DER++ 50.97 / 47.30 (`results/cifar100_vit_multiseed`) |
+| E2 CIFAR-100 ResNet-18 3-seed | **Done** (commit `82b5684`) | pure **15.65 ± 0.39 / 31.69**; iCaRL 13.97 / 10.96; DER++ 13.12 / 66.91 (`results/cifar100_resnet18_multiseed`) |
+| E4 equal-byte Pareto | **Queued, protocol corrected** | feature-cache sweep (`results/equalbyte/`) + raw-pipeline sweep (`results/equalbyte_raw/`); item sizes fixed per design fact 19 |
+| E5 component ablation | **Queued** | `results/ablation_final/` |
+| E6 routing retention | **Queued** (piggyback on the gated runs) | `routing_retention` fields |
+| E7 growth/reuse | **Queued** | `results/growth/` |
+| E8 anchor drift + trainable-encoder cell | **Queued** | `results/drift/` |
+| E9 capacity/param matching | **Queued** | `results/capacity/` |
+| E10 Tiny-ImageNet | **Queued** (dataset prepared) | `results/tinyimagenet_multiseed` |
+| E11 domain-incremental | **Pilot queued** (MNIST rotate 5 seeds); CORe50 blocked on a domain-stream loader | `results/mnist_domainshift_multiseed` |
 | E12 modern baselines | **Partial**: MIR implemented and queued; prompt-based methods deferred (scope decision) | `pal_moe/baselines/mir.py` |
-| E13 report/release | **Partial**: `experiments/paper_report.py` writes `results/paper_report.md` + figures; final tables pending | `results/paper_report.md` |
+| E13 report/release | **Partial**: `experiments/paper_report.py` writes `results/paper_report.md` + figures; final tables after the run | `results/paper_report.md` |
 
-Run queues: `experiments/recipes/paper_wave1.sh` (E1/E2/E4/E7/E5/E8/E9/E3-fast)
-and `experiments/recipes/paper_wave2.sh` (E12-MIR/E4c/E10/E3-slow/M4/E11-pilot),
-chained to run back to back. Logs: `results/paper_wave{1,2}.log`.
+### How to run (one command, detached)
+
+```bash
+cd /home/kael/pal-moe
+nohup bash experiments/recipes/paper_all.sh > results/paper_run.log 2>&1 &
+tail -f results/paper_run.log          # follow
+grep "::" results/paper_wave1b.log results/paper_wave2.log   # step markers
+```
+
+`paper_all.sh` runs `paper_wave1b.sh` then `paper_wave2.sh` back to back:
+corrected equal-byte sweeps (feature-cache and raw), E7/E5/E8/E9/E3-fast, the
+E1a/E1b latent-replay repair, MIR, Tiny-ImageNet 20×10, the slow conv
+regenerations, latency, the 5-seed domain-shift pilot and the appendix cells.
+Expected ~2.5–3 h + ~5–6 h on the RTX 5060. Failures log `FAILED ...` and do
+not stop the queue.
+
+Afterwards:
+
+```bash
+python experiments/paper_report.py     # tables + Pareto/growth/matrix figures
+```
+
+then fold the numbers into `README.md` / `BENCHMARK.md` (design facts 18–19
+already cover the ViT promotion and the feature-cache storage semantics).
+
+**Protocol correction applied before the run day (design fact 19):** under
+`--feature_cache` the replay baselines and iCaRL store cached features, and the
+hybrid's raw store is disabled (it is pure + latent replay). The equal-byte
+sweeps now use the correct item sizes; the true raw-vs-latent comparison runs
+in the raw pipeline (`configs/*_frozen_raw.json`).
 
 ## 0. Framing
 

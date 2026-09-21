@@ -32,6 +32,14 @@ All methods share the same pretrained encoder and the same head width
 its total head parameter count scales with the number of experts and is
 recorded as `trainable_params` in every result JSON.
 
+> **Protocol note (feature-cached CIFAR/ViT runs):** those runs use
+> `--feature_cache`, so the replay baselines store cached feature vectors
+> (not raw images) and the "hybrid" variant's raw store is disabled — it is
+> pure + latent-exemplar replay and is labelled `PAL-MoE + Latent Replay` in
+> new runs. See the storage-semantics note and design fact 19 in
+> [`BENCHMARK.md`](BENCHMARK.md) for the byte accounting and the raw-pipeline
+> comparison.
+
 ### 1. Split-MNIST (5 tasks, mean ± std over 5 seeds: 42 1 2 3 4)
 
 | Method | Avg Acc (↑) | Forgetting (↓) | BWT (↑) | Experts | Replay |
