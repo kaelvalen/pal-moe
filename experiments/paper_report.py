@@ -144,9 +144,11 @@ def _method_table(rows: dict[str, dict]) -> list[str]:
     return lines
 
 
-def equal_byte_section(root: str, dataset_key: str, lines: list[str]) -> Optional[list]:
+def equal_byte_section(
+    root: str, group: str, dataset_key: str, lines: list[str]
+) -> Optional[list]:
     """Collect (bytes, acc, forgetting) points for the Pareto figure."""
-    pattern = os.path.join(root, "equalbyte", dataset_key, "s*_b*_*")
+    pattern = os.path.join(root, group, dataset_key, "s*_b*_*")
     points: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
     for directory in sorted(glob.glob(pattern)):
         base = os.path.basename(directory)
@@ -169,7 +171,7 @@ def equal_byte_section(root: str, dataset_key: str, lines: list[str]) -> Optiona
         _ = seed
     if not points:
         return None
-    lines.append(f"### Equal-byte Pareto — {dataset_key}")
+    lines.append(f"### Equal-byte Pareto — {group}/{dataset_key}")
     lines.append("")
     lines.append("| Method | Budget | Realised data bytes | Avg Acc | Forgetting |")
     lines.append("| :-- | --: | --: | :--: | :--: |")
@@ -191,16 +193,16 @@ def equal_byte_section(root: str, dataset_key: str, lines: list[str]) -> Optiona
         ax.set_xscale("log")
         ax.set_xlabel("Stored bytes (data memory)")
         ax.set_ylabel("Avg accuracy")
-        ax.set_title(f"Equal-byte Pareto — {dataset_key}")
+        ax.set_title(f"Equal-byte Pareto — {group}/{dataset_key}")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8)
         fig.tight_layout()
         figures_dir = os.path.join(root, "figures")
         os.makedirs(figures_dir, exist_ok=True)
-        path = os.path.join(figures_dir, f"pareto_{dataset_key}.png")
+        path = os.path.join(figures_dir, f"pareto_{group}_{dataset_key}.png")
         fig.savefig(path, dpi=150)
         plt.close(fig)
-        lines.append(f"![pareto](figures/pareto_{dataset_key}.png)")
+        lines.append(f"![pareto](figures/pareto_{group}_{dataset_key}.png)")
         lines.append("")
     return lines
 
@@ -378,8 +380,10 @@ def main() -> None:
     ]
     lines.append("## Equal-byte Pareto")
     lines.append("")
-    equal_byte_section(args.results_dir, "c10r18", lines)
-    equal_byte_section(args.results_dir, "c100r18", lines)
+    equal_byte_section(args.results_dir, "equalbyte", "c10r18", lines)
+    equal_byte_section(args.results_dir, "equalbyte", "c100r18", lines)
+    equal_byte_section(args.results_dir, "equalbyte_raw", "c10r18", lines)
+    equal_byte_section(args.results_dir, "equalbyte_raw", "c100r18", lines)
     lines.append("## Expert growth / reuse")
     lines.append("")
     growth_section(args.results_dir, lines)

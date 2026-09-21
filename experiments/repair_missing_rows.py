@@ -26,21 +26,28 @@ import json
 import os
 
 
-def merge_file(target_path: str, source_path: str, overwrite: bool) -> list[str]:
+def merge_file(
+    target_path: str, source_path: str, overwrite: bool, drop_pattern: str = None
+) -> tuple[list[str], list[str]]:
     with open(target_path) as fh:
         target = json.load(fh)
     with open(source_path) as fh:
         source = json.load(fh)
+    removed = []
+    if drop_pattern:
+        removed = [k for k in target if drop_pattern in k]
+        for k in removed:
+            del target[k]
     added = []
     for method, row in source.items():
         if method in target and not overwrite:
             continue
         target[method] = row
         added.append(method)
-    if added:
+    if added or removed:
         with open(target_path, "w") as fh:
             json.dump(target, fh, indent=2)
-    return added
+    return added, removed
 
 
 def main() -> None:
@@ -51,6 +58,15 @@ def main() -> None:
         "--overwrite",
         action="store_true",
         help="Replace rows that already exist in the target",
+    )
+    parser.add_argument(
+        "--drop_pattern",
+        type=str,
+        default=None,
+        help=(
+            "Remove target rows whose key contains this substring before "
+            "merging (e.g. stale keys from an earlier naming)"
+        ),
     )
     parser.add_argument(
         "--write",
@@ -69,6 +85,7 @@ def main() -> None:
         raise SystemExit(f"no target result files under {args.target_dir}")
 
     total_added = 0
+    total_removed = 0
     for target_path in targets:
         filename = os.path.basename(target_path)
         source_matches = glob.glob(
@@ -78,16 +95,27 @@ def main() -> None:
             print(f"  [skip] no source for {filename}")
             continue
         if args.write:
-            added = merge_file(target_path, source_matches[0], args.overwrite)
+            added, removed = merge_file(
+                target_path, source_matches[0], args.overwrite, args.drop_pattern
+            )
         else:
             with open(target_path) as fh:
                 target = json.load(fh)
             with open(source_matches[0]) as fh:
                 source = json.load(fh)
+            removed = (
+                [k for k in target if args.drop_pattern in k]
+                if args.drop_pattern
+                else []
+            )
             added = [m for m in source if m not in target or args.overwrite]
         total_added += len(added)
-        print(f"  {target_path}: added {added}")
-    print(f"{'merged' if args.write else 'would merge'} {total_added} rows")
+        total_removed += len(removed)
+        print(f"  {target_path}: added {added}, removed {removed}")
+    print(
+        f"{'merged' if args.write else 'would merge'} {total_added} rows "
+        f"(removed {total_removed})"
+    )
 
 
 if __name__ == "__main__":

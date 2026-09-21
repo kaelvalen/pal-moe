@@ -1,45 +1,115 @@
 #!/usr/bin/env bash
-# Paper wave 2: external baselines, the serious benchmark and the slow
-# regenerations, run after paper_wave1.sh.
-#
-# E12 MIR baselines -> E10 Tiny-ImageNet -> E3 slow regenerations ->
-# M4 latency -> E11 domain-shift pilot (5 seeds).
+# Paper wave 2: repair, the raw-pipeline equal-byte sweep (the honest H2 test),
+# external baselines, the serious benchmark and the slow regenerations.
 set -u
 cd "$(dirname "$0")/../.."
 export PYTHONPATH=.
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:/run/opengl-driver/lib"
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}"
 PY=.venv/bin/python
-mkdir -p results/mir results/tinyimagenet_multiseed results/latency results/mnist_domainshift_multiseed
+mkdir -p results/repair results/equalbyte_raw results/hybrid_raw results/mir \
+  results/tinyimagenet_multiseed results/latency results/mnist_domainshift_multiseed
 
 step() { echo; echo "===== $(date '+%F %T') :: $* ====="; }
 
 # ---------------------------------------------------------------- repair
-# E1a/E1b ran before the hybrid result-key fix, so their hybrid rows were
-# dropped by the runner's method filter. Re-run only the hybrid variant per
-# seed (same config/seed => same row the full run would have produced), merge
-# it into the existing per-seed JSONs and rebuild the aggregate.
-step "REPAIR: hybrid rows for E1a (CIFAR-10 ViT), seeds 42 1 2"
+# E1a/E1b ran before the hybrid naming/result-key fixes. Under --feature_cache
+# the variant is "pure + latent replay" (no raw store), and it is re-run here
+# per seed, merged into the existing per-seed JSONs and re-aggregated. Any
+# stale "Hybrid" rows from the intermediate naming are dropped first.
+step "REPAIR: latent-replay rows for E1a (CIFAR-10 ViT), seeds 42 1 2"
 for SEED in 42 1 2; do
   $PY experiments/run_benchmark.py --config configs/cifar10_vit.json \
     --device cuda --methods hybrid --seed "$SEED" \
     --output_dir "results/repair/c10vit_hybrid/seed${SEED}" || echo "FAILED repair c10vit ${SEED}"
 done
 $PY experiments/repair_missing_rows.py --target_dir results/cifar10_vit_multiseed \
-  --source_dir results/repair/c10vit_hybrid --write
+  --source_dir results/repair/c10vit_hybrid --drop_pattern "PAL-MoE + Replay (Hybrid" --write
 $PY experiments/run_benchmark_multi.py --seeds "42 1 2" \
   --output_dir results/cifar10_vit_multiseed --aggregate_only
 
-step "REPAIR: hybrid rows for E1b (CIFAR-100 ViT), seeds 42 1 2"
+step "REPAIR: latent-replay rows for E1b (CIFAR-100 ViT), seeds 42 1 2"
 for SEED in 42 1 2; do
   $PY experiments/run_benchmark.py --config configs/cifar100_vit.json \
     --device cuda --methods hybrid --seed "$SEED" \
     --output_dir "results/repair/c100vit_hybrid/seed${SEED}" || echo "FAILED repair c100vit ${SEED}"
 done
 $PY experiments/repair_missing_rows.py --target_dir results/cifar100_vit_multiseed \
-  --source_dir results/repair/c100vit_hybrid --write
+  --source_dir results/repair/c100vit_hybrid --drop_pattern "PAL-MoE + Replay (Hybrid" --write
 $PY experiments/run_benchmark_multi.py --seeds "42 1 2" \
   --output_dir results/cifar100_vit_multiseed --aggregate_only
+
+# ---------------------------------------------------------------- E4-raw
+# Raw-pipeline equal-byte sweep (no feature cache, frozen encoder). This is the
+# honest raw-vs-latent storage test: replay stores raw 32x32 images (12296 B),
+# latent replay 256-d features (1032 B), PAL pure ~2184 B/prototype, PAL hybrid
+# ~14472 B/prototype (latent anchors + one raw image). CIFAR-10 ResNet-18.
+run_raw_c10() { # seed budget method extra...
+  local SEED=$1 BUDGET=$2 METHOD=$3; shift 3
+  $PY experiments/run_benchmark.py --config configs/cifar10_resnet18_frozen_raw.json \
+    --device cuda --track_routing --methods "$METHOD" \
+    --output_dir "results/equalbyte_raw/c10r18/s${SEED}_b${BUDGET}_${METHOD}" "$@" \
+    || echo "FAILED raw c10 s${SEED} b${BUDGET} ${METHOD}"
+}
+step "E4-raw equal-byte CIFAR-10 ResNet-18, raw pipeline (seed 42, 1 and 4 MiB)"
+for BUDGET in 1048576 4194304; do
+  B=$((BUDGET / 12296)); D=$((BUDGET / 12336)); K=$((BUDGET / 122960))
+  L=$((BUDGET / 1032)); P=$((BUDGET / 2184)); H=$((BUDGET / 14472))
+  PS=$((P / 5 * 2)); [ "$PS" -lt 256 ] && PS=256; [ "$PS" -gt 5000 ] && PS=5000
+  echo "--- budget ${BUDGET} B: replay=${B} derpp=${D} icarl_k=${K} latent=${L} pure=${P} hybrid=${H} ps=${PS}"
+  run_raw_c10 42 "$BUDGET" replay --buffer_size "$B"
+  run_raw_c10 42 "$BUDGET" derpp --buffer_size "$D"
+  [ "$K" -ge 1 ] && run_raw_c10 42 "$BUDGET" icarl --icarl_k "$K"
+  run_raw_c10 42 "$BUDGET" latent_replay --buffer_size "$L"
+  run_raw_c10 42 "$BUDGET" palmoe --proto_size "$P" --proto_samples "$PS"
+  run_raw_c10 42 "$BUDGET" hybrid --proto_size "$H" --proto_samples "$PS"
+done
+step "E4-raw equal-byte CIFAR-10 ResNet-18, raw pipeline (seeds 1 2, 1 MiB)"
+for SEED in 1 2; do
+  BUDGET=1048576
+  B=$((BUDGET / 12296)); D=$((BUDGET / 12336)); K=$((BUDGET / 122960))
+  L=$((BUDGET / 1032)); P=$((BUDGET / 2184)); H=$((BUDGET / 14472))
+  PS=$((P / 5 * 2)); [ "$PS" -lt 256 ] && PS=256
+  run_raw_c10 "$SEED" "$BUDGET" replay --buffer_size "$B"
+  run_raw_c10 "$SEED" "$BUDGET" derpp --buffer_size "$D"
+  [ "$K" -ge 1 ] && run_raw_c10 "$SEED" "$BUDGET" icarl --icarl_k "$K"
+  run_raw_c10 "$SEED" "$BUDGET" latent_replay --buffer_size "$L"
+  run_raw_c10 "$SEED" "$BUDGET" palmoe --proto_size "$P" --proto_samples "$PS"
+  run_raw_c10 "$SEED" "$BUDGET" hybrid --proto_size "$H" --proto_samples "$PS"
+done
+
+# CIFAR-100 raw pipeline, seed 42 only (20 tasks, ~3-4 min per method).
+run_raw_c100() { # budget method extra...
+  local BUDGET=$1 METHOD=$2; shift 2
+  $PY experiments/run_benchmark.py --config configs/cifar100_resnet18_frozen_raw.json \
+    --device cuda --track_routing --methods "$METHOD" \
+    --output_dir "results/equalbyte_raw/c100r18/s42_b${BUDGET}_${METHOD}" "$@" \
+    || echo "FAILED raw c100 b${BUDGET} ${METHOD}"
+}
+step "E4-raw equal-byte CIFAR-100 ResNet-18, raw pipeline (seed 42, 1 MiB)"
+BUDGET=1048576
+B=$((BUDGET / 12296)); D=$((BUDGET / 12696)); K=$((BUDGET / 1229600))
+L=$((BUDGET / 1032)); P=$((BUDGET / 4175)); H=$((BUDGET / 14472))
+PS=$((P / 20 * 2)); [ "$PS" -lt 128 ] && PS=128
+run_raw_c100 "$BUDGET" replay --buffer_size "$B"
+run_raw_c100 "$BUDGET" derpp --buffer_size "$D"
+[ "$K" -ge 1 ] && run_raw_c100 "$BUDGET" icarl --icarl_k "$K"
+run_raw_c100 "$BUDGET" latent_replay --buffer_size "$L"
+run_raw_c100 "$BUDGET" palmoe --proto_size "$P" --proto_samples "$PS"
+run_raw_c100 "$BUDGET" hybrid --proto_size "$H" --proto_samples "$PS"
+
+# ---------------------------------------------------------------- E4-hybrid
+# True hybrid vs pure in the raw pipeline (default proto_size), the rows the
+# feature-cached tables cannot provide. CIFAR-10 + CIFAR-100, seeds 42 1 2.
+step "True hybrid vs pure, raw pipeline, CIFAR-10/100 ResNet-18, seeds 42 1 2"
+for SEED in 42 1 2; do
+  $PY experiments/run_benchmark.py --config configs/cifar10_resnet18_frozen_raw.json \
+    --device cuda --methods palmoe,hybrid --track_routing --seed "$SEED" \
+    --output_dir "results/hybrid_raw/c10r18/seed${SEED}" || echo "FAILED hybrid_raw c10 ${SEED}"
+  $PY experiments/run_benchmark.py --config configs/cifar100_resnet18_frozen_raw.json \
+    --device cuda --methods palmoe,hybrid --track_routing --seed "$SEED" \
+    --output_dir "results/hybrid_raw/c100r18/seed${SEED}" || echo "FAILED hybrid_raw c100 ${SEED}"
+done
 
 # ---------------------------------------------------------------- E12
 step "E12 MIR (Maximally Interfered Retrieval), CIFAR-10/100 ResNet-18, seeds 42 1 2"
@@ -50,33 +120,6 @@ for SEED in 42 1 2; do
   $PY experiments/run_benchmark.py --config configs/cifar100_resnet18_frozen.json \
     --device cuda --methods mir --seed "$SEED" \
     --output_dir "results/mir/c100r18/seed${SEED}" || echo "FAILED mir c100 ${SEED}"
-done
-
-# ---------------------------------------------------------------- E4c
-# Equal-byte latent replay (single head): one stored latent = 256*4 + 8 label
-# bytes = 1032 B, so at equal bytes it can store ~12x more items than raw ER.
-run_latent() { # dataset seed budget extra...
-  local DATASET=$1 SEED=$2 BUDGET=$3; shift 3
-  local CFG="configs/cifar10_resnet18_frozen.json"
-  [ "$DATASET" = "c100r18" ] && CFG="configs/cifar100_resnet18_frozen.json"
-  local B=$((BUDGET / 1032))
-  $PY experiments/run_benchmark.py --config "$CFG" --device cuda \
-    --methods latent_replay --buffer_size "$B" \
-    --output_dir "results/equalbyte/${DATASET}/s${SEED}_b${BUDGET}_latent_replay" \
-    || echo "FAILED latent ${DATASET} s${SEED} b${BUDGET}"
-}
-step "E4c equal-byte latent replay, CIFAR-10 ResNet-18 (seed 42, four budgets)"
-for BUDGET in 262144 1048576 4194304 16777216; do
-  run_latent c10r18 42 "$BUDGET"
-done
-step "E4c equal-byte latent replay, CIFAR-100 ResNet-18 (seed 42, three budgets)"
-for BUDGET in 262144 1048576 4194304; do
-  run_latent c100r18 42 "$BUDGET"
-done
-step "E4c equal-byte latent replay, seeds 1 2 at 1 MiB"
-for SEED in 1 2; do
-  run_latent c10r18 "$SEED" 1048576
-  run_latent c100r18 "$SEED" 1048576
 done
 
 # ---------------------------------------------------------------- E10
@@ -135,8 +178,6 @@ for SEED in 42 1 2 3 4; do
 done
 
 # ---------------------------------------------------------------- E8b
-# True latent-drift cell: the encoder is trainable (no feature cache), so the
-# stored prototypes/exemplars genuinely go stale. Single seed pilot.
 step "E8b trainable-encoder drift cell, CIFAR-10 ResNet-18, seed 42"
 $PY experiments/run_benchmark.py --config configs/cifar10_resnet18_trainable.json \
   --device cuda --methods palmoe,hybrid --track_routing --seed 42 \

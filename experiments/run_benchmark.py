@@ -461,6 +461,13 @@ def _run_palmoe_variant(
         candidate_pool=args.proto_candidate_pool,
         eviction=args.proto_eviction,
     )
+    if replay and args.feature_cache:
+        print(
+            "  [hybrid] --feature_cache is on: raw inputs are not cached, so the "
+            "hybrid's raw store is disabled. This variant is 'pure + latent-exemplar "
+            "replay', NOT raw-exemplar replay; run without --feature_cache for the "
+            "true hybrid."
+        )
     if args.trigger == "energy":
         trigger = EnergyTrigger(threshold=args.energy_threshold)
     elif args.trigger == "always" or args.expand_every_task:
@@ -633,6 +640,7 @@ def _run_palmoe_variant(
     result["specialization_mi"] = mi
     result["utilization"] = util
     result["prototype_elements"] = footprint["total_elements"]
+    result["stores_raw"] = bool(memory.store_raw)
     result["fit_seconds"] = round(time.time() - t0, 1)
     result.update(tracking)
     if args.track_routing:
@@ -740,6 +748,13 @@ def run_benchmark(
     # default values reproduce the published keys exactly.
     replay_budget = args.buffer_size if args.buffer_size is not None else 250
     icarl_k = args.icarl_k if args.icarl_k is not None else 25
+    # Under --feature_cache the raw store is disabled (no raw inputs to cache),
+    # so the "hybrid" is really pure + latent-exemplar replay; name it honestly.
+    hybrid_name = (
+        f"PAL-MoE + Latent Replay (P={args.proto_size})"
+        if args.feature_cache
+        else f"PAL-MoE + Replay (Hybrid, P={args.proto_size})"
+    )
     method_keys = {
         "naive": "Naive Fine-tuning",
         "ewc": "EWC",
@@ -755,7 +770,7 @@ def run_benchmark(
         "mir": f"MIR (P={replay_budget})",
         "stdmoe": "Standard MoE",
         "palmoe": "PAL-MoE (Ours)",
-        "hybrid": f"PAL-MoE + Replay (Hybrid, P={args.proto_size})",
+        "hybrid": hybrid_name,
     }
 
     pin_memory = device.type == "cuda"
