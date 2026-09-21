@@ -25,6 +25,33 @@ for SEED in 42 1 2; do
     --output_dir "results/mir/c100r18/seed${SEED}" || echo "FAILED mir c100 ${SEED}"
 done
 
+# ---------------------------------------------------------------- E4c
+# Equal-byte latent replay (single head): one stored latent = 256*4 + 8 label
+# bytes = 1032 B, so at equal bytes it can store ~12x more items than raw ER.
+run_latent() { # dataset seed budget extra...
+  local DATASET=$1 SEED=$2 BUDGET=$3; shift 3
+  local CFG="configs/cifar10_resnet18_frozen.json"
+  [ "$DATASET" = "c100r18" ] && CFG="configs/cifar100_resnet18_frozen.json"
+  local B=$((BUDGET / 1032))
+  $PY experiments/run_benchmark.py --config "$CFG" --device cuda \
+    --methods latent_replay --buffer_size "$B" \
+    --output_dir "results/equalbyte/${DATASET}/s${SEED}_b${BUDGET}_latent_replay" \
+    || echo "FAILED latent ${DATASET} s${SEED} b${BUDGET}"
+}
+step "E4c equal-byte latent replay, CIFAR-10 ResNet-18 (seed 42, four budgets)"
+for BUDGET in 262144 1048576 4194304 16777216; do
+  run_latent c10r18 42 "$BUDGET"
+done
+step "E4c equal-byte latent replay, CIFAR-100 ResNet-18 (seed 42, three budgets)"
+for BUDGET in 262144 1048576 4194304; do
+  run_latent c100r18 42 "$BUDGET"
+done
+step "E4c equal-byte latent replay, seeds 1 2 at 1 MiB"
+for SEED in 1 2; do
+  run_latent c10r18 "$SEED" 1048576
+  run_latent c100r18 "$SEED" 1048576
+done
+
 # ---------------------------------------------------------------- E10
 step "E10 Tiny-ImageNet 20x10 class-IL (frozen ImageNet ResNet-18, 64px, shared cache)"
 for SEED in 42 1 2; do
