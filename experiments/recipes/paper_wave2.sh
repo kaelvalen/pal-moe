@@ -107,4 +107,21 @@ for SEED in 42 1 2 3 4; do
     --output_dir "results/mnist_domainshift_multiseed/seed${SEED}" || echo "FAILED domainshift ${SEED}"
 done
 
+# ---------------------------------------------------------------- E8b
+# True latent-drift cell: the encoder is trainable (no feature cache), so the
+# stored prototypes/exemplars genuinely go stale. Single seed pilot.
+step "E8b trainable-encoder drift cell, CIFAR-10 ResNet-18, seed 42"
+$PY experiments/run_benchmark.py --config configs/cifar10_resnet18_trainable.json \
+  --device cuda --methods palmoe,hybrid --track_routing --seed 42 \
+  --output_dir results/drift/trainable_c10r18/seed42 || echo "FAILED E8b"
+
+# ---------------------------------------------------------------- AO10
+step "AO10 buffer-sampling appendix (reservoir vs recency), seed 42"
+$PY experiments/run_benchmark.py --config configs/cifar10_resnet18_frozen.json \
+  --device cuda --methods replay250,derpp --buffer_sampling reservoir \
+  --output_dir results/appendix/reservoir/seed42 || echo "FAILED AO10"
+$PY experiments/run_benchmark.py --config configs/cifar10_resnet18_frozen.json \
+  --device cuda --methods ewc --ewc_online \
+  --output_dir results/appendix/ewc_online/seed42 || echo "FAILED AO10 ewc"
+
 step "PAPER_WAVE2_DONE $(date '+%F %T')"
