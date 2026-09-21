@@ -590,6 +590,30 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     keeps the lowest forgetting. 3-seed validation of this backbone is the next
     run.
 
+18. **Frozen ViT-B/16 promotion (3 seeds, one expert per task).** The ViT
+    results were previously single-seed and undocumented. Re-run in one session
+    on `configs/cifar10_vit.json` (frozen ImageNet ViT-B/16, feature cache
+    shared across seeds because the projection is the identity, 15 epochs/task,
+    `--expand_every_task --max_experts 5`), seeds 42 1 2
+    (`results/cifar10_vit_multiseed`, git `bfd71d0`):
+
+    | Method | Avg Acc | Forgetting | Data bytes |
+    | :-- | :--: | :--: | --: |
+    | Naive Fine-tuning | 24.17 ± 0.64% | 93.86 ± 0.78% | 0 |
+    | EWC | 23.72 ± 2.75% | 94.42 ± 3.44% | 0 |
+    | DER++ (P=250) | 73.28 ± 0.31% | 32.10 ± 0.34% | 0.78 MB |
+    | Experience Replay (P=250) | 82.89 ± 0.10% | 20.29 ± 0.17% | 0.77 MB |
+    | iCaRL (k=25) | 84.18 ± 0.00% | 10.38 ± 0.00% | 0.80 MB |
+    | **PAL-MoE (pure)** | **91.74 ± 0.28%** | **5.61 ± 0.12%** | **6.37 MB** |
+
+    PAL-MoE pure beats the best baseline (iCaRL) by 7.6 accuracy points with
+    about half its forgetting, storing no raw inputs. The new byte column also
+    shows the honest caveat: at this geometry PAL stores ~8x the data bytes of
+    the replay baselines, so this table is item-budget matched, not byte
+    matched. The equal-byte Pareto (EXPERIMENT_PLAN.md, E4) is the fair
+    comparison. iCaRL's zero variance is expected: the frozen ViT features are
+    seed-independent and herding is deterministic.
+
 ## Ablations
 
 `experiments/run_ablation.py` sweeps loss components, expert-init strategy,
