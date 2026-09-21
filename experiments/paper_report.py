@@ -273,6 +273,46 @@ def simple_group_section(root: str, group: str, title: str, lines: list[str]) ->
         lines.append("")
 
 
+def routing_matrix_section(root: str, lines: list[str]) -> None:
+    """Mean row-normalised (task x expert) routing shares for the growth runs."""
+    base = os.path.join(root, "growth")
+    if not os.path.isdir(base):
+        return
+    lines.append("### Final routing matrices (task x expert, row-normalised)")
+    lines.append("")
+    for protocol in sorted(os.listdir(base)):
+        proto_dir = os.path.join(base, protocol)
+        matrices: dict[str, list] = defaultdict(list)
+        for _, _, data in _iter_result_files(proto_dir):
+            for method, row in data.items():
+                diag = row.get("router_diagnostics") or {}
+                counts = diag.get("task_expert_counts")
+                if not counts:
+                    continue
+                arr = np.asarray(counts, dtype=float)
+                row_sums = arr.sum(axis=1, keepdims=True)
+                shares = np.divide(
+                    arr, row_sums, out=np.zeros_like(arr), where=row_sums > 0
+                )
+                matrices[method].append(shares)
+        for method in sorted(matrices):
+            stack = np.stack(matrices[method], axis=0)
+            mean = stack.mean(axis=0)
+            n_experts = mean.shape[1]
+            lines.append(f"**{protocol} — {method}**")
+            lines.append("")
+            lines.append(
+                "| Task | " + " | ".join(f"E{j}" for j in range(n_experts)) + " |"
+            )
+            lines.append(
+                "| --: | " + " | ".join("--:" for _ in range(n_experts)) + " |"
+            )
+            for t in range(mean.shape[0]):
+                cells = " | ".join(f"{mean[t, j]:.2f}" for j in range(n_experts))
+                lines.append(f"| {t} | {cells} |")
+            lines.append("")
+
+
 def latency_section(root: str, lines: list[str]) -> None:
     base = os.path.join(root, "latency")
     if not os.path.isdir(base):
@@ -343,6 +383,7 @@ def main() -> None:
     lines.append("## Expert growth / reuse")
     lines.append("")
     growth_section(args.results_dir, lines)
+    routing_matrix_section(args.results_dir, lines)
     lines.append("## Component ablation (final recipe)")
     lines.append("")
     simple_group_section(
