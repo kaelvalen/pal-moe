@@ -121,9 +121,9 @@ def test_prototype_routing_confidence_scales_with_ambiguity():
     model.set_prototype_routing(memory, alpha=1.0)
     with torch.no_grad():
         anchors, confidence = model._prototype_routing_anchor(query.unsqueeze(0))
-    assert confidence.item() < 0.05, (
-        f"ambiguous input should not be anchored: {confidence}"
-    )
+    assert (
+        confidence.item() < 0.05
+    ), f"ambiguous input should not be anchored: {confidence}"
     assert anchors.shape == (1, 2)
 
 
@@ -1471,9 +1471,9 @@ def test_inference_paths_restore_training_mode():
     builder.train_candidate(child, enc, loader, epochs=1, device=torch.device("cpu"))
     assert enc.training, "train_candidate must restore the encoder mode"
     builder.validate_candidate(child, moe.experts[0], enc, loader, None)
-    assert enc.training and moe.experts[0].training and child.training, (
-        "validate_candidate must restore all module modes"
-    )
+    assert (
+        enc.training and moe.experts[0].training and child.training
+    ), "validate_candidate must restore all module modes"
 
 
 def test_train_task_runs_in_training_mode_after_expansion():
@@ -2489,9 +2489,9 @@ def test_energy_trigger_flags_out_of_distribution_batches():
     ref_mean = trigger.stats.mean
     res = trigger.evaluate(moe, torch.randn(32, 16) * 100.0)
     assert res.should_trigger, "high-energy OOD batch should trigger expansion"
-    assert trigger.stats.mean == ref_mean, (
-        "triggered batches must not update the reference"
-    )
+    assert (
+        trigger.stats.mean == ref_mean
+    ), "triggered batches must not update the reference"
 
 
 def test_router_learnable_temperature():
