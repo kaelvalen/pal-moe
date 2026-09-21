@@ -75,6 +75,10 @@ class DERPP:
     ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
         return self.buffer.sample_tensors(batch_size, self.device)
 
+    def memory_bytes(self) -> int:
+        """Stored exemplars plus the cached logits (DER++ keeps both)."""
+        return self.buffer.memory_bytes()
+
     def train_task(
         self, task_id: int, train_loader: Any, epochs: int = 5
     ) -> dict[str, Any]:
@@ -147,6 +151,10 @@ class ERACE:
     ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         bx, by, _ = self.buffer.sample_tensors(batch_size, self.device)
         return bx, by
+
+    def memory_bytes(self) -> int:
+        """Stored exemplar bytes."""
+        return self.buffer.memory_bytes()
 
     def train_task(
         self,

@@ -2,6 +2,7 @@ from .agem import AGEM
 from .der import DERPP, ERACE
 from .ewc import EWC
 from .icarl import ICaRL
+from .latent_replay import LatentReplayTrainer
 from .naive import NaiveFineTuning
 from .replay import ReplayTrainer
 
@@ -13,4 +14,5 @@ __all__ = [
     "ERACE",
     "AGEM",
     "ICaRL",
+    "LatentReplayTrainer",
 ]

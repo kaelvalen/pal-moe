@@ -59,6 +59,10 @@ class ReplayTrainer:
         bx, by, _ = self.buffer.sample_tensors(batch_size, self.device)
         return bx, by
 
+    def memory_bytes(self) -> int:
+        """Stored exemplar bytes (the only persistent state this baseline keeps)."""
+        return self.buffer.memory_bytes()
+
     def train_task(
         self, task_id: int, train_loader: Any, epochs: int = 5
     ) -> dict[str, Any]:

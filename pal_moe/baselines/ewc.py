@@ -93,6 +93,15 @@ class EWC:
                     loss += (fisher[n] * (p - star[n]) ** 2).sum()
         return loss * (self.ewc_lambda / 2.0)
 
+    def memory_bytes(self) -> int:
+        """Stored regularization state: one Fisher + one parameter snapshot per
+        task (or a single pair with ``online=True``)."""
+        total = 0
+        for state in self.fisher_matrices + self.star_params:
+            for tensor in state.values():
+                total += tensor.numel() * tensor.element_size()
+        return int(total)
+
     def train_task(
         self, task_id: int, train_loader: Any, epochs: int = 5
     ) -> dict[str, Any]:

@@ -3055,3 +3055,66 @@ def test_feature_cache_persistence_roundtrip(tmp_path):
         )
         is None
     )
+
+
+def test_stored_memory_accounting():
+    """Every memory-carrying baseline reports the bytes it actually stores."""
+    from pal_moe.baselines.buffer import SampleBuffer
+    from pal_moe.baselines.ewc import EWC
+    from pal_moe.baselines.icarl import ICaRL
+
+    buf = SampleBuffer(4, mode="recency")
+    assert buf.memory_bytes() == 0
+    x = torch.zeros(2, 3, 4, 4)
+    y = torch.tensor([0, 1])
+    logits = torch.zeros(2, 10)
+    buf.add_task(x, y, logits, per_task_budget=2)
+    expected = (2 * 3 * 4 * 4 + 2 * 10) * 4 + 2 * 8  # labels are int64
+    assert buf.memory_bytes() == expected
+
+    net = nn.Sequential(nn.Linear(4, 3))
+    ewc = EWC(net, lr=1e-3, device=torch.device("cpu"))
+    assert ewc.memory_bytes() == 0
+    loader = [(torch.randn(8, 4), torch.randint(0, 3, (8,)))]
+    ewc.compute_fisher(loader)
+    assert ewc.memory_bytes() > 0
+
+    icarl = ICaRL(
+        nn.Sequential(nn.Linear(4, 4), MLPExpert(4, 8, 3)),
+        exemplars_per_class=1,
+        num_classes=3,
+        lr=1e-3,
+        device=torch.device("cpu"),
+    )
+    icarl.exemplars = {0: [torch.zeros(3, 4, 4)]}
+    assert icarl.memory_bytes() > 0
+    assert icarl.snapshot_bytes() == 0
+    import copy
+
+    icarl.old_model = copy.deepcopy(icarl.wrapper)
+    assert icarl.snapshot_bytes() > 0
+
+
+def test_latent_replay_trainer():
+    from pal_moe.baselines.latent_replay import LatentReplayTrainer
+
+    encoder = SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=4)
+    net = nn.Sequential(
+        encoder, MLPExpert(input_dim=4, hidden_dim=8, num_classes=3, expert_id=0)
+    )
+    trainer = LatentReplayTrainer(
+        net,
+        encoder_fn=lambda x: net[0](x),
+        head=net[1],
+        buffer_size=10,
+        lr=1e-3,
+        device=torch.device("cpu"),
+    )
+    assert trainer.memory_bytes() == 0
+    loader = [(torch.randn(6, 16), torch.randint(0, 3, (6,))) for _ in range(2)]
+    trainer.train_task(0, loader, epochs=1)
+    assert trainer.memory_bytes() > 0
+    h, y = trainer.get_replay_batch(4)
+    assert h is not None and h.shape[1] == 4
+    assert y is not None and y.shape[0] == h.shape[0]
+

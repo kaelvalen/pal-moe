@@ -103,6 +103,13 @@ class SampleBuffer:
             bl = torch.stack([self.logits[i] for i in indices]).to(device)
         return bx, by, bl
 
+    def memory_bytes(self) -> int:
+        """Bytes actually held by the stored exemplars (x, y and optional logits)."""
+        total = 0
+        for tensor in self.x + self.y + self.logits:
+            total += tensor.numel() * tensor.element_size()
+        return int(total)
+
 
 def task_class_counts(buffer: SampleBuffer, num_classes: int) -> list[int]:
     """Debug helper: class histogram of the stored labels."""

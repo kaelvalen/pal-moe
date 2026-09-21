@@ -51,6 +51,10 @@ class AGEM:
         rx, ry, _ = self.buffer.sample_tensors(batch_size, self.device)
         return rx, ry
 
+    def memory_bytes(self) -> int:
+        """Stored exemplar bytes."""
+        return self.buffer.memory_bytes()
+
     def _flatten_grad(self) -> torch.Tensor:
         return torch.cat(
             [p.grad.flatten() for p in self.model.parameters() if p.grad is not None]

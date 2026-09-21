@@ -194,3 +194,21 @@ class ICaRL:
     def eval_model(self) -> ICaRLWrapper:
         self.wrapper.eval()
         return self.wrapper
+
+    def memory_bytes(self) -> int:
+        """Raw exemplars plus the class means (the persistent iCaRL store)."""
+        total = 0
+        for exemplars in self.exemplars.values():
+            for e in exemplars:
+                total += e.numel() * e.element_size()
+        means = self.wrapper.class_means
+        total += means.numel() * means.element_size()
+        return int(total)
+
+    def snapshot_bytes(self) -> int:
+        """Parameter bytes of the distillation snapshot (`old_model`)."""
+        if self.old_model is None:
+            return 0
+        return int(
+            sum(p.numel() * p.element_size() for p in self.old_model.parameters())
+        )
