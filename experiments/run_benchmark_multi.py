@@ -135,6 +135,27 @@ def main():
     parser.add_argument("--conv_channels", type=str, default="32,64,128")
     parser.add_argument("--proto_size", type=int, default=250)
     parser.add_argument(
+        "--buffer_size",
+        type=int,
+        default=None,
+        help="Replay-family budget override (generic ids); forwarded to the runner",
+    )
+    parser.add_argument(
+        "--icarl_k",
+        type=int,
+        default=None,
+        help="iCaRL exemplars per class override; forwarded to the runner",
+    )
+    parser.add_argument(
+        "--track_routing",
+        action="store_true",
+        default=False,
+        help="Record per-task routing retention/expert counts (results-neutral)",
+    )
+    parser.add_argument("--data_dir", type=str, default="./data")
+    parser.add_argument("--classes_per_task", type=int, default=2)
+    parser.add_argument("--image_size", type=int, default=64)
+    parser.add_argument(
         "--pretrain_epochs",
         type=int,
         default=None,
@@ -222,6 +243,18 @@ def main():
             "--proto_size",
             str(args.proto_size),
         ]
+        if args.buffer_size is not None:
+            cmd += ["--buffer_size", str(args.buffer_size)]
+        if args.icarl_k is not None:
+            cmd += ["--icarl_k", str(args.icarl_k)]
+        if args.track_routing:
+            cmd.append("--track_routing")
+        if args.data_dir != "./data":
+            cmd += ["--data_dir", args.data_dir]
+        if args.classes_per_task != 2:
+            cmd += ["--classes_per_task", str(args.classes_per_task)]
+        if args.image_size != 64:
+            cmd += ["--image_size", str(args.image_size)]
         if args.methods:
             cmd += ["--methods", args.methods]
         if args.pretrain_epochs is not None:

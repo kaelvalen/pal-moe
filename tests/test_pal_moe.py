@@ -3118,3 +3118,60 @@ def test_latent_replay_trainer():
     assert h is not None and h.shape[1] == 4
     assert y is not None and y.shape[0] == h.shape[0]
 
+
+def test_split_folder_tasks(tmp_path):
+    from PIL import Image
+
+    from pal_moe.data.split_folder import get_split_folder_tasks
+
+    for cls in ("a", "b", "c", "d"):
+        cls_dir = tmp_path / cls
+        cls_dir.mkdir()
+        for i in range(6):
+            Image.new("RGB", (8, 8), color=(i * 30, 10, 20)).save(cls_dir / f"{i}.png")
+
+    tasks = get_split_folder_tasks(
+        str(tmp_path),
+        batch_size=4,
+        val_split=0.25,
+        test_split=0.25,
+        classes_per_task=2,
+        num_workers=0,
+    )
+    assert len(tasks) == 2
+    assert tasks[0].classes == (0, 1)
+    assert tasks[1].classes == (2, 3)
+    x, y = next(iter(tasks[0].train_loader))
+    assert x.shape[1:] == (3, 32, 32)
+    assert x.dtype == torch.float32
+
+
+def test_routing_probe_helper():
+    """The retention probe returns a fixed top-1 assignment per probed task."""
+    import importlib.util
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location(
+        "bench_runner", root / "experiments" / "run_benchmark.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    model = DynamicMoE(
+        encoder=SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=4),
+        router=DynamicRouter(input_dim=4, num_experts=2, top_k=1),
+        experts=[
+            MLPExpert(input_dim=4, hidden_dim=8, num_classes=3, expert_id=i)
+            for i in range(2)
+        ],
+    )
+
+    class _Task:
+        def __init__(self):
+            self.test_loader = [(torch.randn(5, 16), torch.zeros(5, dtype=torch.long))]
+
+    routes = mod._routing_probe(model, [_Task(), _Task()], torch.device("cpu"), upto=1)
+    assert set(routes) == {0, 1}
+    assert routes[0].shape == (5,)
+    assert int(routes[0].max()) < 2

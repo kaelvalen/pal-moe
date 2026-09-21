@@ -32,6 +32,7 @@ from pal_moe.baselines.agem import AGEM
 from pal_moe.baselines.der import DERPP, ERACE
 from pal_moe.baselines.ewc import EWC
 from pal_moe.baselines.icarl import ICaRL
+from pal_moe.baselines.latent_replay import LatentReplayTrainer
 from pal_moe.baselines.naive import NaiveFineTuning
 from pal_moe.baselines.replay import ReplayTrainer
 from pal_moe.builder.expert_builder import ExpertBuilder
@@ -109,7 +110,11 @@ def _active_params_per_sample(model: nn.Module) -> int:
 
 
 def _record_baseline_result(
-    model: nn.Module, evaluator: ContinualEvaluator, final_experts: int = 1
+    model: nn.Module,
+    evaluator: ContinualEvaluator,
+    final_experts: int = 1,
+    memory_bytes: int = 0,
+    state_bytes: int = 0,
 ) -> dict:
     """
     Common result payload.
@@ -118,6 +123,11 @@ def _record_baseline_result(
     receives gradients at the end of training (historical experts are frozen);
     `active_params` is the per-sample forward cost. Reporting all three avoids
     the "frozen experts are invisible" trap in compute-matched comparisons.
+
+    `memory_bytes` is the stored *data* memory (replay buffer, exemplars,
+    prototypes); `state_bytes` is stored non-model state (EWC Fisher matrices,
+    iCaRL's distillation snapshot); `stored_bytes` is their sum. Model
+    parameters are reported separately through the three param counts.
     """
     return {
         "acc": evaluator.compute_average_accuracy(),
@@ -132,6 +142,9 @@ def _record_baseline_result(
             sum(p.numel() for p in model.parameters() if p.requires_grad)
         ),
         "active_params": _active_params_per_sample(model),
+        "memory_bytes": int(memory_bytes),
+        "state_bytes": int(state_bytes),
+        "stored_bytes": int(memory_bytes) + int(state_bytes),
         "fit_seconds": getattr(evaluator, "fit_seconds", None),
         "geometry": getattr(evaluator, "geometry", None),
         "acc_matrix": evaluator.R.tolist(),
@@ -193,6 +206,39 @@ def _run_baseline_loop(
     evaluator.geometry = _test_geometry(
         model, tasks, getattr(trainer, "device", None) or torch.device("cpu")
     )
+
+
+@torch.no_grad()
+def _routing_probe(
+    model: nn.Module,
+    tasks: list,
+    device: torch.device,
+    upto: int,
+    batches_per_task: int = 2,
+) -> dict:
+    """
+    Top-1 expert assigned to a fixed probe set (the first `batches_per_task`
+    test batches of every task up to `upto`).
+
+    The same probe set is re-evaluated at every task boundary, so comparing
+    consecutive snapshots measures how much historical routing changed
+    (routing retention RR_t). Results-neutral: no training and no RNG use.
+    """
+    if not hasattr(model, "get_routing_features") or not hasattr(model, "router"):
+        return {}
+    model.eval()
+    routes = {}
+    for task_idx in range(upto + 1):
+        chunks = []
+        for batch_idx, (x, _) in enumerate(tasks[task_idx].test_loader):
+            if batch_idx >= batches_per_task:
+                break
+            h = model.get_routing_features(x.to(device))
+            _, topk_idx, _ = model.router(h)
+            chunks.append(topk_idx[:, 0].detach().cpu())
+        if chunks:
+            routes[task_idx] = torch.cat(chunks)
+    return routes
 
 
 def _pretrain_cache_path(
@@ -499,6 +545,15 @@ def _run_palmoe_variant(
     elif args.eval_head == "bias":
         eval_head = BiasCorrectionHead(model, memory, num_classes).to(device)
 
+    tracking = {
+        "experts_per_task": [],
+        "expansions_per_task": [],
+        "gate_rejections_per_task": [],
+        "trigger_events_per_task": [],
+    }
+    routing_retention: list[float] = []
+    prev_routes: Optional[dict] = None
+
     t0 = time.time()
     for t_idx, task in enumerate(tasks):
         print(
@@ -518,6 +573,10 @@ def _run_palmoe_variant(
             f"{hist['experts_added']} | Gate rejects: {hist['gate_rejections']} | "
             f"Total experts: {model.num_experts}"
         )
+        tracking["experts_per_task"].append(int(model.num_experts))
+        tracking["expansions_per_task"].append(int(hist["experts_added"]))
+        tracking["gate_rejections_per_task"].append(int(hist["gate_rejections"]))
+        tracking["trigger_events_per_task"].append(int(hist["trigger_events"]))
         if args.proto_routing_auto:
             alpha = model.calibrate_prototype_routing()
             print(f"    [routing] calibrated prototype anchoring alpha = {alpha:.2f}")
@@ -539,6 +598,19 @@ def _run_palmoe_variant(
             accs = evaluator.evaluate_all_seen_tasks(model, t_idx, tasks)
         print(f"  Accuracies after Task {t_idx}: {[f'{a:.1%}' for a in accs]}")
 
+        if args.track_routing:
+            snapshot = _routing_probe(model, tasks, device, upto=t_idx)
+            if prev_routes:
+                retained = [
+                    float((routes == prev_routes[i]).float().mean())
+                    for i, routes in snapshot.items()
+                    if i in prev_routes
+                ]
+                routing_retention.append(float(np.mean(retained)) if retained else 1.0)
+            else:
+                routing_retention.append(1.0)
+            prev_routes = snapshot
+
     router_kl = ContinualEvaluator.compute_router_stability(model, memory, device)
     mi, util = ContinualEvaluator.compute_expert_specialization_and_utilization(
         model, tasks, device
@@ -550,12 +622,20 @@ def _run_palmoe_variant(
     )
 
     evaluator.geometry = _test_geometry(model, tasks, device)
-    result = _record_baseline_result(model, evaluator, final_experts=model.num_experts)
+    result = _record_baseline_result(
+        model,
+        evaluator,
+        final_experts=model.num_experts,
+        memory_bytes=footprint["total_elements"] * 4,
+    )
     result["router_stability_kl"] = router_kl
     result["specialization_mi"] = mi
     result["utilization"] = util
     result["prototype_elements"] = footprint["total_elements"]
     result["fit_seconds"] = round(time.time() - t0, 1)
+    result.update(tracking)
+    if args.track_routing:
+        result["routing_retention"] = routing_retention
 
     diagnostics = router_diagnostics(model, tasks, device, memory)
     print_router_diagnostics(diagnostics)
@@ -645,19 +725,27 @@ def run_benchmark(
         """Whether a method block is enabled (empty --methods = run everything)."""
         return selected is None or method_id in selected
 
+    # Replay-family budget: --buffer_size overrides the generic ids (replay,
+    # derpp, erace, agem, latent_replay) while replay60/replay360 keep their
+    # published sizes. --icarl_k overrides the per-class exemplar count. The
+    # default values reproduce the published keys exactly.
+    replay_budget = args.buffer_size if args.buffer_size is not None else 250
+    icarl_k = args.icarl_k if args.icarl_k is not None else 25
     method_keys = {
         "naive": "Naive Fine-tuning",
         "ewc": "EWC",
         "replay60": "Replay (P=60)",
         "replay360": "Replay (P=360)",
         "replay250": "Experience Replay (Buffer=250)",
-        "derpp": "DER++ (P=250)",
-        "erace": "ER-ACE (P=250)",
-        "agem": "AGEM (P=250)",
-        "icarl": "iCaRL (k=25)",
+        "replay": f"Experience Replay (Buffer={replay_budget})",
+        "derpp": f"DER++ (P={replay_budget})",
+        "erace": f"ER-ACE (P={replay_budget})",
+        "agem": f"AGEM (P={replay_budget})",
+        "icarl": f"iCaRL (k={icarl_k})",
+        "latent_replay": f"Latent Replay (P={replay_budget})",
         "stdmoe": "Standard MoE",
         "palmoe": "PAL-MoE (Ours)",
-        "hybrid": "PAL-MoE + Replay (Hybrid, P=250)",
+        "hybrid": f"PAL-MoE + Replay (Hybrid, P={args.proto_size})",
     }
 
     pin_memory = device.type == "cuda"
@@ -766,6 +854,52 @@ def run_benchmark(
                 use_cache=args.pretrain_cache,
             )
         # encoder stays unfrozen (adapts online)
+    elif dataset == "folder":
+        from torchvision import transforms
+
+        from pal_moe.data.split_folder import get_split_folder_tasks
+
+        transform = transforms.Compose(
+            [
+                transforms.Resize((args.image_size, args.image_size)),
+                transforms.ToTensor(),
+            ]
+        )
+        tasks = get_split_folder_tasks(
+            data_dir=args.data_dir,
+            batch_size=128,
+            val_split=0.1,
+            test_split=0.1,
+            classes_per_task=args.classes_per_task,
+            seed=args.seed,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
+            transform=transform,
+        )
+        num_tasks = len(tasks)
+        num_classes = num_tasks * args.classes_per_task
+        input_dim = 3 * args.image_size * args.image_size
+        unlabeled_loader = torch.utils.data.DataLoader(
+            tasks[0].train_loader.dataset.dataset,
+            batch_size=256,
+            shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
+        )
+        base_encoder = _build_base_encoder(input_dim)
+        if external_encoder_state is None and args.encoder_weights != "imagenet":
+            _pretrain_encoder(
+                base_encoder,
+                unlabeled_loader,
+                device,
+                dataset=dataset,
+                mode="simclr",
+                seed=args.seed,
+                epochs=pretrain_epochs,
+                feature_dim=feature_dim,
+                conv_channels=conv_channels,
+                use_cache=args.pretrain_cache,
+            )
     else:
         tasks = get_split_mnist_tasks(
             data_dir="./data",
@@ -927,7 +1061,9 @@ def run_benchmark(
         )
         evaluator_ewc = ContinualEvaluator(num_tasks=num_tasks, device=device)
         _run_baseline_loop(ewc_trainer, ewc_net, evaluator_ewc, tasks, epochs_per_task)
-        results["EWC"] = _record_baseline_result(ewc_net, evaluator_ewc)
+        results["EWC"] = _record_baseline_result(
+            ewc_net, evaluator_ewc, state_bytes=ewc_trainer.memory_bytes()
+        )
 
     # -------------------------------------------------------------
     # 3. Baseline: Experience Replay (Budgeted P=60)
@@ -954,7 +1090,9 @@ def run_benchmark(
             epochs_per_task,
         )
         results["Replay (P=60)"] = _record_baseline_result(
-            replay_net_budget, evaluator_replay_budget
+            replay_net_budget,
+            evaluator_replay_budget,
+            memory_bytes=replay_trainer_budget.memory_bytes(),
         )
 
     # -------------------------------------------------------------
@@ -982,7 +1120,9 @@ def run_benchmark(
             epochs_per_task,
         )
         results["Replay (P=360)"] = _record_baseline_result(
-            replay_net_360, evaluator_replay_360
+            replay_net_360,
+            evaluator_replay_360,
+            memory_bytes=replay_trainer_360.memory_bytes(),
         )
 
     # -------------------------------------------------------------
@@ -1006,7 +1146,67 @@ def run_benchmark(
             replay_trainer, replay_net, evaluator_replay, tasks, epochs_per_task
         )
         results["Experience Replay (Buffer=250)"] = _record_baseline_result(
-            replay_net, evaluator_replay
+            replay_net, evaluator_replay, memory_bytes=replay_trainer.memory_bytes()
+        )
+
+    # -------------------------------------------------------------
+    # 5b. Baseline: Experience Replay (generic, --buffer_size)
+    # -------------------------------------------------------------
+    if run("replay"):
+        _banner(f"Running Baseline 5b: Experience Replay (Buffer={replay_budget})")
+        set_seed(args.seed)
+        replay_net_generic = build_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
+        )
+        replay_trainer_generic = ReplayTrainer(
+            replay_net_generic,
+            buffer_size=replay_budget,
+            lr=1e-3,
+            device=device,
+            sampling=args.buffer_sampling,
+        )
+        evaluator_replay_generic = ContinualEvaluator(
+            num_tasks=num_tasks, device=device
+        )
+        _run_baseline_loop(
+            replay_trainer_generic,
+            replay_net_generic,
+            evaluator_replay_generic,
+            tasks,
+            epochs_per_task,
+        )
+        results[f"Experience Replay (Buffer={replay_budget})"] = (
+            _record_baseline_result(
+                replay_net_generic,
+                evaluator_replay_generic,
+                memory_bytes=replay_trainer_generic.memory_bytes(),
+            )
+        )
+
+    # -------------------------------------------------------------
+    # 5c. Baseline: Latent Replay (single head, stored latents)
+    # -------------------------------------------------------------
+    if run("latent_replay"):
+        _banner(f"Running Baseline 5c: Latent Replay (P={replay_budget})")
+        set_seed(args.seed)
+        latent_net = build_single_head(
+            base_encoder, feature_dim, expert_hidden, num_classes, device
+        )
+        latent_trainer = LatentReplayTrainer(
+            latent_net,
+            encoder_fn=lambda x: latent_net[0](x),
+            head=latent_net[1],
+            buffer_size=replay_budget,
+            lr=1e-3,
+            device=device,
+            sampling=args.buffer_sampling,
+        )
+        evaluator_latent = ContinualEvaluator(num_tasks=num_tasks, device=device)
+        _run_baseline_loop(
+            latent_trainer, latent_net, evaluator_latent, tasks, epochs_per_task
+        )
+        results[f"Latent Replay (P={replay_budget})"] = _record_baseline_result(
+            latent_net, evaluator_latent, memory_bytes=latent_trainer.memory_bytes()
         )
 
     # -------------------------------------------------------------
@@ -1020,14 +1220,16 @@ def run_benchmark(
         )
         der_trainer = DERPP(
             der_net,
-            buffer_size=250,
+            buffer_size=replay_budget,
             lr=1e-3,
             device=device,
             sampling=args.buffer_sampling,
         )
         evaluator_der = ContinualEvaluator(num_tasks=num_tasks, device=device)
         _run_baseline_loop(der_trainer, der_net, evaluator_der, tasks, epochs_per_task)
-        results["DER++ (P=250)"] = _record_baseline_result(der_net, evaluator_der)
+        results[f"DER++ (P={replay_budget})"] = _record_baseline_result(
+            der_net, evaluator_der, memory_bytes=der_trainer.memory_bytes()
+        )
 
     # -------------------------------------------------------------
     # 7. Baseline: ER-ACE (Asymmetric Cross-Entropy Replay, P=250)
@@ -1040,7 +1242,7 @@ def run_benchmark(
         )
         erace_trainer = ERACE(
             erace_net,
-            buffer_size=250,
+            buffer_size=replay_budget,
             lr=1e-3,
             device=device,
             sampling=args.buffer_sampling,
@@ -1054,7 +1256,9 @@ def run_benchmark(
             epochs_per_task,
             per_task_kwargs=lambda task: {"current_classes": list(task.classes)},
         )
-        results["ER-ACE (P=250)"] = _record_baseline_result(erace_net, evaluator_erace)
+        results[f"ER-ACE (P={replay_budget})"] = _record_baseline_result(
+            erace_net, evaluator_erace, memory_bytes=erace_trainer.memory_bytes()
+        )
 
     # -------------------------------------------------------------
     # 8. Baseline: AGEM (Average Gradient Episodic Memory, P=250)
@@ -1067,7 +1271,7 @@ def run_benchmark(
         )
         agem_trainer = AGEM(
             agem_net,
-            buffer_size=250,
+            buffer_size=replay_budget,
             lr=1e-3,
             device=device,
             sampling=args.buffer_sampling,
@@ -1076,7 +1280,9 @@ def run_benchmark(
         _run_baseline_loop(
             agem_trainer, agem_net, evaluator_agem, tasks, epochs_per_task
         )
-        results["AGEM (P=250)"] = _record_baseline_result(agem_net, evaluator_agem)
+        results[f"AGEM (P={replay_budget})"] = _record_baseline_result(
+            agem_net, evaluator_agem, memory_bytes=agem_trainer.memory_bytes()
+        )
 
     # -------------------------------------------------------------
     # 9. Baseline: iCaRL (Incremental Classifier & Representation Learning)
@@ -1091,7 +1297,7 @@ def run_benchmark(
         )
         icarl_trainer = ICaRL(
             icarl_net,
-            exemplars_per_class=25,
+            exemplars_per_class=icarl_k,
             num_classes=num_classes,
             lr=1e-3,
             device=device,
@@ -1106,7 +1312,12 @@ def run_benchmark(
             per_task_kwargs=lambda task: {"current_classes": list(task.classes)},
             eval_model=icarl_trainer.eval_model,
         )
-        results["iCaRL (k=25)"] = _record_baseline_result(icarl_net, evaluator_icarl)
+        results[f"iCaRL (k={icarl_k})"] = _record_baseline_result(
+            icarl_net,
+            evaluator_icarl,
+            memory_bytes=icarl_trainer.memory_bytes(),
+            state_bytes=icarl_trainer.snapshot_bytes(),
+        )
 
     # -------------------------------------------------------------
     # 10. Baseline: Standard MoE Fine-tuning (Fixed 4 Experts)
@@ -1259,7 +1470,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--output_dir", type=str, default="./results")
     parser.add_argument(
-        "--dataset", type=str, default="mnist", choices=["mnist", "cifar10", "cifar100"]
+        "--dataset",
+        type=str,
+        default="mnist",
+        choices=["mnist", "cifar10", "cifar100", "folder"],
     )
     parser.add_argument(
         "--pretrain_epochs",
@@ -1298,13 +1512,56 @@ if __name__ == "__main__":
         help="PAL-MoE prototype memory budget (also sets the hybrid's latent store size)",
     )
     parser.add_argument(
+        "--buffer_size",
+        type=int,
+        default=None,
+        help=(
+            "Override the replay-family budget for the generic ids (replay, "
+            "derpp, erace, agem, latent_replay); default 250. replay60/replay360 "
+            "keep their published sizes. Use with --methods replay for byte sweeps"
+        ),
+    )
+    parser.add_argument(
+        "--icarl_k",
+        type=int,
+        default=None,
+        help="Exemplars per class for iCaRL (default 25; lower it for byte sweeps)",
+    )
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default="./data",
+        help="Dataset root; for --dataset folder this is the ImageFolder tree",
+    )
+    parser.add_argument(
+        "--classes_per_task",
+        type=int,
+        default=2,
+        help="Classes per task for --dataset folder (must divide the class count)",
+    )
+    parser.add_argument(
+        "--image_size",
+        type=int,
+        default=64,
+        help="Input resolution for --dataset folder streams",
+    )
+    parser.add_argument(
+        "--track_routing",
+        action="store_true",
+        default=False,
+        help=(
+            "Record per-task routing retention on a fixed probe set and the "
+            "per-task expert counts (results-neutral, small evaluation overhead)"
+        ),
+    )
+    parser.add_argument(
         "--methods",
         type=str,
         default="",
         help=(
             "Comma-separated method ids to run (empty = all). Ids: naive, ewc, "
-            "replay60, replay360, replay250, derpp, erace, agem, icarl, stdmoe, "
-            "palmoe, hybrid"
+            "replay60, replay360, replay250, replay, derpp, erace, agem, icarl, "
+            "latent_replay, stdmoe, palmoe, hybrid"
         ),
     )
     parser.add_argument(
