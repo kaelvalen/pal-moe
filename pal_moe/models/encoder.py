@@ -42,6 +42,7 @@ class SharedEncoder(nn.Module):
         backbone_weights: str = "none",
         input_mean: Optional[tuple[float, ...]] = None,
         input_std: Optional[tuple[float, ...]] = None,
+        in_channels: Optional[int] = None,
     ):
         super().__init__()
         self.input_dim = input_dim
@@ -49,6 +50,10 @@ class SharedEncoder(nn.Module):
         self.arch = arch
         self.backbone_weights = backbone_weights
         self.conv_channels = tuple(conv_channels)
+        # Input channel count for conv/resnet backbones. None keeps the legacy
+        # heuristic (3072 flattened dims = RGB CIFAR, everything else = 1
+        # channel), so existing runs are unaffected; folder streams pass 3.
+        self.in_channels = in_channels
         # Dataset normalisation applied upstream (e.g. the CIFAR mean/std used
         # by the task loaders). Only the ViT preprocessor consumes these: it
         # undoes the dataset normalisation and re-applies ImageNet statistics.
@@ -84,7 +89,7 @@ class SharedEncoder(nn.Module):
             # For 3-channel (CIFAR) or 1-channel (MNIST) inputs.
             # Pools after every conv block except the last, so the default
             # (32, 64, 128) reproduces the original 3-stage architecture.
-            in_channels = 3 if input_dim == 3072 else 1
+            in_channels = self.in_channels or (3 if input_dim == 3072 else 1)
             layers = []
             prev_ch = in_channels
             for i, ch in enumerate(conv_channels):
@@ -137,7 +142,7 @@ class SharedEncoder(nn.Module):
             weights = weight_enum.IMAGENET1K_V1
         backbone = model_fn(weights=weights)
 
-        in_channels = 3 if input_dim == 3072 else 1
+        in_channels = self.in_channels or (3 if input_dim == 3072 else 1)
         if in_channels != 3:
             old_conv = backbone.conv1
             new_conv = nn.Conv2d(

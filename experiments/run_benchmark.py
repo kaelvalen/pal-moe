@@ -773,6 +773,7 @@ def run_benchmark(
             "cifar100": ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
             "mnist": ((0.1307,), (0.3081,)),
         }.get(dataset)
+        in_channels = 1 if (dataset == "mnist" or encoder_arch == "mlp") else 3
         return SharedEncoder(
             input_dim=input_dim,
             hidden_dims=(256, 128) if encoder_arch == "mlp" else None,
@@ -782,6 +783,7 @@ def run_benchmark(
             backbone_weights=args.encoder_weights,
             input_mean=dataset_norm[0] if dataset_norm else None,
             input_std=dataset_norm[1] if dataset_norm else None,
+            in_channels=in_channels,
         ).to(device)
 
     if dataset == "cifar10":
@@ -861,12 +863,24 @@ def run_benchmark(
 
         from pal_moe.data.split_folder import get_split_folder_tasks
 
-        transform = transforms.Compose(
-            [
-                transforms.Resize((args.image_size, args.image_size)),
-                transforms.ToTensor(),
-            ]
-        )
+        folder_transform = [
+            transforms.Resize((args.image_size, args.image_size)),
+            transforms.ToTensor(),
+        ]
+        # ImageNet-pretrained ResNets expect ImageNet-normalised inputs. ViT
+        # normalises internally (and would double-normalise here), and conv
+        # encoders are trained from scratch, so the transform is only extended
+        # for the ResNet + imagenet-weights case.
+        if (
+            args.encoder_weights == "imagenet"
+            and encoder_arch in SharedEncoder.RESNET_ARCHES
+        ):
+            folder_transform.append(
+                transforms.Normalize(
+                    SharedEncoder.IMAGENET_MEAN, SharedEncoder.IMAGENET_STD
+                )
+            )
+        transform = transforms.Compose(folder_transform)
         tasks = get_split_folder_tasks(
             data_dir=args.data_dir,
             batch_size=128,

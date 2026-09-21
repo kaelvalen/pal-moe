@@ -3095,6 +3095,23 @@ def test_stored_memory_accounting():
     assert icarl.snapshot_bytes() > 0
 
 
+def test_encoder_in_channels_override():
+    """Folder streams need explicit channel counts (not the 3072 heuristic)."""
+    conv = SharedEncoder(
+        input_dim=3 * 64 * 64,
+        output_dim=8,
+        arch="conv",
+        conv_channels=(4,),
+        in_channels=3,
+    )
+    assert conv(torch.randn(2, 3, 64, 64)).shape == (2, 8)
+
+    resnet = SharedEncoder(
+        input_dim=3 * 64 * 64, output_dim=8, arch="resnet18", in_channels=3
+    )
+    assert resnet.net[0].conv1.in_channels == 3
+
+
 def test_mir_selects_interfered_samples():
     from pal_moe.baselines.mir import MIR
 
