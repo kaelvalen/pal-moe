@@ -622,6 +622,7 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     | Experience Replay (P=250) | 82.89 ± 0.10% | 20.29 ± 0.17% | 0.77 MB |
     | iCaRL (k=25) | 84.18 ± 0.00% | 10.38 ± 0.00% | 0.80 MB |
     | **PAL-MoE (pure)** | **91.74 ± 0.28%** | **5.61 ± 0.12%** | **6.37 MB** |
+    | PAL-MoE + Latent Replay (P=1000) | 91.74 ± 0.33% | 5.55 ± 0.11% | 6.37 MB |
 
     PAL-MoE pure beats the best baseline (iCaRL) by 7.6 accuracy points with
     about half its forgetting, storing no raw inputs. The new byte column also
@@ -629,7 +630,17 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     the replay baselines, so this table is item-budget matched, not byte
     matched. The equal-byte Pareto (EXPERIMENT_PLAN.md, E4) is the fair
     comparison. iCaRL's zero variance is expected: the frozen ViT features are
-    seed-independent and herding is deterministic.
+    seed-independent and herding is deterministic. The latent-replay row is
+    identical to pure, as expected under the feature cache (design fact 19:
+    the hybrid's raw store is disabled and only latent exemplars are added).
+
+    The CIFAR-100 counterpart (`configs/cifar100_vit.json`, 20 tasks, 10
+    epochs, `results/cifar100_vit_multiseed`) is honest about a baseline that
+    wins: iCaRL **64.94 ± 0.00% / 12.25%** at 8.0 MB beats PAL-MoE pure
+    **59.34 ± 0.32% / 18.17%** at 14.2 MB (latent replay 59.03 ± 0.47 /
+    18.85). On this benchmark the method is not the accuracy leader; the
+    equal-byte and long-horizon forgetting results (facts 19-20, plan §5) are
+    where the trade-off lives.
 
 19. **Feature-cached runs store features, not raw inputs — and the hybrid's raw
     store is disabled there.** `--feature_cache` replaces the loaders with
