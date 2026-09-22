@@ -147,9 +147,11 @@ def _method_table(rows: dict[str, dict]) -> list[str]:
 def equal_byte_section(
     root: str, group: str, dataset_key: str, lines: list[str]
 ) -> Optional[list]:
-    """Collect (bytes, acc, forgetting) points for the Pareto figure."""
+    """Collect per-(method, budget) points across seeds for the Pareto figure."""
     pattern = os.path.join(root, group, dataset_key, "s*_b*_*")
-    points: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
+    grouped: dict[tuple[str, int], dict] = defaultdict(
+        lambda: {"acc": [], "f": [], "b": [], "seeds": []}
+    )
     for directory in sorted(glob.glob(pattern)):
         base = os.path.basename(directory)
         parts = base.split("_")
@@ -158,40 +160,46 @@ def equal_byte_section(
         seed, budget, method = parts[0], parts[1], "_".join(parts[2:])
         rows = aggregate_dir(directory)
         for _name, r in rows.items():
-            points[method].append(
-                (
-                    float(budget[1:]),
-                    r["acc_mean"],
-                    r["acc_std"],
-                    r["forgetting_mean"],
-                    r["forgetting_std"],
-                    r["memory_bytes_mean"],
-                )
-            )
-        _ = seed
-    if not points:
+            if np.isnan(r["acc_mean"]):
+                continue
+            key = (method, int(budget[1:]))
+            grouped[key]["acc"].append(r["acc_mean"])
+            grouped[key]["f"].append(r["forgetting_mean"])
+            grouped[key]["b"].append(r["memory_bytes_mean"])
+            grouped[key]["seeds"].append(seed)
+    if not grouped:
         return None
     lines.append(f"### Equal-byte Pareto — {group}/{dataset_key}")
     lines.append("")
-    lines.append("| Method | Budget | Realised data bytes | Avg Acc | Forgetting |")
-    lines.append("| :-- | --: | --: | :--: | :--: |")
-    for method in sorted(points):
-        for _, acc, acc_s, f, f_s, b in sorted(points[method]):
-            lines.append(
-                f"| {method} | {fmt_bytes(_)} | {fmt_bytes(b)} | "
-                f"{fmt_pct(acc, acc_s)} | {fmt_pct(f, f_s)} |"
-            )
+    lines.append(
+        "| Method | Budget | Realised data bytes | Avg Acc | Forgetting | Seeds |"
+    )
+    lines.append("| :-- | --: | --: | :--: | :--: | --: |")
+    for method, budget in sorted(grouped):
+        cell = grouped[(method, budget)]
+        acc_m, acc_s = _agg(cell["acc"])
+        f_m, f_s = _agg(cell["f"])
+        b_m, _ = _agg(cell["b"])
+        lines.append(
+            f"| {method} | {fmt_bytes(budget)} | {fmt_bytes(b_m)} | "
+            f"{fmt_pct(acc_m, acc_s)} | {fmt_pct(f_m, f_s)} | {len(cell['seeds'])} |"
+        )
     lines.append("")
     if plt is not None:
+        by_method: dict[str, list] = defaultdict(list)
+        for (method, _budget), cell in grouped.items():
+            acc_m, acc_s = _agg(cell["acc"])
+            b_m, _ = _agg(cell["b"])
+            by_method[method].append((b_m, acc_m, acc_s))
         fig, ax = plt.subplots(figsize=(7, 4.5))
-        for method in sorted(points):
-            pts = sorted(points[method])
-            xs = [max(p[5], 1.0) for p in pts]
+        for method in sorted(by_method):
+            pts = sorted(by_method[method])
+            xs = [max(p[0], 1.0) for p in pts]
             ys = [p[1] for p in pts]
             es = [p[2] for p in pts]
             ax.errorbar(xs, ys, yerr=es, marker="o", capsize=3, label=method)
         ax.set_xscale("log")
-        ax.set_xlabel("Stored bytes (data memory)")
+        ax.set_xlabel("Stored data bytes")
         ax.set_ylabel("Avg accuracy")
         ax.set_title(f"Equal-byte Pareto — {group}/{dataset_key}")
         ax.grid(True, alpha=0.3)
@@ -347,7 +355,7 @@ def multi_seed_section(root: str, lines: list[str]) -> None:
     lines.append("## Multi-seed tables")
     lines.append("")
     for directory in sorted(glob.glob(os.path.join(root, "*"))):
-        if not os.path.isdir(directory):
+        if not os.path.isdir(directory) or os.path.basename(directory) == "archive":
             continue
         if not glob.glob(
             os.path.join(directory, "**", "benchmark_results_seed*.json"),
