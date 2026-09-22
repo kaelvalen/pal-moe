@@ -82,6 +82,12 @@ resumes from the fixed code and is followed by wave 2.
   on CIFAR-100.
 - **Router generalization gap (E7/E6):** prototype owner accuracy is 94.5% but
   test-time routing is diffuse (top-expert share 0.15–0.24); RR_t 0.78–0.85.
+- **Component ablation (E5, CIFAR-10 ResNet-18, 3 seeds):** static MoE (forced
+  expansion only) 24.44 / 81.10; adding prototype anchors + router distillation
+  49.87 / 19.84 (+25.4 accuracy, −61 forgetting) — the dominant mechanism;
+  gated vs forced 49.45 / 20.63 (gate neutral); OOD 0.1 on top 48.88 / 20.42
+  (neutral once distillation is present, revising design fact 1 for the
+  current recipe). Latent replay ≈ ER at equal item budget (38.45 vs 38.58).
 
 ## 0. Framing
 
