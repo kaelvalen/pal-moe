@@ -88,6 +88,12 @@ resumes from the fixed code and is followed by wave 2.
   gated vs forced 49.45 / 20.63 (gate neutral); OOD 0.1 on top 48.88 / 20.42
   (neutral once distillation is present, revising design fact 1 for the
   current recipe). Latent replay ≈ ER at equal item budget (38.45 vs 38.58).
+- **Anchor refresh (E8, CIFAR-100 ResNet-18, 3 seeds):** flipping
+  `--refresh_anchors_after_calib` on lifts pure 15.65 ± 0.39 / 31.69 →
+  **18.31 ± 1.03 / 18.82** and the latent-replay variant 17.68 ± 0.97 / 17.47 →
+  **21.13 ± 0.34 / 16.09**. Inference anchoring (`--proto_routing_alpha 0.5`)
+  is roughly neutral. **Action:** make refresh the default in the final ResNet
+  configs and re-run the headline tables with it.
 
 ## 0. Framing
 
