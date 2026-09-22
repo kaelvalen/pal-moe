@@ -45,6 +45,34 @@ Sunumda göstermek için hazır dosyalar: `results/paper_report.md` (otomatik
 tablolar), `results/figures/` (Pareto/growth figürleri), `results/growth/`
 (routing matrisleri), `tests/test_pal_moe.py` (105 test).
 
+### 1b. Slayt iskeleti (11 slayt önerisi)
+
+| Slayt | İçerik | Kaynak |
+| --: | :-- | :-- |
+| 1 | Başlık: PAL-MoE — Prototype-Anchored Lifelong Mixture of Experts | — |
+| 2 | Problem: catastrophic forgetting + sabit bellek; formül | §2 |
+| 3 | Fikir: `f(x)=Σ g_i E_i`; "reuse mu, yeni expert mi?" | §2 |
+| 4 | Mimari diyagram + prototip belleği (`v_p/r_p/o_p/x_p`) | §3 |
+| 5 | Görev döngüsü: kalibrasyon → distillation → exact routing lock | §3 |
+| 6 | Literatür konumu: ne yeni, ne değil | §4 |
+| 7 | Sonuçlar (item-budget): MNIST, CIFAR-10/100, ViT tabloları | §5.1–5.3 |
+| 8 | Equal-byte Pareto figürü (`results/figures/pareto_equalbyte_c10r18.png`) | §5.4 |
+| 9 | Ablation: asıl mekanizma prototype anchoring | §5.5 |
+| 10 | Growth/reuse + capacity: gate nötr, expert sayısı unutmayı düşürüyor | §5.6, §5.8 |
+| 11 | Dürüst sınırlar + sonraki adımlar + sorular | §6, §8, §9 |
+
+**Konuşurken kullanılacak 5 cümle** (ezberle):
+1. "PAL-MoE'nin ana problemi expert oluşturmak değil, yeni görev geldiğinde
+   tarihsel routing'in bozulmasını engellemek."
+2. "Prototype memory'yi replay buffer olarak değil, geçmiş model davranışını
+   demirleyen function-space memory olarak kullanıyorum."
+3. "Ablation şunu gösterdi: kapasite genişlemesi tek başına zarar veriyor;
+   asıl katkı prototype anchor'lar ve router distillation."
+4. "Eşit byte altında doğruluk lideri replay tabanları; bizim avantajımız
+   unutmanın ~1.5–2× düşük olması. İddiayı böyle kuruyorum."
+5. "Sonraki adım: raw-pipeline equal-byte, Tiny-ImageNet, refresh-on başlık
+   tabloları ve router genelleme boşluğunun teşhisi."
+
 ---
 
 ## 2. Problem ve araştırma sorusu
