@@ -20,10 +20,10 @@
 | E1a CIFAR-10 ViT 3-seed | **Done** (commit `fb69e63`) | pure **91.74 ± 0.28 / 5.61**; iCaRL 84.18 / 10.38; ER 82.89 / 20.29 (`results/cifar10_vit_multiseed`) |
 | E1b CIFAR-100 ViT 3-seed | **Done, latent-replay row queued** | pure **59.34 ± 0.32 / 18.17**; iCaRL 64.94 / 12.25 (8.0 MB vs PAL 14.2 MB); DER++ 50.97 / 47.30 (`results/cifar100_vit_multiseed`) |
 | E2 CIFAR-100 ResNet-18 3-seed | **Done** (commit `82b5684`) | pure **15.65 ± 0.39 / 31.69**; iCaRL 13.97 / 10.96; DER++ 13.12 / 66.91 (`results/cifar100_resnet18_multiseed`) |
-| E4 equal-byte Pareto | **Queued, protocol corrected** | feature-cache sweep (`results/equalbyte/`) + raw-pipeline sweep (`results/equalbyte_raw/`); item sizes fixed per design fact 19 |
-| E5 component ablation | **Queued** | `results/ablation_final/` |
-| E6 routing retention | **Queued** (piggyback on the gated runs) | `routing_retention` fields |
-| E7 growth/reuse | **Queued** | `results/growth/` |
+| E4 equal-byte Pareto | **Feature-cache sweep done; raw sweep queued** | `results/equalbyte/` (real seeds 42 1 2 at 1/4 MiB, seed 42 at 256K/16M); `results/equalbyte_raw/` in wave 2; item sizes per design fact 19 |
+| E5 component ablation | **Queued (wave 1c, real seeds)** | `results/ablation_final/` |
+| E6 routing retention | **Running** (piggyback on the gated runs) | `routing_retention` fields |
+| E7 growth/reuse | **Running** (wave 1c, `--max_experts 20` for both protocols) | `results/growth/` |
 | E8 anchor drift + trainable-encoder cell | **Queued** | `results/drift/` |
 | E9 capacity/param matching | **Queued** | `results/capacity/` |
 | E10 Tiny-ImageNet | **Queued** (dataset prepared) | `results/tinyimagenet_multiseed` |
@@ -61,6 +61,14 @@ already cover the ViT promotion and the feature-cache storage semantics).
 hybrid's raw store is disabled (it is pure + latent replay). The equal-byte
 sweeps now use the correct item sizes; the true raw-vs-latent comparison runs
 in the raw pipeline (`configs/*_frozen_raw.json`).
+
+**Run-day corrections (2026-09-22):** the first wave wrote seed-1/seed-2
+directories without passing `--seed` (cells were seed-42 repeats); all per-seed
+helpers now pass it and the equal-byte cells were re-run (`d4e0f7a`). E7's
+gated protocol hit the very slow prune/merge path at `--max_experts 6`
+(296 s vs 7494 s for identical work); both protocols now run with
+`--max_experts 20`, so the only difference is the allocation policy. Wave 1c
+resumes from the fixed code and is followed by wave 2.
 
 ## 0. Framing
 
