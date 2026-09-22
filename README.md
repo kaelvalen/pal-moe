@@ -12,11 +12,13 @@ Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for e
 > - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) / [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md) — protocol/design facts and the paper experiment plan.
 >
 > **Status (2026-09-22):** the tables below are the published **item-budget**
-> comparison. The corrected **equal-byte** protocol shows ER/DER++ leading
-> accuracy while PAL-MoE keeps ~1.5–2× lower forgetting, and the gated
-> allocation policy equals forced expansion on CIFAR-100 (20/20 experts). Do
-> not quote a table without checking `docs/SUNUM.md §5–6` for the current
-> framing.
+> comparison. The corrected **equal-byte** protocol splits by storage format:
+> in the **raw pipeline** PAL-MoE beats raw ER by ~16 accuracy points at
+> 3.4× less forgetting (1 MiB, CIFAR-10); under the **feature cache** (where
+> every method stores features) plain replay leads accuracy while PAL-MoE
+> keeps ~1.5–2× lower forgetting. The gated allocation policy equals forced
+> expansion on CIFAR-100 (20/20 experts). Do not quote a table without
+> checking `docs/SUNUM.md §5–6` for the current framing.
 
 ---
 
