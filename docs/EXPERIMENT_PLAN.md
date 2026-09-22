@@ -1,11 +1,11 @@
 # PAL-MoE — Paper Experiment Plan
 
-> Planning document, not a result record. It audits the results in `README.md` /
+> Planning document, not a result record. It audits the results in `../README.md` /
 > `BENCHMARK.md` against the paper's claims, lists what is strong, what is
 > apples-to-oranges and what is missing, then freezes a 13-experiment plan with
 > exact commands, budgets and kill criteria.
 >
-> Companion docs: `README.md` (headline results), `BENCHMARK.md` (protocol and
+> Companion docs: `../README.md` (headline results), `BENCHMARK.md` (protocol and
 > measured design facts). Every number quoted here is from the repo; nothing in
 > this file may be cited as a result until it points at a `results/` artifact.
 
@@ -53,7 +53,7 @@ Afterwards:
 python experiments/paper_report.py     # tables + Pareto/growth/matrix figures
 ```
 
-then fold the numbers into `README.md` / `BENCHMARK.md` (design facts 18–19
+then fold the numbers into `../README.md` / `BENCHMARK.md` (design facts 18–19
 already cover the ViT promotion and the feature-cache storage semantics).
 
 **Protocol correction applied before the run day (design fact 19):** under
@@ -135,7 +135,7 @@ show what the allocation policy actually decides.
 | :-- | :-- | :-- | :-- |
 | R1 | **CIFAR-10 ResNet-18, 3 seeds** (`results/cifar10_resnet18_multiseed`): pure 48.82 ± 1.42 / 21.05 ± 1.44 forgetting vs DER++ 45.29 ± 0.48 / 43.81, ER 39.92 ± 0.76 / 58.87, iCaRL 30.70 ± 3.71 / 26.89. | **Strong** | Same encoder, same session, same schedule; zero raw storage. Cleanest headline. |
 | R2 | **CIFAR-100 conv 20-task, 3 seeds** (`results/cifar100_multiseed`): pure 9.48 ± 0.25 / 23.19 ± 0.56 vs DER++ 5.92 ± 0.28 / 63.42 ± 0.48; hybrid 9.98 ± 0.47 / 11.93 ± 0.66 vs iCaRL 10.13 ± 0.40 / 10.54 ± 0.30 (iCaRL stores 2500 raw). | **Strong (long-horizon forgetting)** | The ~40 pp forgetting gap is far outside seed noise. Absolute accuracy is low; representation is the documented bottleneck (fact 17). |
-| R3 | **ViT-B/16 CIFAR-10** (`results/cifar10_vit_multiseed`, seed 42 + 1; seed 2 missing): pure 92.03 / 5.54 vs iCaRL 84.18 / 10.38, ER 82.75 / 20.50, DER++ 72.96 / 32.46. | **Strong but undocumented and protocol-skewed** | Highest absolute numbers in the project, never written into `README.md`/`BENCHMARK.md`. Uses `--expand_every_task` (forced expansion, gate bypassed), 15 epochs, `proto_size=1000`; single seed. Must be promoted only after E1. |
+| R3 | **ViT-B/16 CIFAR-10** (`results/cifar10_vit_multiseed`, seed 42 + 1; seed 2 missing): pure 92.03 / 5.54 vs iCaRL 84.18 / 10.38, ER 82.75 / 20.50, DER++ 72.96 / 32.46. | **Strong but undocumented and protocol-skewed** | Highest absolute numbers in the project, never written into `../README.md`/`BENCHMARK.md`. Uses `--expand_every_task` (forced expansion, gate bypassed), 15 epochs, `proto_size=1000`; single seed. Must be promoted only after E1. |
 | R4 | **MNIST 5-seed** (`results/benchmark_multi.json`): pure 79.36 ± 1.16 / 7.91 ± 1.24; hybrid 80.05 ± 1.08 / 5.61 ± 1.12; DER++ 86.93 ± 0.91 / 7.31. | Medium | Toy dataset; keep as a sanity/ablation bed, not as a headline. |
 | R5 | **CIFAR-100 ResNet-18 single seed** (`results/cifar100_resnet18`): pure 16.01 / 28.89; hybrid 18.96 / 19.78 vs DER++ 12.57 / 67.28, iCaRL 13.24 / 11.03. | Medium (single seed) | Backbone swap is the largest lever measured (fact 17). Recipe for 3 seeds exists (`cifar100_resnet18_multiseed.sh`), not yet run. |
 | R6 | **Domain-shift MNIST** (`results/mnist_domainshift`): pure 86.07 / 5.64; task-free online 86.16; margin +0.117. | Medium (single seed, pilot) | Supports the shared-expert/domain-incremental story; needs a real domain benchmark (E11). |

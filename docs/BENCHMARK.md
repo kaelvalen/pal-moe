@@ -1,7 +1,7 @@
 # PAL-MoE Benchmark Methodology
 
 This document defines the protocol used to produce every number in
-`README.md`. Each table corresponds to one code version and one command.
+`../README.md`. Each table corresponds to one code version and one command.
 
 ## Protocol
 
@@ -672,7 +672,7 @@ update; a full CI reproduction job can be enabled with a GPU runner.
 ## Paper-track plan
 
 [`EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md) audits the results in this document
-and `README.md` against the paper's claims (what is strong, what is
+and `../README.md` against the paper's claims (what is strong, what is
 apples-to-oranges, what is missing) and freezes the outstanding runs: the
 equal-byte memory protocol, the component ablation at the final recipe, expert
 growth/reuse curves and the long-horizon benchmarks.

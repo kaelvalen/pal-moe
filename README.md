@@ -4,18 +4,31 @@
 
 Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for each task while a **prototype-anchored linear router** selects the expert for each input. The replay memory stores **128-dimensional latent vectors instead of raw images**, so its footprint is measured in kilobytes, and the pure (zero-raw-replay) mode requires no exemplar images at all.
 
+> **Where to start**
+> - [`docs/SUNUM.md`](docs/SUNUM.md) — Turkish presentation walkthrough: pitch, architecture, results, honest findings, likely questions.
+> - [`docs/RESULTS_INVENTORY.md`](docs/RESULTS_INVENTORY.md) — what every `results/` directory contains and its status.
+> - [`docs/RESEARCH_MAP.md`](docs/RESEARCH_MAP.md) — which literature line each code component comes from.
+> - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) / [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md) — protocol/design facts and the paper experiment plan.
+>
+> **Status (2026-09-22):** the tables below are the published **item-budget**
+> comparison. The corrected **equal-byte** protocol shows ER/DER++ leading
+> accuracy while PAL-MoE keeps ~1.5–2× lower forgetting, and the gated
+> allocation policy equals forced expansion on CIFAR-100 (20/20 experts). Do
+> not quote a table without checking `docs/SUNUM.md §5–6` for the current
+> framing.
+
 ---
 
 ## Method
 
 1. **OOD negative-boundary loss.**
-   While a new expert trains on a new task, its predictions on historical prototypes are pushed toward maximum entropy (`lambda_ood * H`). The new expert learns the boundary of its own task and stays agnostic about old tasks, so the router has no incentive to divert old-task inputs to it. In the controlled ablation this lifted pure zero-replay accuracy from 49.85% to 76.60% (see `BENCHMARK.md`, design fact 1); the current Split-MNIST recipe reaches 79.36 ± 1.16% (design fact 15).
+   While a new expert trains on a new task, its predictions on historical prototypes are pushed toward maximum entropy (`lambda_ood * H`). The new expert learns the boundary of its own task and stays agnostic about old tasks, so the router has no incentive to divert old-task inputs to it. In the controlled ablation this lifted pure zero-replay accuracy from 49.85% to 76.60% (see `docs/BENCHMARK.md`, design fact 1); the current Split-MNIST recipe reaches 79.36 ± 1.16% (design fact 15).
 
 2. **Latent replay and end-of-task joint calibration.**
    PAL-MoE stores lightweight 128-dimensional latent vectors (prototype centroids and exemplars) instead of raw pixels. At the end of each task, all experts are jointly calibrated on these latent exemplars, temporarily unfreezing all experts and then re-locking history. The full 5-task model occupies approximately 284 KB.
 
 3. **Expert freezing and routing protection.**
-   Older experts are locked after their task concludes; during a new task only the newest expert and routing row adapt. The lock is exact: the router sits in a zero weight-decay parameter group, so Adam's decoupled L2 term cannot shrink the locked historical rows (it used to, and that implicit decay was part of the older numbers — see `BENCHMARK.md`, design fact 15). Fully freezing the router during joint calibration is harmful (pure 49.85 to 43.16, hybrid 82.23 to 66.94), and null-space row orthogonalization at initialization is harmful with weakly separated latents (49.85 to 22.87). Routing protection comes from the stability losses, the validation gate, the OOD term and the zero-replay prototype-owner router distillation (`--router_anchor_steps`), all verified by controlled ablation.
+   Older experts are locked after their task concludes; during a new task only the newest expert and routing row adapt. The lock is exact: the router sits in a zero weight-decay parameter group, so Adam's decoupled L2 term cannot shrink the locked historical rows (it used to, and that implicit decay was part of the older numbers — see `docs/BENCHMARK.md`, design fact 15). Fully freezing the router during joint calibration is harmful (pure 49.85 to 43.16, hybrid 82.23 to 66.94), and null-space row orthogonalization at initialization is harmful with weakly separated latents (49.85 to 22.87). Routing protection comes from the stability losses, the validation gate, the OOD term and the zero-replay prototype-owner router distillation (`--router_anchor_steps`), all verified by controlled ablation.
 
 4. **Contrastive pretraining and dynamic capacity growth.**
    CIFAR uses a 50-epoch SimCLR-pretrained conv encoder (fine-tuned adaptively); MNIST uses a 1-epoch autoencoder (frozen). When the quantitative trigger `S(x)` detects a domain shift, a new expert is spawned via function-preserving expansion, gated by a validation gate (new-task accuracy, prototype drift, historical prototype-accuracy drop).
@@ -26,7 +39,7 @@ Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for e
 
 The headline table is produced by
 `python experiments/run_benchmark_multi.py --seeds "42 1 2 3 4" --config configs/mnist_default.json --device cuda`
-(single-seed 42 via `run_benchmark.py --config configs/mnist_default.json`; full methodology in [`BENCHMARK.md`](BENCHMARK.md)).
+(single-seed 42 via `run_benchmark.py --config configs/mnist_default.json`; full methodology in [`docs/BENCHMARK.md`](docs/BENCHMARK.md)).
 All methods share the same pretrained encoder and the same head width
 (`hidden_dim=256` per head); PAL-MoE grows to one head per spawned expert, so
 its total head parameter count scales with the number of experts and is
@@ -37,7 +50,7 @@ recorded as `trainable_params` in every result JSON.
 > (not raw images) and the "hybrid" variant's raw store is disabled — it is
 > pure + latent-exemplar replay and is labelled `PAL-MoE + Latent Replay` in
 > new runs. See the storage-semantics note and design fact 19 in
-> [`BENCHMARK.md`](BENCHMARK.md) for the byte accounting and the raw-pipeline
+> [`docs/BENCHMARK.md`](docs/BENCHMARK.md) for the byte accounting and the raw-pipeline
 > comparison.
 
 ### 1. Split-MNIST (5 tasks, mean ± std over 5 seeds: 42 1 2 3 4)
@@ -61,7 +74,7 @@ All research knobs added in this revision (shared generalist expert, generative
 latent replay, NCM/bias read-outs, energy OOD/trigger, auto anchoring, adapter
 experts, width growth, merging, uncertainty weighting, task-free metrics, ...)
 are opt-in, tested and documented in the research-toolkit table of
-[`BENCHMARK.md`](BENCHMARK.md).
+[`docs/BENCHMARK.md`](docs/BENCHMARK.md).
 
 Note: The pure variant reaches 79.36% without any raw exemplars — ahead of
 iCaRL, ER-ACE, ER(P=60), AGEM, EWC, naive fine-tuning and Standard-MoE — and its
@@ -72,7 +85,7 @@ and it matches the accuracy of Experience Replay with the same 250-item budget
 (80.05% vs 82.50%) while forgetting roughly three times less (5.61% vs 17.42%).
 DER++ remains the accuracy leader at 86.93%. The gains come from prototype-owner
 router distillation, a zero-replay mechanism that sharpens cross-task routing
-(see `BENCHMARK.md`, design facts 11 and 15).
+(see `docs/BENCHMARK.md`, design facts 11 and 15).
 
 **Provenance note (2026-09):** this table was regenerated end-to-end on the
 current code after the historical-routing lock fix (design fact 15). Earlier
@@ -101,9 +114,9 @@ All methods use the same geometry and schedule: conv encoder 64/128/256 with 256
 
 The 3-seed rows are means ± std over seeds 42 1 2 (`results/cifar10_conv_multiseed`, current code); the single-seed 42 rows are from the earlier full-suite run (`results/cifar10_final_full`), whose code paths were verified numerically equivalent.
 
-Note: The pure variant stores no raw inputs (latent prototypes and task ids only) and reaches 37.30%, ahead of the strongest baseline DER++ (31.83 ± 0.32%) by 5.5 accuracy points with ~2.8 times less forgetting (21.98% vs 60.98%). The hybrid adds 250 raw exemplars and leads by another 1.4 points at the same forgetting level. An earlier revision of this table showed an approximately 14-point gap; that measurement was affected by a baseline-side BatchNorm artifact (the "frozen" encoder drifted during the baselines' own training loops) and has been corrected here (see `BENCHMARK.md`, design fact 14). The remaining gap to the per-expert oracle (~67%) reflects expert and representation quality rather than routing.
+Note: The pure variant stores no raw inputs (latent prototypes and task ids only) and reaches 37.30%, ahead of the strongest baseline DER++ (31.83 ± 0.32%) by 5.5 accuracy points with ~2.8 times less forgetting (21.98% vs 60.98%). The hybrid adds 250 raw exemplars and leads by another 1.4 points at the same forgetting level. An earlier revision of this table showed an approximately 14-point gap; that measurement was affected by a baseline-side BatchNorm artifact (the "frozen" encoder drifted during the baselines' own training loops) and has been corrected here (see `docs/BENCHMARK.md`, design fact 14). The remaining gap to the per-expert oracle (~67%) reflects expert and representation quality rather than routing.
 
-Note on the training regime: the frozen-representation setting is part of the method's design on CIFAR-10; with an unfrozen encoder, the earlier pure/hybrid runs scored 17.75% / 25.54%. At the longer 15-epoch schedule (150 SimCLR epochs) an earlier 5-seed run reached 37.35 ± 0.56% pure and 38.87 ± 0.47% hybrid, i.e. the longer schedule does not add over the 5-epoch numbers above; the feature cache was verified neutral on seed 42 (37.60% vs 36.72%; `BENCHMARK.md`, design facts 11-13).
+Note on the training regime: the frozen-representation setting is part of the method's design on CIFAR-10; with an unfrozen encoder, the earlier pure/hybrid runs scored 17.75% / 25.54%. At the longer 15-epoch schedule (150 SimCLR epochs) an earlier 5-seed run reached 37.35 ± 0.56% pure and 38.87 ± 0.47% hybrid, i.e. the longer schedule does not add over the 5-epoch numbers above; the feature cache was verified neutral on seed 42 (37.60% vs 36.72%; `docs/BENCHMARK.md`, design facts 11-13).
 
 ### 3. Split-CIFAR-10 with a strong frozen backbone (ImageNet ResNet-18)
 
@@ -242,8 +255,13 @@ pal-moe/
 │   ├── diagnose_checkpoint.py  # Per-task checkpoint diagnostics
 │   └── plot_results.py         # Figure generation (single + multi-seed JSON)
 ├── configs/                    # JSON configs (mnist_default, cifar10_default, ...)
-├── BENCHMARK.md                # Methodology, protocol and measured design facts
-└── tests/test_pal_moe.py       # PyTest suite (96 tests)
+├── docs/
+│   ├── SUNUM.md                # Turkish presentation guide (start here for a demo)
+│   ├── RESEARCH_MAP.md         # Component -> literature lineage
+│   ├── RESULTS_INVENTORY.md    # What every results/ directory contains
+│   ├── BENCHMARK.md            # Methodology, protocol and measured design facts
+│   └── EXPERIMENT_PLAN.md      # Paper experiment plan and run-day findings
+└── tests/test_pal_moe.py       # PyTest suite (105 tests)
 ```
 
 ---
@@ -268,7 +286,7 @@ python experiments/run_benchmark.py --dataset cifar100 --device cuda
 # Config-driven run (same as above, explicit)
 python experiments/run_benchmark.py --config configs/mnist_default.json --device cuda
 
-# Big CIFAR-10 run (wide encoder, 15 epochs/task, frozen encoder; see BENCHMARK.md)
+# Big CIFAR-10 run (wide encoder, 15 epochs/task, frozen encoder; see docs/BENCHMARK.md)
 python experiments/run_benchmark.py --config configs/cifar10_big_frozen.json --device cuda
 
 # Same recipe with frozen-feature caching (faster, mathematically equivalent)
