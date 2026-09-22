@@ -70,6 +70,19 @@ gated protocol hit the very slow prune/merge path at `--max_experts 6`
 `--max_experts 20`, so the only difference is the allocation policy. Wave 1c
 resumes from the fixed code and is followed by wave 2.
 
+**Run-day findings so far (2026-09-22):**
+
+- **Equal-byte (feature-cache, CIFAR-10, 3 seeds):** ER leads accuracy at every
+  budget (49.86 at 1 MiB, 54.95 at 4 MiB); PAL pure is 46.32 / 50.54 with the
+  lowest forgetting among non-iCaRL methods (21.37 / 19.15); iCaRL has low
+  forgetting and much lower accuracy. CIFAR-100 at 1 MiB: DER++ 16.97, ER
+  13.64, PAL 12.15 / 34.21 forgetting, iCaRL 10.72 / 9.93.
+- **H5 refuted (E7):** gated allocation equals forced expansion (20/20 experts,
+  14.25 ± 0.22 vs 14.34 ± 0.41 accuracy; owner-routing 94.5%). No expert reuse
+  on CIFAR-100.
+- **Router generalization gap (E7/E6):** prototype owner accuracy is 94.5% but
+  test-time routing is diffuse (top-expert share 0.15–0.24); RR_t 0.78–0.85.
+
 ## 0. Framing
 
 **Research question.** Under a fixed memory budget, *when* should a
@@ -90,8 +103,8 @@ function-preserving expansion), (ii) latent replay / prototype memory
 | H2 | At equal **bytes**, latent replay is competitive with raw replay. | Untested: all tables are item-budget matched, not byte matched. |
 | H3 | Prototype anchors improve routing stability/accuracy. | Supported on MNIST/CIFAR-10 (facts 11, 15) but not isolated at the final recipe, and only at the end state. |
 | H4 | The negative-boundary (OOD) objective reduces misassignment of new data to old experts. | Supported (facts 1, 12): +0.7–1.2 acc, 2–4 pp less forgetting. |
-| H5 | The allocation policy reuses experts for related tasks instead of one expert per task. | Unsupported: gate-vs-forced is a wash (fact 16); ViT configs force one expert per task. |
-| H6 | Old-task routing is retained while new tasks get new capacity. | Partially: owner-routing accuracy and router KL exist, but no retention measured *over time*. |
+| H5 | The allocation policy reuses experts for related tasks instead of one expert per task. | **Refuted on CIFAR-100 (2026-09-22):** gated and forced both allocate one expert per task (20/20, no gate rejections) and are statistically identical (14.25 ± 0.22 vs 14.34 ± 0.41 accuracy). Reframe as fixed-budget capacity expansion. |
+| H6 | Old-task routing is retained while new tasks get new capacity. | **Measured (2026-09-22):** routing retention RR_t stays 0.78–0.85 across 20 tasks; prototype owner accuracy 94.5%, but test-time routing is diffuse (top-expert share only 0.15–0.24) — a router generalization gap to report. |
 
 **Novelty statement to defend (draft).** Not "a MoE for continual learning" —
 that space is occupied. The defensible combination is: *memory-constrained
