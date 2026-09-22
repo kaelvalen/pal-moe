@@ -28,8 +28,8 @@ export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:/run/opengl-driver/lib"
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-bundle.crt}"
 
 echo "PAPER_ALL_START $(date '+%F %T')"
-bash experiments/recipes/paper_wave1b.sh
-echo "WAVE1B_EXIT=$? $(date '+%F %T')"
+bash experiments/recipes/paper_wave1c.sh
+echo "WAVE1C_EXIT=$? $(date '+%F %T')"
 bash experiments/recipes/paper_wave2.sh
 echo "WAVE2_EXIT=$? $(date '+%F %T')"
 echo "PAPER_ALL_DONE $(date '+%F %T')"

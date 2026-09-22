@@ -47,7 +47,7 @@ $PY experiments/run_benchmark_multi.py --seeds "42 1 2" \
 run_raw_c10() { # seed budget method extra...
   local SEED=$1 BUDGET=$2 METHOD=$3; shift 3
   $PY experiments/run_benchmark.py --config configs/cifar10_resnet18_frozen_raw.json \
-    --device cuda --track_routing --methods "$METHOD" \
+    --device cuda --seed "$SEED" --track_routing --methods "$METHOD" \
     --output_dir "results/equalbyte_raw/c10r18/s${SEED}_b${BUDGET}_${METHOD}" "$@" \
     || echo "FAILED raw c10 s${SEED} b${BUDGET} ${METHOD}"
 }
