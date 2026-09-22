@@ -11,10 +11,13 @@ pgrep -af "paper_all|paper_wave|run_benchmark.py|measure_latency" | grep -v pgre
 for log in results/paper_run.log results/paper_wave1b.log results/paper_wave2.log; do
   [ -f "$log" ] || continue
   echo
-  echo "=== $log ==="
+  echo "=== $log (last modified: $(stat -c '%y' "$log" | cut -d. -f1)) ==="
   grep "::" "$log" | tail -6
   echo "FAILED lines: $(grep -c FAILED "$log" 2>/dev/null || echo 0)"
 done
+echo
+echo "note: paper_all.sh writes everything to results/paper_run.log;"
+echo "      paper_wave*.log are only populated when a wave runs standalone."
 
 echo
 echo "=== completed result files per experiment group ==="
