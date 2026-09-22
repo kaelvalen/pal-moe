@@ -8,6 +8,7 @@ Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for e
 > - [`docs/SUNUM.md`](docs/SUNUM.md) — Turkish presentation walkthrough: pitch, architecture, results, honest findings, likely questions.
 > - [`docs/RESULTS_INVENTORY.md`](docs/RESULTS_INVENTORY.md) — what every `results/` directory contains and its status.
 > - [`docs/RESEARCH_MAP.md`](docs/RESEARCH_MAP.md) — which literature line each code component comes from.
+> - [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) — structure/modularity/comment review and the refactor backlog.
 > - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) / [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md) — protocol/design facts and the paper experiment plan.
 >
 > **Status (2026-09-22):** the tables below are the published **item-budget**
