@@ -171,8 +171,15 @@ H5'in çürütülmesi bu iddiayı daraltıyor: "dinamik allocation" değil,
 
 ### 5.1 Kısa vade (item-bütçesi eşleşmeli, yayınlanmış tablolar)
 
-**Split-MNIST (5 seed):** pure **79.36 ± 1.16 / 7.91 unutma**, hybrid 80.05 ±
-1.08 / 5.61; DER++ 86.93 ± 0.91 / 7.31; ER(250) 82.50 / 17.42.
+**Split-MNIST (5 seed, 2026-09-22 yenilemesi, byte muhasebeli):** pure
+**79.29 ± 1.20 / 8.02 unutma** (285 KB); hybrid 80.06 ± 1.11 / 5.56 (1061 KB);
+DER++ 87.65 ± 0.94 / 6.47 (777 KB); ER(250) 82.41 / 17.42 (768 KB); MIR
+83.30 / 15.27; iCaRL 59.15 / 10.68.
+
+> **Öne çıkan H2 kanıtı:** tek kafalı **latent replay** 250 öğeyle **127 KB**
+> bellekte 82.74 / 16.88 alıyor — ER'in 768 KB'da aldığı 82.41 / 17.42'ye
+> neredeyse eşit, **6× az bellekle**. Raw-vs-latent depolamanın en net
+> göstergesi (MNIST feature-cache'siz koşuyor).
 
 **Split-CIFAR-10, conv, 3 seed:** pure **37.30 ± 0.11 / 21.98**, hybrid
 38.66 ± 0.33 / 22.62; DER++ 31.83 ± 0.32 / 60.98; ER 25.70 / 72.10; iCaRL
@@ -234,15 +241,17 @@ prototype anchoring (+25.4 puan). Gate ve OOD mevcut reçetede nötr.
 
 | max_experts | Doğruluk | Unutma | Toplam parametre |
 | --: | --: | --: | --: |
-| 2 | 14.43 | 42.39 | 0.55M |
-| 4 | 13.01 | 35.55 | 1.10M |
-| 6 | 15.07 | 30.68 | 1.65M |
-| 20 | 14.50 | **14.18** | 5.49M |
-| Param-eşleşmeli ER (2.46M) | 10.46 | 74.04 | 2.46M |
+| 2 | 14.80 | 42.24 | 0.55M |
+| 4 | 11.13 | 32.09 | 1.10M |
+| 6 | 15.88 | 30.30 | 1.65M |
+| 20 | 14.25 | **14.84** | 5.49M |
+| Param-eşleşmeli ER (2.46M) | 10.22 | 74.65 | 2.46M |
+| Param-eşleşmeli DER++ (2.46M) | 13.49 | 68.41 | 2.46M |
 
 **Mesaj:** Doğruluk expert sayısından neredeyse bağımsız; unutma expert
-sayısıyla düşüyor. "Daha çok expert = daha iyi" değil; ama daha çok kapasite
-unutmayı azaltıyor.
+sayısıyla düşüyor. "Daha çok expert = daha iyi" değil; ama PAL 1.65M
+parametreyle param-eşleşmeli 2.46M'lik ER/DER++'ı geçiyor ve unutması
+yarısından az.
 
 ### 5.7 Anchor refresh (CIFAR-100, 3 seed)
 
