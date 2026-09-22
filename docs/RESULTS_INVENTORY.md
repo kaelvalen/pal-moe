@@ -43,12 +43,12 @@
 | :-- | :-- | :-- | :-- |
 | `equalbyte/` | E4 feature-cache Pareto, CIFAR-10/100 (real seeds 42 1 2 at 1/4 MiB) | RUN-DAY | EXPERIMENT_PLAN findings |
 | `equalbyte_raw/` | E4 raw-pipeline Pareto (raw ER 12,296 B vs PAL 2,184 B per item); C10 3 seeds, C100 seed 42 | RUN-DAY | SUNUM §5.4, BENCHMARK fact 20 |
-| `hybrid_raw/` | True hybrid vs pure in the raw pipeline (running) | RUN-DAY | — |
+| `hybrid_raw/` | True hybrid vs pure in the raw pipeline, 3 seeds | RUN-DAY | SUNUM §5.5, BENCHMARK fact 21 |
 | `ablation_final/` | E5 component ladder (7 variants × 3 seeds, CIFAR-10) | RUN-DAY | SUNUM §5.5 |
 | `growth/` | E7 gated vs forced expansion, routing retention/matrices | RUN-DAY | SUNUM §5.8 |
 | `drift/` | E8 anchor-refresh + inference-anchoring cells | RUN-DAY | SUNUM §5.7 |
 | `capacity/` | E9 capacity sweep + parameter-matched baselines, 3 seeds | RUN-DAY | SUNUM §5.6 |
-| `mir/` | E12 MIR baseline | PENDING (wave 2) | — |
+| `mir/` | E12 MIR baseline, 3 seeds | RUN-DAY | BENCHMARK fact 21 |
 | `tinyimagenet_multiseed/` | E10 Tiny-ImageNet 20×10 class-IL | PENDING (wave 2) | — |
 | `final_mnist_multiseed/`, `final_c10r18_multiseed/` | E3 regenerations with byte accounting (5/3 seeds) | RUN-DAY | SUNUM §5.1 |
 | `final_c10conv_multiseed/`, `final_c100conv_multiseed/` | E3 slow regenerations | PENDING (wave 2) | — |

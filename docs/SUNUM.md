@@ -261,7 +261,18 @@ CIFAR-100, 1 MiB, 3 seed: DER++ 16.97 ± 0.63, ER 13.64 ± 0.20, PAL
 **Mesaj:** Kapasite genişlemesi tek başına zarar veriyor; asıl mekanizma
 prototype anchoring (+25.4 puan). Gate ve OOD mevcut reçetede nötr.
 
-### 5.6 Kapasite ve maliyet (CIFAR-100, seed 42)
+**Gerçek hybrid (raw pipeline, varsayılan proto_size=1000, 3 seed):**
+CIFAR-10 hybrid 49.63 ± 1.19 / 18.03 vs pure 48.39 ± 1.55 / 20.82 — ama
+hybrid **14.47 MB** saklarken pure **2.18 MB** (6.6×). CIFAR-100: 16.90 ± 0.19
+/ 19.05 vs 15.97 ± 0.31 / 30.65 (16.47 MB vs 4.18 MB). **Eşit byte'ta hybrid
+kaybediyor** (1 MiB raw sweep: hybrid 39.93 vs pure 46.16); yani hybrid'in ham
+deposu pahalı ve varsayılan ayardaki kazancı bellekten geliyor.
+
+**MIR (feature-cache, P=250, 3 seed):** CIFAR-10 37.62 ± 1.04 / 61.79 (ER
+39.92 / 58.87); CIFAR-100 10.50 / 66.16 (ER 10.93 / 66.91) — seçim tabanlı
+replay, rastgele replay'ı bu benchmarklarda geçemiyor.
+
+### 5.6 Kapasite ve maliyet (CIFAR-100, 3 seed)
 
 | max_experts | Doğruluk | Unutma | Toplam parametre |
 | --: | --: | --: | --: |
@@ -309,18 +320,24 @@ riski doğrulandı.
    (1000 prototip vs 250 öğe).
 2. **H5 çürütüldü.** Kapı her genişlemeyi kabul etti; gated = forced; expert
    reuse yok. "Dinamik allocation" iddiası daraltılmalı.
-3. **OOD terimi mevcut reçetede nötr.** Eski reçetedeki katkısı (fact 1)
+3. **Hybrid eşit byte'ta kazandırmıyor.** Varsayılan proto_size=1000'de hybrid
+   pure'a göre ~1.2 puan kazandırıyor ama **6.6× bellek** harcıyor (14.47 MB vs
+   2.18 MB); 1 MiB eşit-byte koşusunda hybrid kaybediyor (39.93 vs 46.16).
+   Hybrid'i ana sonuç olarak değil, bellek esnekliği olarak sun.
+4. **MIR ER'ı geçemiyor** (CIFAR-10 37.62 vs 39.92; CIFAR-100 10.50 vs 10.93):
+   seçim tabanlı replay bu benchmarklarda rastgele replay'a üstünlük
+   sağlamıyor.
+5. **OOD terimi mevcut reçetede nötr.** Eski reçetedeki katkısı (fact 1)
    distillation gelince gereksizleşiyor.
-4. **Router genelleme boşluğu.** Prototip owner doğruluğu %94.5 ama test
+6. **Router genelleme boşluğu.** Prototip owner doğruluğu %94.5 ama test
    routing'i dağınık (top-expert payı 0.15–0.24); 20 expert'te belirgin.
-5. **Feature-cache semantiği.** Feature-cache koşularında replay tabanları ve
+7. **Feature-cache semantiği.** Feature-cache koşularında replay tabanları ve
    iCaRL özellik saklıyor; hybrid'in ham deposu kapalı → "latent replay"
    varyantı. (design fact 19)
-6. **iCaRL bazı benchmarklarda önde** (CIFAR-100 ViT) ve daha az byte
+8. **iCaRL bazı benchmarklarda önde** (CIFAR-100 ViT) ve daha az byte
    kullanıyor; ham örnek saklamasına rağmen.
-7. **Tek seed kalanlar:** domain-shift, capacity seed 1/2 (bu gece tamamlanıyor).
-8. **CORe50 hâlâ yok**; domain-incremental pilot MNIST-rotate.
-9. **Prompt tabanlı rehearsal-free baselines kapsam dışı** (karar bekliyor).
+9. **CORe50 hâlâ yok**; domain-incremental pilot MNIST-rotate. Prompt tabanlı
+   rehearsal-free baselines kapsam dışı (karar bekliyor).
 
 **Kullanılacak cümle:** "Preliminary experiments suggest PAL-MoE improves the
 forgetting–memory trade-off under limited memory, especially at long task

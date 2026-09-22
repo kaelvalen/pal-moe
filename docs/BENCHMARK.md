@@ -685,6 +685,18 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     Report both protocols together; the honest claim is a storage-format
     dependent trade-off, not dominance.
 
+21. **Baselines that did not pay off: the raw-store hybrid and MIR.** With the
+    real raw store (no feature cache, `proto_size=1000`, 3 seeds,
+    `results/hybrid_raw`), the hybrid adds 1.2-1.5 accuracy points over pure
+    (CIFAR-10 49.63 ± 1.19 / 18.03 vs 48.39 ± 1.55 / 20.82; CIFAR-100
+    16.90 ± 0.19 / 19.05 vs 15.97 ± 0.31 / 30.65) but stores 6.6x the bytes
+    (14.47 MB vs 2.18 MB on CIFAR-10). At an equal 1 MiB budget the raw hybrid
+    loses to pure (39.93 vs 46.16, fact 20), so the default-config gain is
+    bought with memory. MIR (Aljundi et al., 2019; feature cache, P=250,
+    3 seeds, `results/mir`) reaches CIFAR-10 37.62 ± 1.04 / 61.79 and
+    CIFAR-100 10.50 / 66.16 versus ER's 39.92 / 58.87 and 10.93 / 66.91:
+    interference-based selection does not beat random replay here.
+
 ## Ablations
 
 `experiments/run_ablation.py` sweeps loss components, expert-init strategy,
