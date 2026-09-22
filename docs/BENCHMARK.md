@@ -659,6 +659,32 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     raw-vs-latent comparison. New PAL runs record `stores_raw` so the JSON is
     self-documenting.
 
+20. **Raw-pipeline equal-byte sweep: the memory claim holds where storage
+    formats differ.** In the raw pipeline (frozen ResNet-18, no feature cache)
+    a raw replay item costs 12,296 B while a PAL prototype costs 2,184 B, so
+    at a fixed byte budget PAL stores ~5.6x more items. CIFAR-10, 1 MiB,
+    3 seeds (`results/equalbyte_raw/c10r18`):
+
+    | Method | Avg Acc | Forgetting | Realised |
+    | :-- | :--: | :--: | --: |
+    | Latent replay (1016 items) | **50.36 ± 0.64%** | 41.27 ± 1.76% | 1023 KiB |
+    | **PAL-MoE pure (480 prototypes)** | 46.16 ± 1.11% | **21.66 ± 1.73%** | 1024 KiB |
+    | PAL + Replay (hybrid, 72) | 39.93 ± 0.56% | 32.68 ± 0.74% | 1018 KiB |
+    | DER++ (85 items) | 36.81 ± 0.32% | 61.42 ± 1.03% | 1024 KiB |
+    | ER (85 items) | 30.17 ± 1.30% | 72.77 ± 2.04% | 1021 KiB |
+    | iCaRL (k=8) | 26.27 ± 2.71% | 22.51 ± 1.88% | 970 KiB |
+
+    PAL beats raw ER by 16 accuracy points with 3.4x less forgetting and
+    DER++ by 9.4 points with 2.8x less forgetting; it matches latent replay's
+    accuracy with ~2x lower forgetting. At 4 MiB (seed 42) the ordering is
+    latent replay 55.39, PAL 49.19 / 22.06, DER++ 46.60, ER 43.40; on
+    CIFAR-100 at 1 MiB (seed 42) latent replay 13.74 / 61.18, PAL 13.70 /
+    31.79, DER++ 9.00, ER 8.40. In the feature-cache protocol everyone stores
+    features (design fact 19), the byte advantage disappears, and plain replay
+    leads accuracy while PAL keeps the forgetting advantage (fact 18 note).
+    Report both protocols together; the honest claim is a storage-format
+    dependent trade-off, not dominance.
+
 ## Ablations
 
 `experiments/run_ablation.py` sweeps loss components, expert-init strategy,

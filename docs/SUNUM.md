@@ -206,7 +206,30 @@ söylenmeli.
 
 ### 5.4 Equal-byte (adil bellek) — asıl hikâye
 
-Feature-cache, CIFAR-10 ResNet-18, 3 seed:
+**Raw pipeline (asıl H2 testi; ER ham görüntü saklar, PAL latent).**
+CIFAR-10 ResNet-18, 1 MiB, 3 seed:
+
+| Yöntem | Doğruluk | Unutma | Gerçekleşen |
+| :-- | :-- | :-- | --: |
+| Latent replay (1016 öğe) | **50.36 ± 0.64** | 41.27 | 1023 KiB |
+| **PAL-MoE pure (480 prototip)** | 46.16 ± 1.11 | **21.66** | 1024 KiB |
+| PAL + Replay (hybrid) | 39.93 ± 0.56 | 32.68 | 1018 KiB |
+| DER++ (85 öğe) | 36.81 ± 0.32 | 61.42 | 1024 KiB |
+| ER (85 öğe) | 30.17 ± 1.30 | 72.77 | 1021 KiB |
+| iCaRL (k=8) | 26.27 ± 2.71 | 22.51 | 970 KiB |
+
+4 MiB (seed 42): latent replay 55.39, PAL 49.19 / **22.06**, DER++ 46.60,
+ER 43.40, iCaRL 32.48. CIFAR-100 1 MiB (seed 42): latent replay 13.74 /
+61.18, PAL 13.70 / **31.79**, hybrid 10.19, DER++ 9.00, ER 8.40.
+
+> **Okuma:** Raw pipeline'da PAL'ın kompakt deposu (2.184 B/prototip vs
+> 12.296 B/ham görüntü) byte başına ~5.6× daha fazla öğe alıyor: 1 MiB'de raw
+> ER'i **+16 doğruluk puanı** ve **3.4× az unutmayla**, DER++'ı +9.4 puan ve
+> 2.8× az unutmayla geçiyor; latent replay'in doğruluğuna ~2× az unutmayla
+> ulaşıyor. Bellek iddiası bu protokolde geçerli.
+
+**Feature-cache protokolü (herkes özellik saklar — dürüst karşı-örnek).**
+CIFAR-10 ResNet-18, 3 seed:
 
 | Bütçe | ER | DER++ | PAL pure | iCaRL |
 | :-- | :-- | :-- | :-- | :-- |
@@ -216,11 +239,12 @@ Feature-cache, CIFAR-10 ResNet-18, 3 seed:
 CIFAR-100, 1 MiB, 3 seed: DER++ 16.97 ± 0.63, ER 13.64 ± 0.20, PAL
 12.15 ± 0.56 / **34.21 unutma**, iCaRL 10.72 / 9.93.
 
-> **Okuma:** eşit byte'ta doğruluk lideri ER/DER++; PAL ~1.5–2× daha az
-> unutuyor. Yayınlanmış item-bütçesi tabloları PAL'ı kayırıyordu (1000 prototip
-> vs 250 öğe). Raw pipeline koşusu (bugün) PAL'ın kompakt deposunun
-> (2.184 B/prototip vs 12.296 B/ham görüntü) doğruluğa çevrilip
-> çevrilmediğini test ediyor.
+> **Okuma:** Bu protokolde replay tabanları da özellik sakladığı için öğe
+> başına byte farkı kalmıyor ve doğruluk lideri ER/DER++ oluyor; PAL yine
+> ~1.5–2× daha az unutuyor. İki tabloyu birlikte sunmak, iddiayı "her yerde
+> daha iyi" olmaktan çıkarıp **depolama formatına bağlı bir denge** haline
+> getiriyor. Yayınlanmış item-bütçesi tabloları PAL'ı kayırıyordu (1000
+> prototip vs 250 öğe).
 
 ### 5.5 Mekanizma ayrıştırması (CIFAR-10 ResNet-18, 3 seed)
 
@@ -275,8 +299,14 @@ riski doğrulandı.
 
 ## 6. Dürüst bulgular (hocaya kendin söyle)
 
-1. **Eşit byte'ta lider biz değiliz.** Doğrulukta ER/DER++ önde; bizim
-   avantajımız unutma (~1.5–2×). Item-bütçesi tabloları PAL'ı kayırıyordu.
+1. **Eşit byte'ta sonuç protokole bağlı.** Raw pipeline'da (ER ham görüntü,
+   PAL latent saklar) PAL byte başına ~5.6× daha fazla öğe alıyor ve 1 MiB'de
+   raw ER'i **+16 puan / 3.4× az unutmayla**, DER++'ı +9.4 puan / 2.8× az
+   unutmayla geçiyor. Feature-cache protokolünde herkes özellik sakladığı için
+   bu avantaj kayboluyor ve doğruluk lideri ER/DER++ oluyor; PAL yine ~1.5–2×
+   daha az unutuyor. **İddia: depolama formatına bağlı denge — her yerde
+   üstünlük değil.** Yayınlanmış item-bütçesi tabloları PAL'ı kayırıyordu
+   (1000 prototip vs 250 öğe).
 2. **H5 çürütüldü.** Kapı her genişlemeyi kabul etti; gated = forced; expert
    reuse yok. "Dinamik allocation" iddiası daraltılmalı.
 3. **OOD terimi mevcut reçetede nötr.** Eski reçetedeki katkısı (fact 1)

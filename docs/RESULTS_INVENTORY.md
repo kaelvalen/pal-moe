@@ -42,8 +42,8 @@
 | Directory | Contents | Status | Referenced by |
 | :-- | :-- | :-- | :-- |
 | `equalbyte/` | E4 feature-cache Pareto, CIFAR-10/100 (real seeds 42 1 2 at 1/4 MiB) | RUN-DAY | EXPERIMENT_PLAN findings |
-| `equalbyte_raw/` | E4 raw-pipeline Pareto (raw ER 12,296 B vs PAL 2,184 B per item) | PENDING (wave 2) | — |
-| `hybrid_raw/` | True hybrid vs pure in the raw pipeline | PENDING (wave 2) | — |
+| `equalbyte_raw/` | E4 raw-pipeline Pareto (raw ER 12,296 B vs PAL 2,184 B per item); C10 3 seeds, C100 seed 42 | RUN-DAY | SUNUM §5.4, BENCHMARK fact 20 |
+| `hybrid_raw/` | True hybrid vs pure in the raw pipeline (running) | RUN-DAY | — |
 | `ablation_final/` | E5 component ladder (7 variants × 3 seeds, CIFAR-10) | RUN-DAY | SUNUM §5.5 |
 | `growth/` | E7 gated vs forced expansion, routing retention/matrices | RUN-DAY | SUNUM §5.8 |
 | `drift/` | E8 anchor-refresh + inference-anchoring cells | RUN-DAY | SUNUM §5.7 |
