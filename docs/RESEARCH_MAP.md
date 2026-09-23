@@ -1,10 +1,10 @@
 # Research Map - PAL-MoE components and their literature lineage
 
-> Which research line each part of the codebase comes from, what is
-> implemented vs adapted vs absent, and where the evidence lives. Companion to
-> `BENCHMARK.md` (protocol/design facts) and `EXPERIMENT_PLAN.md` (paper plan).
-> Bibliographic details must be verified against the original papers before
-> they enter a bibliography (see the checklist in `EXPERIMENT_PLAN.md §7`).
+Which research line each part of the codebase comes from, what is
+implemented vs adapted vs absent, and where the evidence lives. Companion to
+`BENCHMARK.md` (protocol/design facts) and `EXPERIMENT_PLAN.md` (paper plan).
+Bibliographic details must be verified against the original papers before
+they enter a bibliography (see the checklist in `EXPERIMENT_PLAN.md` section 7).
 
 ## 1. Continual-learning foundations
 

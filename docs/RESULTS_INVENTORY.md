@@ -1,11 +1,11 @@
 # Results Inventory
 
-> What every directory under `results/` contains, what it is evidence for, and
-> whether it is current. Regenerate the auto tables with
-> `python experiments/paper_report.py` (skips `results/archive/`).
-> Status legend: **HEADLINE** (quoted in README/SUNUM), **EVIDENCE**
-> (design facts / ablations), **RUN-DAY** (2026-09-22), **PENDING** (queued
-> tonight), **ARCHIVE** (exploratory, not cited).
+What every directory under `results/` contains, what it is evidence for, and
+whether it is current. Regenerate the auto tables with
+`python experiments/paper_report.py` (skips `results/archive/`).
+Status legend: HEADLINE (quoted in README/SUNUM), EVIDENCE (design facts and
+ablations), RUN-DAY (2026-09-22/23), PENDING (queued), ARCHIVE (exploratory,
+not cited).
 
 ## Headline tables
 

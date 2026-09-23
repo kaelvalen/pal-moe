@@ -1,8 +1,8 @@
 # Code Review - PAL-MoE codebase
 
-> Assessment of structure, modularity and comment style (2026-09-23), written
-> for the advisor meeting and as a refactor backlog. The run queue is active:
-> nothing here changes behaviour.
+Assessment of structure, modularity and comment style (2026-09-23), written
+for the advisor meeting and as a refactor backlog. The run queue is active;
+nothing here changes behaviour.
 
 ## Verdict
 
@@ -15,8 +15,8 @@ architecture.
 ## Layering (dependency direction is consistent)
 
 ```
-data/ ──► models/ ──► memory/ ──► adaptation/ + builder/ + trigger/ ──► evaluation/
-                                   (training loop)                    (metrics)
+data/ -> models/ -> memory/ -> adaptation/ + builder/ + trigger/ -> evaluation/
+                                (training loop)                 (metrics)
 experiments/  orchestrate everything; no method logic lives there.
 pal_moe/factory.py  is the only place that constructs routers/models/memory.
 ```
