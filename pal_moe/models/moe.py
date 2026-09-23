@@ -60,9 +60,10 @@ class DynamicMoE(nn.Module):
         self.proto_routing_alpha = 0.0
         self.proto_routing_threshold = None
 
-        assert len(self.experts) == self.router.num_experts, (
-            f"Expert count mismatch: {len(self.experts)} experts vs {self.router.num_experts} router heads"
-        )
+        if len(self.experts) != self.router.num_experts:
+            raise ValueError(
+                f"Expert count mismatch: {len(self.experts)} experts vs {self.router.num_experts} router heads"
+            )
 
     @property
     def num_experts(self) -> int:

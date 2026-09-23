@@ -78,6 +78,23 @@ function docstrings, and simple linear code.
 - What is missing is *orientation* documentation (how the layers fit), which
   `docs/RESEARCH_MAP.md`, `experiments/README.md` and this file now provide.
 
+## Tooling note
+
+`black==26.5.1` formats `assert condition, long_message` differently on Python
+3.12 (CI) and 3.14 (local): the parenthesised form it picks depends on the
+running interpreter, not only on `target-version`. To keep `black --check .`
+green in CI:
+
+- avoid long assert messages; split the condition into a variable and keep
+  the message short, or use an `if ...: raise ValueError(...)`;
+- run the CI formatter locally with the matching interpreter:
+
+  ```bash
+  uv venv --python 3.12 /tmp/black312
+  uv pip install --python /tmp/black312/bin/python "black==26.5.1"
+  /tmp/black312/bin/black --check .
+  ```
+
 ## Refactor backlog (after the paper run, in priority order)
 
 1. **Split the benchmark runner** into
