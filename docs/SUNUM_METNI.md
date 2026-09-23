@@ -1,6 +1,5 @@
 ## Açılış
 
-Hocam . Bugün size PAL-MoE üzerinde yaptığım çalışmayı anlatacağım.
 PAL-MoE, class-incremental continual learning için geliştirdiğim, dinamik
 büyüyebilen bir Mixture-of-Experts mimarisi. Konuşmada önce problemi ve
 yöntemin nasıl çalıştığını anlatacağım, sonra deneysel kurulumu ve sonuçları

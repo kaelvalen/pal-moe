@@ -1,11 +1,10 @@
 # PAL-MoE sunum notları
 
-Bu dosya toplantı için hazırlandı: anlatım sırası, güncel sayılar, sınırlamalar
-ve muhtemel sorular burada. Ayrıntılı metodoloji `BENCHMARK.md`, deney planı
+Güncel sayılar, sınırlamalar ve muhtemel sorular burada. Ayrıntılı metodoloji `BENCHMARK.md`, deney planı
 `EXPERIMENT_PLAN.md`, literatür eşlemesi `RESEARCH_MAP.md`, sonuç dizinleri
 `RESULTS_INVENTORY.md` dosyalarında.
 
-## 1. Kısa anlatım
+## 1. PAL-MoE nedir?
 
 PAL-MoE, class-incremental continual learning için dinamik büyüyebilen bir
 Mixture-of-Experts mimarisi. Yeni görev geldiğinde yeni bir expert açılıyor ve
@@ -34,19 +33,19 @@ da açıkça söylüyorum.
 
 Slayt planı:
 
-| Slayt | İçerik | Kaynak |
-| --: | :-- | :-- |
-| 1 | Başlık | - |
-| 2 | Problem: unutma ve bellek kısıtı | bölüm 3 |
-| 3 | Fikir: uzmanlaştırma ve "yeniden kullan mı, yeni expert mi" sorusu | bölüm 3 |
-| 4 | Mimari ve prototip belleği | bölüm 4 |
-| 5 | Görev döngüsü: kalibrasyon, distillation, routing kilidi | bölüm 4 |
-| 6 | Literatür konumu | bölüm 5 |
-| 7 | Sonuçlar: MNIST, CIFAR-10, CIFAR-100, ViT | bölüm 6.1-6.3 |
-| 8 | Eşit byte Pareto figürü | bölüm 6.4, `results/figures/pareto_equalbyte_c10r18.png` |
-| 9 | Ablation: asıl mekanizma prototype anchoring | bölüm 6.5 |
-| 10 | Growth/reuse ve kapasite | bölüm 6.6, 6.8 |
-| 11 | Sınırlamalar ve sonraki adımlar | bölüm 7-8 |
+| Slayt | İçerik                                                              | Kaynak                                                      |
+| ----: | :-------------------------------------------------------------------- | :---------------------------------------------------------- |
+|     1 | Başlık                                                              | -                                                           |
+|     2 | Problem: unutma ve bellek kısıtı                                   | bölüm 3                                                   |
+|     3 | Fikir: uzmanlaştırma ve "yeniden kullan mı, yeni expert mi" sorusu | bölüm 3                                                   |
+|     4 | Mimari ve prototip belleği                                           | bölüm 4                                                   |
+|     5 | Görev döngüsü: kalibrasyon, distillation, routing kilidi          | bölüm 4                                                   |
+|     6 | Literatür konumu                                                     | bölüm 5                                                   |
+|     7 | Sonuçlar: MNIST, CIFAR-10, CIFAR-100, ViT                            | bölüm 6.1-6.3                                             |
+|     8 | Eşit byte Pareto figürü                                            | bölüm 6.4,`results/figures/pareto_equalbyte_c10r18.png` |
+|     9 | Ablation: asıl mekanizma prototype anchoring                         | bölüm 6.5                                                 |
+|    10 | Growth/reuse ve kapasite                                              | bölüm 6.6, 6.8                                            |
+|    11 | Sınırlamalar ve sonraki adımlar                                    | bölüm 7-8                                                 |
 
 Sunumda açılabilecek dosyalar: `results/paper_report.md` (otomatik tablolar ve
 figürler), `results/growth/` (routing matrisleri), `tests/test_pal_moe.py`
@@ -89,14 +88,14 @@ Bu durumda soru şu hale gelir:
 
 Hipotezlerin güncel durumu:
 
-| Hipotez | Durum |
-| :-- | :-- |
-| H1: Dinamik uzmanlaşma girişimi azaltır | Kısmen. Ablation'da asıl katkı anchor'larda: static MoE 24.4, anchor'larla 49.9 |
-| H2: Eşit byte'ta latent replay rekabetçi | Destekli. Raw pipeline'da latent replay ER'den çok daha verimli |
-| H3: Prototip anchor'lar routing'i stabilize eder | Destekli. Ablation'ın baskın mekanizması |
-| H4: Negatif sınır terimi yanlış atamayı azaltır | Mevcut reçetede nötr; distillation varken gereksizleşiyor |
-| H5: Politika expert'leri yeniden kullanır | Çürütüldü. CIFAR-100'de gated = forced, 20/20 expert |
-| H6: Eski routing korunur, yenisi esnek kalır | Kısmen. RR_t 0.78-0.85, ama test routing'i dağınık |
+| Hipotez                                               | Durum                                                                              |
+| :---------------------------------------------------- | :--------------------------------------------------------------------------------- |
+| H1: Dinamik uzmanlaşma girişimi azaltır            | Kısmen. Ablation'da asıl katkı anchor'larda: static MoE 24.4, anchor'larla 49.9 |
+| H2: Eşit byte'ta latent replay rekabetçi            | Destekli. Raw pipeline'da latent replay ER'den çok daha verimli                   |
+| H3: Prototip anchor'lar routing'i stabilize eder      | Destekli. Ablation'ın baskın mekanizması                                        |
+| H4: Negatif sınır terimi yanlış atamayı azaltır | Mevcut reçetede nötr; distillation varken gereksizleşiyor                       |
+| H5: Politika expert'leri yeniden kullanır            | Çürütüldü. CIFAR-100'de gated = forced, 20/20 expert                          |
+| H6: Eski routing korunur, yenisi esnek kalır         | Kısmen. RR_t 0.78-0.85, ama test routing'i dağınık                             |
 
 ## 4. Mimari
 
@@ -138,15 +137,15 @@ design fact 15).
 
 ## 5. Literatürde konum
 
-| Çizgi | Temsilci çalışmalar | Bu repodaki karşılığı |
-| :-- | :-- | :-- |
-| Replay | ER, DER++, ER-ACE, MIR | `pal_moe/baselines/` |
-| Regularizasyon | EWC | `baselines/ewc.py` |
-| Prototip ve temsil | iCaRL, latent replay | `baselines/icarl.py`, `memory/prototype_memory.py` |
-| Parametre izolasyonu | PackNet, HAT | expert dondurma ve routing kilidi |
-| Kapasite genişlemesi | PNN, Expert Gate | `models/expert.py`, `builder/` ve `trigger/` |
-| MoE ve CL | 2024 MoE-CL teorisi, 2025-26 adaptif MoE çalışmaları | dinamik allocation sorusu (H5, E7) |
-| Değerlendirme | Mammoth, 2026 eşit-byte protokolü | `memory_bytes` muhasebesi, E4 sweep |
+| Çizgi                | Temsilci çalışmalar                                   | Bu repodaki karşılığı                             |
+| :-------------------- | :------------------------------------------------------- | :----------------------------------------------------- |
+| Replay                | ER, DER++, ER-ACE, MIR                                   | `pal_moe/baselines/`                                 |
+| Regularizasyon        | EWC                                                      | `baselines/ewc.py`                                   |
+| Prototip ve temsil    | iCaRL, latent replay                                     | `baselines/icarl.py`, `memory/prototype_memory.py` |
+| Parametre izolasyonu  | PackNet, HAT                                             | expert dondurma ve routing kilidi                      |
+| Kapasite genişlemesi | PNN, Expert Gate                                         | `models/expert.py`, `builder/` ve `trigger/`     |
+| MoE ve CL             | 2024 MoE-CL teorisi, 2025-26 adaptif MoE çalışmaları | dinamik allocation sorusu (H5, E7)                     |
+| Değerlendirme        | Mammoth, 2026 eşit-byte protokolü                      | `memory_bytes` muhasebesi, E4 sweep                  |
 
 Yenilik iddiası: bileşenlerin hiçbiri yeni değil. İddia, üç mekanizmanın
 class-incremental ve sınırlı bellek koşullarında birlikte tasarımı ile
@@ -160,28 +159,28 @@ kapasite genişlemesi ve prototype-anchored routing.
 
 Split-MNIST, 5 seed (2026-09-22 yenilemesi):
 
-| Yöntem | Doğruluk | Unutma | Veri |
-| :-- | :-- | :-- | --: |
-| DER++ (P=250) | 87.65 ± 0.94 | 6.47 | 777 KB |
-| MIR (P=250) | 83.30 ± 1.95 | 15.27 | 768 KB |
-| Latent replay (P=250) | 82.74 ± 0.64 | 16.88 | 127 KB |
-| ER (P=250) | 82.41 ± 1.30 | 17.42 | 768 KB |
-| PAL-MoE + hybrid | 80.06 ± 1.11 | 5.56 | 1061 KB |
-| PAL-MoE pure | 79.29 ± 1.20 | 8.02 | 285 KB |
-| iCaRL (k=25) | 59.15 ± 2.13 | 10.68 | 771 KB |
+| Yöntem               | Doğruluk     | Unutma |    Veri |
+| :-------------------- | :------------ | :----- | ------: |
+| DER++ (P=250)         | 87.65 ± 0.94 | 6.47   |  777 KB |
+| MIR (P=250)           | 83.30 ± 1.95 | 15.27  |  768 KB |
+| Latent replay (P=250) | 82.74 ± 0.64 | 16.88  |  127 KB |
+| ER (P=250)            | 82.41 ± 1.30 | 17.42  |  768 KB |
+| PAL-MoE + hybrid      | 80.06 ± 1.11 | 5.56   | 1061 KB |
+| PAL-MoE pure          | 79.29 ± 1.20 | 8.02   |  285 KB |
+| iCaRL (k=25)          | 59.15 ± 2.13 | 10.68  |  771 KB |
 
 Latent replay 127 KB ile ER'in 768 KB'da aldığı doğruluğa yaklaşıyor; bu,
 depolama formatının etkisini gösteren en net tek sonuç.
 
 Split-CIFAR-10, conv, 3 seed (2026-09-23 yenilemesi):
 
-| Yöntem | Doğruluk | Unutma | Veri |
-| :-- | :-- | :-- | --: |
-| PAL-MoE + hybrid | 39.00 ± 0.09 | 22.85 | 14.47 MB |
-| PAL-MoE pure | 37.81 ± 0.57 | 22.03 | 2.18 MB |
-| DER++ (P=250) | 31.72 ± 0.62 | 61.18 | 3.08 MB |
-| iCaRL (k=25) | 25.35 ± 1.33 | 15.26 | 3.08 MB |
-| ER (P=250) | 25.14 ± 0.23 | 73.00 | 3.07 MB |
+| Yöntem          | Doğruluk     | Unutma |     Veri |
+| :--------------- | :------------ | :----- | -------: |
+| PAL-MoE + hybrid | 39.00 ± 0.09 | 22.85  | 14.47 MB |
+| PAL-MoE pure     | 37.81 ± 0.57 | 22.03  |  2.18 MB |
+| DER++ (P=250)    | 31.72 ± 0.62 | 61.18  |  3.08 MB |
+| iCaRL (k=25)     | 25.35 ± 1.33 | 15.26  |  3.08 MB |
+| ER (P=250)       | 25.14 ± 0.23 | 73.00  |  3.07 MB |
 
 PAL pure, DER++'ı 6.1 puan geçiyor ve daha az bellek kullanıyor.
 
@@ -189,58 +188,57 @@ PAL pure, DER++'ı 6.1 puan geçiyor ve daha az bellek kullanıyor.
 
 Split-CIFAR-100, conv, 3 seed:
 
-| Yöntem | Doğruluk | Unutma | Veri |
-| :-- | :-- | :-- | --: |
-| iCaRL (k=25) | 10.02 ± 0.17 | 11.13 | 2.66 MB |
-| PAL-MoE pure | 9.50 ± 0.42 | 23.24 | 4.13 MB |
-| PAL-MoE + latent replay | 9.47 ± 0.89 | 13.84 | 4.16 MB |
-| DER++ (P=250) | 5.95 ± 0.31 | 63.19 | 0.36 MB |
+| Yöntem                 | Doğruluk     | Unutma |    Veri |
+| :---------------------- | :------------ | :----- | ------: |
+| iCaRL (k=25)            | 10.02 ± 0.17 | 11.13  | 2.66 MB |
+| PAL-MoE pure            | 9.50 ± 0.42  | 23.24  | 4.13 MB |
+| PAL-MoE + latent replay | 9.47 ± 0.89  | 13.84  | 4.16 MB |
+| DER++ (P=250)           | 5.95 ± 0.31  | 63.19  | 0.36 MB |
 
 Split-CIFAR-100, ResNet-18, 3 seed:
 
-| Yöntem | Doğruluk | Unutma | Veri |
-| :-- | :-- | :-- | --: |
-| PAL-MoE pure | 15.65 ± 0.39 | 31.69 | 4.18 MB |
-| iCaRL (k=25) | 13.97 ± 0.87 | 10.96 | 2.66 MB |
-| DER++ (P=250) | 13.12 ± 0.08 | 66.91 | 0.36 MB |
-| ER (P=250) | 11.06 ± 0.22 | 66.72 | 0.26 MB |
+| Yöntem       | Doğruluk     | Unutma |    Veri |
+| :------------ | :------------ | :----- | ------: |
+| PAL-MoE pure  | 15.65 ± 0.39 | 31.69  | 4.18 MB |
+| iCaRL (k=25)  | 13.97 ± 0.87 | 10.96  | 2.66 MB |
+| DER++ (P=250) | 13.12 ± 0.08 | 66.91  | 0.36 MB |
+| ER (P=250)    | 11.06 ± 0.22 | 66.72  | 0.26 MB |
 
 ### 6.3 Güçlü omurga
 
 ViT-B/16, CIFAR-10, 3 seed:
 
-| Yöntem | Doğruluk | Unutma | Veri |
-| :-- | :-- | :-- | --: |
-| PAL-MoE pure | 91.74 ± 0.28 | 5.61 | 6.37 MB |
-| iCaRL (k=25) | 84.18 ± 0.00 | 10.38 | 0.80 MB |
-| ER (P=250) | 82.89 ± 0.10 | 20.29 | 0.77 MB |
-| DER++ (P=250) | 73.28 ± 0.31 | 32.10 | 0.78 MB |
+| Yöntem       | Doğruluk     | Unutma |    Veri |
+| :------------ | :------------ | :----- | ------: |
+| PAL-MoE pure  | 91.74 ± 0.28 | 5.61   | 6.37 MB |
+| iCaRL (k=25)  | 84.18 ± 0.00 | 10.38  | 0.80 MB |
+| ER (P=250)    | 82.89 ± 0.10 | 20.29  | 0.77 MB |
+| DER++ (P=250) | 73.28 ± 0.31 | 32.10  | 0.78 MB |
 
 ViT-B/16, CIFAR-100, 3 seed:
 
-| Yöntem | Doğruluk | Unutma | Veri |
-| :-- | :-- | :-- | --: |
-| iCaRL (k=25) | 64.94 ± 0.00 | 12.25 | 7.99 MB |
-| PAL-MoE pure | 59.34 ± 0.32 | 18.17 | 14.23 MB |
-| DER++ (P=250) | 50.97 ± 0.15 | 47.30 | 0.87 MB |
-| ER (P=250) | 34.06 ± 0.90 | 66.56 | 0.77 MB |
+| Yöntem       | Doğruluk     | Unutma |     Veri |
+| :------------ | :------------ | :----- | -------: |
+| iCaRL (k=25)  | 64.94 ± 0.00 | 12.25  |  7.99 MB |
+| PAL-MoE pure  | 59.34 ± 0.32 | 18.17  | 14.23 MB |
+| DER++ (P=250) | 50.97 ± 0.15 | 47.30  |  0.87 MB |
+| ER (P=250)    | 34.06 ± 0.90 | 66.56  |  0.77 MB |
 
-CIFAR-100 ViT'te iCaRL hem daha doğru hem daha az bellek kullanıyor. Bunu
-sonuç bölümünde açıkça söylüyorum.
+CIFAR-100 ViT'te iCaRL hem daha doğru hem daha az bellek kullanıyor. 
 
 ### 6.4 Eşit byte karşılaştırması
 
 Raw pipeline (asıl test; ER ham görüntü saklar, PAL latent). CIFAR-10
 ResNet-18, 1 MiB, 3 seed:
 
-| Yöntem | Doğruluk | Unutma | Gerçekleşen |
-| :-- | :-- | :-- | --: |
-| Latent replay (1016 öğe) | 50.36 ± 0.64 | 41.27 | 1023 KiB |
-| PAL-MoE pure (480 prototip) | 46.16 ± 1.11 | 21.66 | 1024 KiB |
-| PAL + replay (hybrid) | 39.93 ± 0.56 | 32.68 | 1018 KiB |
-| DER++ (85 öğe) | 36.81 ± 0.32 | 61.42 | 1024 KiB |
-| ER (85 öğe) | 30.17 ± 1.30 | 72.77 | 1021 KiB |
-| iCaRL (k=8) | 26.27 ± 2.71 | 22.51 | 970 KiB |
+| Yöntem                     | Doğruluk     | Unutma | Gerçekleşen |
+| :-------------------------- | :------------ | :----- | ------------: |
+| Latent replay (1016 öğe)  | 50.36 ± 0.64 | 41.27  |      1023 KiB |
+| PAL-MoE pure (480 prototip) | 46.16 ± 1.11 | 21.66  |      1024 KiB |
+| PAL + replay (hybrid)       | 39.93 ± 0.56 | 32.68  |      1018 KiB |
+| DER++ (85 öğe)            | 36.81 ± 0.32 | 61.42  |      1024 KiB |
+| ER (85 öğe)               | 30.17 ± 1.30 | 72.77  |      1021 KiB |
+| iCaRL (k=8)                 | 26.27 ± 2.71 | 22.51  |       970 KiB |
 
 PAL, raw ER'i 16 puan geçiyor ve unutması 3.4 kat düşük; DER++'ı 9.4 puan ve
 2.8 kat daha az unutmayla geçiyor. Sebep, prototip başına 2.184 B ile ham
@@ -251,10 +249,10 @@ replay 13.74, PAL 13.70 (unutma 31.79), DER++ 9.00, ER 8.40.
 
 Feature-cache protokolü (herkes özellik saklar). CIFAR-10 ResNet-18, 3 seed:
 
-| Bütçe | ER | DER++ | PAL pure | iCaRL |
-| :-- | :-- | :-- | :-- | :-- |
-| 1 MiB | 49.86 ± 0.66 / 41.43 | 48.63 / 32.53 | 46.32 ± 0.54 / 21.37 | 35.96 / 28.52 |
-| 4 MiB | 54.95 ± 0.26 / 33.60 | 48.24 / 30.83 | 50.54 ± 1.19 / 19.15 | 41.44 / 28.74 |
+| Bütçe | ER                    | DER++         | PAL pure              | iCaRL         |
+| :------ | :-------------------- | :------------ | :-------------------- | :------------ |
+| 1 MiB   | 49.86 ± 0.66 / 41.43 | 48.63 / 32.53 | 46.32 ± 0.54 / 21.37 | 35.96 / 28.52 |
+| 4 MiB   | 54.95 ± 0.26 / 33.60 | 48.24 / 30.83 | 50.54 ± 1.19 / 19.15 | 41.44 / 28.74 |
 
 CIFAR-100 1 MiB, 3 seed: DER++ 16.97 ± 0.63, ER 13.64 ± 0.20, PAL
 12.15 ± 0.56 (unutma 34.21), iCaRL 10.72 / 9.93.
@@ -268,15 +266,15 @@ bir denge.
 
 CIFAR-10 ResNet-18, 3 seed:
 
-| Varyant | Doğruluk | Unutma |
-| :-- | :-- | :-- |
-| Naive | 17.71 | 88.95 |
-| ER (P=250) | 38.58 | 60.85 |
-| Latent replay (P=250) | 38.45 | 60.80 |
-| Static MoE (sadece genişleme) | 24.44 | 81.10 |
-| + prototype anchor ve router distillation | 49.87 | 19.84 |
-| + gate (forced yerine) | 49.45 | 20.63 |
-| + OOD 0.1 (tam reçete) | 48.88 | 20.42 |
+| Varyant                                   | Doğruluk | Unutma |
+| :---------------------------------------- | :-------- | :----- |
+| Naive                                     | 17.71     | 88.95  |
+| ER (P=250)                                | 38.58     | 60.85  |
+| Latent replay (P=250)                     | 38.45     | 60.80  |
+| Static MoE (sadece genişleme)            | 24.44     | 81.10  |
+| + prototype anchor ve router distillation | 49.87     | 19.84  |
+| + gate (forced yerine)                    | 49.45     | 20.63  |
+| + OOD 0.1 (tam reçete)                   | 48.88     | 20.42  |
 
 Kapasite genişlemesi tek başına ER'den kötü. Asıl katkı prototype
 anchor'larda: 25.4 puan doğruluk artışı, 61 puan unutma azalması. Gate ve OOD
@@ -297,14 +295,14 @@ replay bu benchmarklarda rastgele replay'ı geçemiyor.
 
 CIFAR-100 ResNet-18, 3 seed:
 
-| max_experts | Doğruluk | Unutma | Parametre |
-| --: | --: | --: | --: |
-| 2 | 14.80 | 42.24 | 0.55M |
-| 4 | 11.13 | 32.09 | 1.10M |
-| 6 | 15.88 | 30.30 | 1.65M |
-| 20 | 14.25 | 14.84 | 5.49M |
-| Param-eşleşmeli ER (2.46M) | 10.22 | 74.65 | 2.46M |
-| Param-eşleşmeli DER++ (2.46M) | 13.49 | 68.41 | 2.46M |
+|                     max_experts | Doğruluk | Unutma | Parametre |
+| ------------------------------: | --------: | -----: | --------: |
+|                               2 |     14.80 |  42.24 |     0.55M |
+|                               4 |     11.13 |  32.09 |     1.10M |
+|                               6 |     15.88 |  30.30 |     1.65M |
+|                              20 |     14.25 |  14.84 |     5.49M |
+|    Param-eşleşmeli ER (2.46M) |     10.22 |  74.65 |     2.46M |
+| Param-eşleşmeli DER++ (2.46M) |     13.49 |  68.41 |     2.46M |
 
 Doğruluk expert sayısından neredeyse bağımsız; unutma expert sayısıyla
 düşüyor. PAL 1.65M parametreyle 2.46M'lik ER ve DER++'ı geçiyor, unutması
@@ -314,10 +312,10 @@ yarısından az.
 
 CIFAR-100 ResNet-18, 3 seed:
 
-| Hücre | Pure | Latent replay varyantı |
-| :-- | :-- | :-- |
-| refresh kapalı | 15.65 ± 0.39 / 31.69 | 17.68 ± 0.97 / 17.47 |
-| refresh açık | 18.31 ± 1.03 / 18.82 | 21.13 ± 0.34 / 16.09 |
+| Hücre          | Pure                  | Latent replay varyantı |
+| :-------------- | :-------------------- | :---------------------- |
+| refresh kapalı | 15.65 ± 0.39 / 31.69 | 17.68 ± 0.97 / 17.47   |
+| refresh açık  | 18.31 ± 1.03 / 18.82 | 21.13 ± 0.34 / 16.09   |
 
 Kalibrasyon sonrası anchor'ları tazelemek belirgin kazanç sağlıyor
 (+2.7 doğruluk, -12.9 unutma). Inference anchoring (alpha=0.5) yaklaşık nötr.
