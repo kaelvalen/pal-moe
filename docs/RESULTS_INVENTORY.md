@@ -42,7 +42,7 @@ not cited).
 | Directory | Contents | Status | Referenced by |
 | :-- | :-- | :-- | :-- |
 | `equalbyte/` | E4 feature-cache Pareto, CIFAR-10/100 (real seeds 42 1 2 at 1/4 MiB) | RUN-DAY | EXPERIMENT_PLAN findings |
-| `equalbyte_raw/` | E4 raw-pipeline Pareto (raw ER 12,296 B vs PAL 2,184 B per item); C10 3 seeds, C100 seed 42 | RUN-DAY | SUNUM §5.4, BENCHMARK fact 20 |
+| `equalbyte_raw/` | E4 raw-pipeline Pareto (raw ER 12,296 B vs PAL 2,184 B per item), plus reservoir cells; C10 3 seeds, C100 seed 42 | RUN-DAY | gncl, BENCHMARK fact 20 |
 | `hybrid_raw/` | True hybrid vs pure in the raw pipeline, 3 seeds | RUN-DAY | SUNUM §5.5, BENCHMARK fact 21 |
 | `ablation_final/` | E5 component ladder (7 variants × 3 seeds, CIFAR-10) | RUN-DAY | SUNUM §5.5 |
 | `growth/` | E7 gated vs forced expansion, routing retention/matrices | RUN-DAY | SUNUM §5.8 |
@@ -54,7 +54,7 @@ not cited).
 | `final_c10conv_multiseed/`, `final_c100conv_multiseed/` | E3 conv regenerations with byte accounting, 3 seeds | RUN-DAY | SUNUM §5.1, BENCHMARK fact 22 |
 | `mnist_domainshift_multiseed/` | E11 domain-shift, 5 seeds | RUN-DAY | SUNUM §5.8 |
 | `latency/` | M4 latency JSONs, batch 1/128 (ResNet-18, ViT) | RUN-DAY | BENCHMARK fact 22 |
-| `appendix/` | AO10 reservoir sampling + online EWC (seed 42) | RUN-DAY | BENCHMARK fact 22 |
+| `appendix/` | AO10 reservoir sampling (3 seeds) + online EWC (seed 42) | RUN-DAY | BENCHMARK fact 22 |
 
 ## Archive (exploratory, untracked, gitignored)
 
