@@ -181,9 +181,11 @@ DER++ 87.65 ± 0.94 / 6.47 (777 KB); ER(250) 82.41 / 17.42 (768 KB); MIR
 > neredeyse eşit, **6× az bellekle**. Raw-vs-latent depolamanın en net
 > göstergesi (MNIST feature-cache'siz koşuyor).
 
-**Split-CIFAR-10, conv, 3 seed:** pure **37.30 ± 0.11 / 21.98**, hybrid
-38.66 ± 0.33 / 22.62; DER++ 31.83 ± 0.32 / 60.98; ER 25.70 / 72.10; iCaRL
-24.90 / 15.75.
+**Split-CIFAR-10, conv, 3 seed (2026-09-23 yenilemesi, byte muhasebeli):**
+pure **37.81 ± 0.57 / 22.03** (**2.18 MB**); hybrid 39.00 ± 0.09 / 22.85
+(14.47 MB); DER++ 31.72 ± 0.62 / 61.18 (3.08 MB); iCaRL 25.35 ± 1.33 / 15.26
+(3.08 MB); ER 25.14 / 73.00 (3.07 MB). **PAL pure, DER++'ı 6.1 puan geçiyor ve
+daha az bellek harcıyor** (2.18 vs 3.08 MB).
 
 ### 5.2 Uzun vade (20 görev)
 
@@ -302,8 +304,17 @@ riski doğrulandı.
 
 - **Growth/reuse (E7):** gated = forced (14.25 vs 14.34), 20/20 expert, owner
   routing %94.5.
-- **Domain-shift MNIST (tek seed):** pure 86.07 / 5.64; task-free akış 86.16
-  online, surprise 0.740.
+- **Domain-shift MNIST (5 seed, shared expert):** pure **85.38 ± 0.47 /
+  6.34 unutma** (285 KB); task-free akış ~86 online.
+- **Trainable encoder (E8b, CIFAR-10, seed 42):** pure **9.97 / 32.81** —
+  dondurulmuş temsile kıyasla (37.81) çöküyor; latent replay varyantı
+  10.63 / 12.65. **Yöntem dondurulmuş/güçlü temsile bağımlı.**
+- **Gecikme (M4, batch 1):** tek kafa 1.09 ms → PAL 1.71 ms (ResNet-18,
+  expert sayısından bağımsız); ViT'te 8.43 → 8.57–8.82 ms.
+- **Buffer politikası (AO10):** reservoir sampling replay tabanlarını ciddi
+  güçlendiriyor (feature-cache P=250: ER 43.23 vs 25.14 recency; DER++
+  48.25 vs 31.72). Yayınlanan recency varsayılanı tabanları olduğundan zayıf
+  gösteriyor; eşit-byte kontrolü reservoir ile tekrarlanıyor.
 - **Routing retention RR_t:** 0.78–0.85 (20 görev boyunca top-1 rota kimliği).
 
 ---
@@ -334,10 +345,17 @@ riski doğrulandı.
 7. **Feature-cache semantiği.** Feature-cache koşularında replay tabanları ve
    iCaRL özellik saklıyor; hybrid'in ham deposu kapalı → "latent replay"
    varyantı. (design fact 19)
-8. **iCaRL bazı benchmarklarda önde** (CIFAR-100 ViT) ve daha az byte
-   kullanıyor; ham örnek saklamasına rağmen.
-9. **CORe50 hâlâ yok**; domain-incremental pilot MNIST-rotate. Prompt tabanlı
-   rehearsal-free baselines kapsam dışı (karar bekliyor).
+8. **Temsil bağımlılığı.** Encoder eğitilebilir olunca pure PAL çöküyor
+   (37.81 → 9.97): yöntem dondurulmuş/güçlü temsile bağımlı. Frozen temsil
+   seçimi bir tasarım kararı, gizlenmemeli.
+9. **Baseline adaleti.** Replay tabanları yayınlanan "recency" buffer
+   politikasıyla olduğundan zayıf görünüyor; reservoir sampling ile ER
+   25.14 → 43.23 (feature-cache P=250). Eşit-byte sonuçları reservoir
+   kontrolüyle birlikte raporlanmalı.
+10. **iCaRL bazı benchmarklarda önde** (CIFAR-100 ViT ve CIFAR-100 conv:
+    daha az byte, daha az unutma) — ham örnek saklamasına rağmen.
+11. **CORe50 hâlâ yok**; domain-incremental pilot MNIST-rotate 5-seed. Prompt
+    tabanlı rehearsal-free baselines kapsam dışı (karar bekliyor).
 
 **Kullanılacak cümle:** "Preliminary experiments suggest PAL-MoE improves the
 forgetting–memory trade-off under limited memory, especially at long task

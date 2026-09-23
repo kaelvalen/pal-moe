@@ -51,10 +51,10 @@
 | `mir/` | E12 MIR baseline, 3 seeds | RUN-DAY | BENCHMARK fact 21 |
 | `tinyimagenet_multiseed/` | E10 Tiny-ImageNet 20×10 class-IL | PENDING (wave 2) | — |
 | `final_mnist_multiseed/`, `final_c10r18_multiseed/` | E3 regenerations with byte accounting (5/3 seeds) | RUN-DAY | SUNUM §5.1 |
-| `final_c10conv_multiseed/`, `final_c100conv_multiseed/` | E3 slow regenerations | PENDING (wave 2) | — |
-| `mnist_domainshift_multiseed/` | E11 5-seed domain-shift pilot | PENDING (wave 2) | — |
-| `latency/` | M4 latency JSONs (ResNet-18, ViT) | PENDING (wave 2) | — |
-| `appendix/` | AO10 reservoir sampling + online EWC | PENDING (wave 2) | — |
+| `final_c10conv_multiseed/`, `final_c100conv_multiseed/` | E3 conv regenerations with byte accounting, 3 seeds | RUN-DAY | SUNUM §5.1, BENCHMARK fact 22 |
+| `mnist_domainshift_multiseed/` | E11 domain-shift, 5 seeds | RUN-DAY | SUNUM §5.8 |
+| `latency/` | M4 latency JSONs, batch 1/128 (ResNet-18, ViT) | RUN-DAY | BENCHMARK fact 22 |
+| `appendix/` | AO10 reservoir sampling + online EWC (seed 42) | RUN-DAY | BENCHMARK fact 22 |
 
 ## Archive (exploratory, untracked, gitignored)
 

@@ -697,6 +697,26 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     CIFAR-100 10.50 / 66.16 versus ER's 39.92 / 58.87 and 10.93 / 66.91:
     interference-based selection does not beat random replay here.
 
+22. **Run-day night results (2026-09-23): representation dependence, latency
+    and the buffer-policy fairness gap.**
+
+    - **CIFAR-10 conv regeneration with bytes (3 seeds):** PAL pure
+      37.81 ± 0.57 / 22.03 at 2.18 MB beats DER++ 31.72 ± 0.62 / 61.18 at
+      3.08 MB and iCaRL 25.35 ± 1.33 / 15.26 at 3.08 MB of raw exemplars; the
+      raw hybrid adds 1.2 points for 6.6x memory (14.47 MB).
+    - **Trainable encoder (E8b, seed 42):** pure PAL-MoE collapses to
+      9.97 / 32.81 from 37.81 / 22.03 with a frozen encoder; the latent-replay
+      variant holds 10.63 / 12.65. The method depends on a frozen (or strongly
+      anchored) representation; state this explicitly.
+    - **Latency (M4, batch 1):** ResNet-18 single head 1.09 ms/sample, PAL-MoE
+      1.71 ms and flat in the number of stored experts; ViT-B/16 8.43 ms vs
+      8.57-8.82 ms.
+    - **Buffer policy (AO10):** reservoir sampling strongly improves the replay
+      baselines (feature cache, P=250: ER 43.23 vs 25.14 recency; DER++ 48.25
+      vs 31.72); online EWC 17.45. The published recency default understates
+      them, so the raw equal-byte cells are re-run with reservoir
+      (`paper_reservoir_check.sh`) before the final tables.
+
 ## Ablations
 
 `experiments/run_ablation.py` sweeps loss components, expert-init strategy,
