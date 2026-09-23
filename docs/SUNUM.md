@@ -262,6 +262,10 @@ kalmıyor; doğrulukta ER ve DER++ önde, PAL unutmada önde. İki tabloyu birli
 sunmak gerekiyor; iddia "her yerde daha iyi" değil, depolama formatına bağlı
 bir denge.
 
+Raw hücrelerin reservoir sampling ile tekrarı sıralamayı değiştirmiyor
+(1 MiB, 3 seed: ER 33.18 ± 1.11 / 68.04, DER++ 37.79 ± 1.17 / 60.38; PAL pure
+46.16 / 21.66).
+
 ### 6.5 Mekanizma ayrıştırması
 
 CIFAR-10 ResNet-18, 3 seed:
@@ -329,9 +333,13 @@ Kalibrasyon sonrası anchor'ları tazelemek belirgin kazanç sağlıyor
   (frozen: 37.81). Yöntem dondurulmuş temsile bağımlı.
 - Gecikme (batch 1): ResNet-18'de tek kafa 1.09 ms, PAL 1.71 ms ve expert
   sayısından bağımsız; ViT'te 8.43 ms ve 8.57-8.82 ms.
-- Buffer politikası: reservoir sampling tabanları ciddi güçlendiriyor
-  (feature-cache P=250: ER 25.14'ten 43.23'e, DER++ 31.72'den 48.25'e).
-  Eşit-byte hücreleri reservoir ile yeniden koşuluyor.
+- Buffer politikası: feature-cache protokolünde P=250'de reservoir sampling
+  tabanlara yaklaşık 4 puan doğruluk ve 5-8 puan daha az unutma kazandırıyor
+  (seed 42 eki: ER 43.23 / 51.75, recency 39.26 / 59.69; DER++ 48.25 / 40.65,
+  recency 44.37 / 45.16). Raw eşit-byte koşusunda etki küçük (ER
+  33.18 ± 1.11 / 68.04, recency 30.17 / 72.77; DER++ 37.79 ± 1.17 / 60.38,
+  recency 36.81 / 61.42), yani PAL'ın raw üstünlüğü recency varsayılanından
+  kaynaklanmıyor. Ekin kalan seed'leri koşuyor.
 - Router genelleme boşluğu: prototip owner doğruluğu %94.5, test routing'i
   dağınık (top-expert payı 0.15-0.24).
 
