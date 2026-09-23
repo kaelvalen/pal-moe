@@ -4,21 +4,22 @@
 
 Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for each task while a **prototype-anchored linear router** selects the expert for each input. The replay memory stores **128-dimensional latent vectors instead of raw images**, so its footprint is measured in kilobytes, and the pure (zero-raw-replay) mode requires no exemplar images at all.
 
-> **Where to start**
-> - [`docs/SUNUM.md`](docs/SUNUM.md) — Turkish presentation walkthrough: pitch, architecture, results, honest findings, likely questions.
-> - [`docs/RESULTS_INVENTORY.md`](docs/RESULTS_INVENTORY.md) — what every `results/` directory contains and its status.
-> - [`docs/RESEARCH_MAP.md`](docs/RESEARCH_MAP.md) — which literature line each code component comes from.
-> - [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) — structure/modularity/comment review and the refactor backlog.
-> - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) / [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md) — protocol/design facts and the paper experiment plan.
->
-> **Status (2026-09-22):** the tables below are the published **item-budget**
-> comparison. The corrected **equal-byte** protocol splits by storage format:
-> in the **raw pipeline** PAL-MoE beats raw ER by ~16 accuracy points at
-> 3.4× less forgetting (1 MiB, CIFAR-10); under the **feature cache** (where
-> every method stores features) plain replay leads accuracy while PAL-MoE
-> keeps ~1.5–2× lower forgetting. The gated allocation policy equals forced
-> expansion on CIFAR-100 (20/20 experts). Do not quote a table without
-> checking `docs/SUNUM.md §5–6` for the current framing.
+Documentation entry points:
+
+- [`docs/SUNUM.md`](docs/SUNUM.md): Turkish presentation notes (pitch, architecture, results, open problems, likely questions).
+- [`docs/RESULTS_INVENTORY.md`](docs/RESULTS_INVENTORY.md): what every `results/` directory contains and its status.
+- [`docs/RESEARCH_MAP.md`](docs/RESEARCH_MAP.md): which literature line each code component comes from.
+- [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md): structure and comment review, plus the refactor backlog.
+- [`docs/BENCHMARK.md`](docs/BENCHMARK.md) and [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md): protocol, design facts and the paper experiment plan.
+
+One caveat before quoting the tables below: they use the published item-budget
+comparison. The equal-byte comparison splits by storage format. In the raw
+pipeline PAL-MoE beats raw ER by about 16 accuracy points with 3.4x less
+forgetting (1 MiB, CIFAR-10). Under the feature cache every method stores
+features, so plain replay leads accuracy while PAL-MoE keeps 1.5-2x lower
+forgetting. The gated allocation policy equals forced expansion on CIFAR-100
+(20/20 experts). See `docs/SUNUM.md` sections 6 and 7 for the current
+numbers.
 
 ---
 
@@ -31,7 +32,7 @@ Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for e
    PAL-MoE stores lightweight 128-dimensional latent vectors (prototype centroids and exemplars) instead of raw pixels. At the end of each task, all experts are jointly calibrated on these latent exemplars, temporarily unfreezing all experts and then re-locking history. The full 5-task model occupies approximately 284 KB.
 
 3. **Expert freezing and routing protection.**
-   Older experts are locked after their task concludes; during a new task only the newest expert and routing row adapt. The lock is exact: the router sits in a zero weight-decay parameter group, so Adam's decoupled L2 term cannot shrink the locked historical rows (it used to, and that implicit decay was part of the older numbers — see `docs/BENCHMARK.md`, design fact 15). Fully freezing the router during joint calibration is harmful (pure 49.85 to 43.16, hybrid 82.23 to 66.94), and null-space row orthogonalization at initialization is harmful with weakly separated latents (49.85 to 22.87). Routing protection comes from the stability losses, the validation gate, the OOD term and the zero-replay prototype-owner router distillation (`--router_anchor_steps`), all verified by controlled ablation.
+   Older experts are locked after their task concludes; during a new task only the newest expert and routing row adapt. The lock is exact: the router sits in a zero weight-decay parameter group, so Adam's decoupled L2 term cannot shrink the locked historical rows (it used to, and that implicit decay was part of the older numbers - see `docs/BENCHMARK.md`, design fact 15). Fully freezing the router during joint calibration is harmful (pure 49.85 to 43.16, hybrid 82.23 to 66.94), and null-space row orthogonalization at initialization is harmful with weakly separated latents (49.85 to 22.87). Routing protection comes from the stability losses, the validation gate, the OOD term and the zero-replay prototype-owner router distillation (`--router_anchor_steps`), all verified by controlled ablation.
 
 4. **Contrastive pretraining and dynamic capacity growth.**
    CIFAR uses a 50-epoch SimCLR-pretrained conv encoder (fine-tuned adaptively); MNIST uses a 1-epoch autoencoder (frozen). When the quantitative trigger `S(x)` detects a domain shift, a new expert is spawned via function-preserving expansion, gated by a validation gate (new-task accuracy, prototype drift, historical prototype-accuracy drop).
@@ -50,7 +51,7 @@ recorded as `trainable_params` in every result JSON.
 
 > **Protocol note (feature-cached CIFAR/ViT runs):** those runs use
 > `--feature_cache`, so the replay baselines store cached feature vectors
-> (not raw images) and the "hybrid" variant's raw store is disabled — it is
+> (not raw images) and the "hybrid" variant's raw store is disabled - it is
 > pure + latent-exemplar replay and is labelled `PAL-MoE + Latent Replay` in
 > new runs. See the storage-semantics note and design fact 19 in
 > [`docs/BENCHMARK.md`](docs/BENCHMARK.md) for the byte accounting and the raw-pipeline
@@ -79,8 +80,8 @@ experts, width growth, merging, uncertainty weighting, task-free metrics, ...)
 are opt-in, tested and documented in the research-toolkit table of
 [`docs/BENCHMARK.md`](docs/BENCHMARK.md).
 
-Note: The pure variant reaches 79.36% without any raw exemplars — ahead of
-iCaRL, ER-ACE, ER(P=60), AGEM, EWC, naive fine-tuning and Standard-MoE — and its
+Note: The pure variant reaches 79.36% without any raw exemplars - ahead of
+iCaRL, ER-ACE, ER(P=60), AGEM, EWC, naive fine-tuning and Standard-MoE - and its
 7.91% forgetting is the second lowest in the table after DER++ (7.31%) despite
 storing only ~284 KB of latents. The hybrid variant stores the same latents plus
 250 raw exemplars and has the lowest forgetting overall (5.61%) at that budget,
@@ -168,10 +169,10 @@ relative gate); the single-seed 42 rows are the earlier full-suite run
 
 Notes: PAL-MoE pure beats every replay baseline by 3.6 accuracy points
 (DER++ 5.92%) with roughly 2.7× less forgetting, without storing a single raw
-image. The hybrid is within 0.15 points of iCaRL — which stores 10× more raw
-exemplars — with comparable forgetting. Router distillation reaches 91-93%
+image. The hybrid is within 0.15 points of iCaRL - which stores 10× more raw
+exemplars - with comparable forgetting. Router distillation reaches 91-93%
 owner-routing accuracy across the 6 experts; the negative prototype margin
-(−0.13) shows the 256-d conv representation is still the limiting factor (see
+(-0.13) shows the 256-d conv representation is still the limiting factor (see
 the next section).
 
 > **Validation-gate note:** the 3-seed rows use the config-default relative
@@ -181,7 +182,7 @@ the next section).
 > `cifar100_gate_absolute`) shows no material difference: pure 9.25 ± 0.27 /
 > 22.57 ± 2.65 versus 9.61 ± 0.71 / 24.79 ± 1.72, hybrid 10.16 ± 1.25 /
 > 13.97 ± 3.16 versus 9.94 ± 0.65 / 13.44 ± 2.13. All gaps are within one
-> standard deviation — **the gate policy is not the bottleneck; the
+> standard deviation - **the gate policy is not the bottleneck; the
 > representation is**. The config keeps the relative gate (slightly better
 > pure forgetting) and the knob stays configurable.
 
@@ -206,7 +207,7 @@ improvement measured so far: pure PAL-MoE rises from 9.48 ± 0.25% (conv,
 With the stronger representation the hybrid beats iCaRL by 5.7 accuracy points
 (18.96% vs 13.24%) and the pure variant beats every replay baseline; iCaRL
 still has the lowest forgetting (11.03%). The prototype margin improves from
-−0.13 (conv) to −0.076, confirming the representation diagnosis. Caveat: this
+-0.13 (conv) to -0.076, confirming the representation diagnosis. Caveat: this
 run is single-seed; a 3-seed validation is the next scheduled step.
 
 ### 6. Class-shared domain shift (Split-MNIST with rotating phases)

@@ -1,4 +1,4 @@
-# Research Map — PAL-MoE components and their literature lineage
+# Research Map - PAL-MoE components and their literature lineage
 
 > Which research line each part of the codebase comes from, what is
 > implemented vs adapted vs absent, and where the evidence lives. Companion to
@@ -11,8 +11,8 @@
 | Literature line | Representative work | In this repo | Evidence |
 | :-- | :-- | :-- | :-- |
 | Regularization | EWC (Kirkpatrick et al., 2017) | `pal_moe/baselines/ewc.py` (multi-task + online Fisher) | README MNIST/CIFAR tables |
-| Regularization | SI (Zenke et al., 2017) | not implemented | — |
-| Distillation | LwF (Li & Hoiem, 2017) | `--lambda_lwf` in `adaptation/ttt.py` (opt-in) | design facts 11–13 |
+| Regularization | SI (Zenke et al., 2017) | not implemented | - |
+| Distillation | LwF (Li & Hoiem, 2017) | `--lambda_lwf` in `adaptation/ttt.py` (opt-in) | design facts 11-13 |
 | Gradient projection | GEM / A-GEM (Lopez-Paz 2017; Chaudhry 2019) | `pal_moe/baselines/agem.py` | README tables |
 | Replay | ER (Chaudhry 2019 / Rolnick 2019) | `pal_moe/baselines/replay.py` + `baselines/buffer.py` | README tables |
 | Replay + distillation | DER / DER++ (Buzzega et al., 2020) | `pal_moe/baselines/der.py` (`DERPP`) | README tables |
@@ -52,7 +52,7 @@
 ## 5. What is novel here (and what is not)
 
 **Not claimed as novel:** prototype/NCM memory, replay, distillation, gating,
-function-preserving expansion, routing locks — all individually established.
+function-preserving expansion, routing locks - all individually established.
 
 **Claimed (to be defended by the experiments):**
 
@@ -61,7 +61,7 @@ function-preserving expansion, routing locks — all individually established.
    protocol;
 2. **function-space anchoring** of routing and expert behaviour through
    `v_p/r_p/o_p`, including the exact routing lock correction (fact 15);
-3. an **equal-byte evaluation protocol** and the resulting honest trade-off
+3. an **equal-byte evaluation protocol** and the resulting trade-off
    (accuracy vs forgetting per stored byte).
 
 **Explicitly refuted by the current evidence (do not claim):**
@@ -74,7 +74,7 @@ function-preserving expansion, routing locks — all individually established.
 
 ## 6. Where new code should go
 
-| If you add… | Put it in… | Wire it via |
+| If you add... | Put it in... | Wire it via |
 | :-- | :-- | :-- |
 | a new baseline trainer | `pal_moe/baselines/<name>.py` | `run_benchmark.py` method id + `method_keys` |
 | a new dataset/stream | `pal_moe/data/` | `--dataset` branch in `run_benchmark.py` |

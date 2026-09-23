@@ -1,4 +1,4 @@
-# Code Review — PAL-MoE codebase
+# Code Review - PAL-MoE codebase
 
 > Assessment of structure, modularity and comment style (2026-09-23), written
 > for the advisor meeting and as a refactor backlog. The run queue is active:
@@ -26,7 +26,7 @@ pal_moe/factory.py  is the only place that constructs routers/models/memory.
 - `memory/`: `PrototypeMemory` (`v_p/r_p/o_p/x_p/y_p/owner`) + generative
   variant; all persistent state is accounted for by `memory_bytes`.
 - `baselines/`: nine trainers behind one interface (`train_task`,
-  `update_buffer`, `memory_bytes`) — the equal-byte protocol depends on this
+  `update_buffer`, `memory_bytes`) - the equal-byte protocol depends on this
   consistency.
 - `adaptation/ttt.py`: the trainer (task phase, calibration, router
   distillation, expansion/freeze, checkpoints).
@@ -55,7 +55,7 @@ pal_moe/factory.py  is the only place that constructs routers/models/memory.
 | `evaluation/*` | 782 | metrics/diagnostics/geometry/heads/calibration/task-free, each small and single-purpose |
 | `factory.py` | 174 | the anti-drift constructors; keep |
 | `config.py` | 136 | validates configs strictly (unknown keys are errors); good |
-| `baselines/*` | 1149 | nine trainers, uniform interface, 55–216 lines each; the most modular part |
+| `baselines/*` | 1149 | nine trainers, uniform interface, 55-216 lines each; the most modular part |
 | `experiments/run_benchmark.py` | 2173 | **monolith**: CLI + dataset setup + 14 method blocks + reporting. Largest structural weakness |
 | `experiments/run_benchmark_multi.py` | 512 | thin driver; `--aggregate_only` supports repairs |
 | `experiments/run_ablation.py` | 578 | separate controlled grid; some duplication with the runner, acceptable for now |
@@ -89,7 +89,7 @@ function docstrings, and simple linear code.
    `_finalize_lock`) with a unit test per phase.
 3. **Extract `_PrototypeIndex`** (matrix caches, stability rows) out of
    `prototype_memory.py` so the memory module stays under ~700 lines.
-4. **Move historical configs** (`cifar10_big*` variants cited by facts 11–14)
+4. **Move historical configs** (`cifar10_big*` variants cited by facts 11-14)
    into `configs/legacy/` once those facts are re-run with canonical configs.
 5. **Split the test file** by module
    (`test_models.py`, `test_memory.py`, `test_adaptation.py`,

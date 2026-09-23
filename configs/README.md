@@ -2,7 +2,7 @@
 
 Every experiment config is a validated JSON (unknown keys, wrong types and
 out-of-range values are hard errors; explicit CLI flags override config values,
-config values override argparse defaults — see `pal_moe/config.py`).
+config values override argparse defaults - see `pal_moe/config.py`).
 
 **Canonical configs** (referenced by the paper plan / recipes):
 
@@ -24,7 +24,7 @@ config values override argparse defaults — see `pal_moe/config.py`).
 
 | Config | Used by |
 | :-- | :-- |
-| `cifar10_big.json`, `cifar10_big_full.json`, `cifar10_big_frozen.json`, `cifar10_big_frozen_full.json` | fact 11–14 runs (`results/cifar10_big_frozen*`, `cifar10_final_full`) |
+| `cifar10_big.json`, `cifar10_big_full.json`, `cifar10_big_frozen.json`, `cifar10_big_frozen_full.json` | fact 11-14 runs (`results/cifar10_big_frozen*`, `cifar10_final_full`) |
 | `cifar10_default.json` | quick smoke runs |
 | `mnist_ood_off.json` | OOD ablation on MNIST (fact 1) |
 

@@ -1,4 +1,4 @@
-# PAL-MoE — Paper Experiment Plan
+# PAL-MoE - Paper Experiment Plan
 
 > Planning document, not a result record. It audits the results in `../README.md` /
 > `BENCHMARK.md` against the paper's claims, lists what is strong, what is
@@ -44,7 +44,7 @@ grep "::" results/paper_wave1b.log results/paper_wave2.log   # step markers
 corrected equal-byte sweeps (feature-cache and raw), E7/E5/E8/E9/E3-fast, the
 E1a/E1b latent-replay repair, MIR, Tiny-ImageNet 20×10, the slow conv
 regenerations, latency, the 5-seed domain-shift pilot and the appendix cells.
-Expected ~2.5–3 h + ~5–6 h on the RTX 5060. Failures log `FAILED ...` and do
+Expected ~2.5-3 h + ~5-6 h on the RTX 5060. Failures log `FAILED ...` and do
 not stop the queue.
 
 Afterwards:
@@ -53,7 +53,7 @@ Afterwards:
 python experiments/paper_report.py     # tables + Pareto/growth/matrix figures
 ```
 
-then fold the numbers into `../README.md` / `BENCHMARK.md` (design facts 18–19
+then fold the numbers into `../README.md` / `BENCHMARK.md` (design facts 18-19
 already cover the ViT promotion and the feature-cache storage semantics).
 
 **Protocol correction applied before the run day (design fact 19):** under
@@ -81,10 +81,10 @@ resumes from the fixed code and is followed by wave 2.
   14.25 ± 0.22 vs 14.34 ± 0.41 accuracy; owner-routing 94.5%). No expert reuse
   on CIFAR-100.
 - **Router generalization gap (E7/E6):** prototype owner accuracy is 94.5% but
-  test-time routing is diffuse (top-expert share 0.15–0.24); RR_t 0.78–0.85.
+  test-time routing is diffuse (top-expert share 0.15-0.24); RR_t 0.78-0.85.
 - **Component ablation (E5, CIFAR-10 ResNet-18, 3 seeds):** static MoE (forced
   expansion only) 24.44 / 81.10; adding prototype anchors + router distillation
-  49.87 / 19.84 (+25.4 accuracy, −61 forgetting) — the dominant mechanism;
+  49.87 / 19.84 (+25.4 accuracy, -61 forgetting) - the dominant mechanism;
   gated vs forced 49.45 / 20.63 (gate neutral); OOD 0.1 on top 48.88 / 20.42
   (neutral once distillation is present, revising design fact 1 for the
   current recipe). Latent replay ≈ ER at equal item budget (38.45 vs 38.58).
@@ -101,7 +101,7 @@ resumes from the fixed code and is followed by wave 2.
   vs recency 25.14). Tiny-ImageNet seeds 1/2 failed on a cache-meta mismatch
   (ResNet had no identity head when `feature_dim == 512`); fixed with a test
   and re-run in progress. A reservoir equal-byte check is chained after it.
-  See BENCHMARK facts 20–22 and `docs/SUNUM.md §5–6`.
+  See BENCHMARK facts 20-22 and `docs/SUNUM.md §5-6`.
 
 ## 0. Framing
 
@@ -122,11 +122,11 @@ function-preserving expansion), (ii) latent replay / prototype memory
 | H1 | Dynamic specialization reduces task interference vs a shared single network. | Partially supported (no parameter-matched control, no gated-vs-forced run on a strong backbone). |
 | H2 | At equal **bytes**, latent replay is competitive with raw replay. | Untested: all tables are item-budget matched, not byte matched. |
 | H3 | Prototype anchors improve routing stability/accuracy. | Supported on MNIST/CIFAR-10 (facts 11, 15) but not isolated at the final recipe, and only at the end state. |
-| H4 | The negative-boundary (OOD) objective reduces misassignment of new data to old experts. | Supported (facts 1, 12): +0.7–1.2 acc, 2–4 pp less forgetting. |
+| H4 | The negative-boundary (OOD) objective reduces misassignment of new data to old experts. | Supported (facts 1, 12): +0.7-1.2 acc, 2-4 pp less forgetting. |
 | H5 | The allocation policy reuses experts for related tasks instead of one expert per task. | **Refuted on CIFAR-100 (2026-09-22):** gated and forced both allocate one expert per task (20/20, no gate rejections) and are statistically identical (14.25 ± 0.22 vs 14.34 ± 0.41 accuracy). Reframe as fixed-budget capacity expansion. |
-| H6 | Old-task routing is retained while new tasks get new capacity. | **Measured (2026-09-22):** routing retention RR_t stays 0.78–0.85 across 20 tasks; prototype owner accuracy 94.5%, but test-time routing is diffuse (top-expert share only 0.15–0.24) — a router generalization gap to report. |
+| H6 | Old-task routing is retained while new tasks get new capacity. | **Measured (2026-09-22):** routing retention RR_t stays 0.78-0.85 across 20 tasks; prototype owner accuracy 94.5%, but test-time routing is diffuse (top-expert share only 0.15-0.24) - a router generalization gap to report. |
 
-**Novelty statement to defend (draft).** Not "a MoE for continual learning" —
+**Novelty statement to defend (draft).** Not "a MoE for continual learning" -
 that space is occupied. The defensible combination is: *memory-constrained
 class-incremental learning with dynamically allocated experts, compact latent
 replay, and prototype-anchored routing*, evaluated under an equal-byte
@@ -178,7 +178,7 @@ show what the allocation policy actually decides.
 | M7 | Oracle-routing decomposition and routing retention on a strong backbone. | E6 |
 | M8 | Expert growth/reuse curves under the gate. | E7 |
 | M9 | Latent/anchor drift study (`refresh_anchors_after_calib`, stale anchors). | E8 |
-| M10 | Harder benchmarks and modern baselines (MIR/GSS/ASER; L2P/DualPrompt/CODA-Prompt; recent MoE-CL references). | E10–E12 |
+| M10 | Harder benchmarks and modern baselines (MIR/GSS/ASER; L2P/DualPrompt/CODA-Prompt; recent MoE-CL references). | E10-E12 |
 
 ---
 
@@ -220,7 +220,7 @@ Status: **READY** = runnable with current flags; **NEEDS Mx** = blocked on the
 prerequisite above. Cost estimates are for the RTX 5060 laptop GPU and use
 measured durations from the result meta files.
 
-### E1 — Promote the ViT-B/16 results (H1, H3)
+### E1 - Promote the ViT-B/16 results (H1, H3)
 
 **Question.** Do the strongest absolute numbers survive multi-seed, and do they
 survive documentation/protocol review?
@@ -239,18 +239,18 @@ python experiments/run_benchmark_multi.py --seeds "42 1 2" --device cuda \
 **Deliverable.** Two 3-seed tables + a `BENCHMARK.md` design fact; label the
 protocol "one expert per task" explicitly (AO6).
 **Cost.** CIFAR-10 ≈ 15 min (cache exists); CIFAR-100 ≈ 75 min plus a one-time
-≈ 15–25 min feature extraction. **Status: READY.**
+≈ 15-25 min feature extraction. **Status: READY.**
 
-### E2 — CIFAR-100 ResNet-18 3-seed (H1)
+### E2 - CIFAR-100 ResNet-18 3-seed (H1)
 
 ```bash
 bash experiments/recipes/cifar100_resnet18_multiseed.sh
 ```
 
 **Deliverable.** Converts the "largest single lever" claim (fact 17) into a
-3-seed row. **Cost.** ~35–45 min. **Status: READY.**
+3-seed row. **Cost.** ~35-45 min. **Status: READY.**
 
-### E3 — Headline table regeneration with bytes and params (AO1, AO2, AO5)
+### E3 - Headline table regeneration with bytes and params (AO1, AO2, AO5)
 
 **Setup.** After M1, regenerate MNIST (5 seeds), CIFAR-10 conv (3), CIFAR-10
 ResNet-18 (3), CIFAR-100 conv (3), CIFAR-100 ResNet-18 (3) in one session per
@@ -258,7 +258,7 @@ dataset; every table gains `bytes` and `total/trainable/active params` columns.
 **Deliverable.** The paper's Table 1 + a provenance paragraph (git hash, one
 session, seed set). **Cost.** ~3 h total. **Status: NEEDS M1.**
 
-### E4 — Equal-byte Pareto (H2) — flagship figure
+### E4 - Equal-byte Pareto (H2), main figure
 
 **Question.** At a fixed byte budget, which method wins?
 **Setup.** After M1, sweep byte budgets (log-spaced: 256 KB, 1 MB, 4 MB, 16 MB;
@@ -283,7 +283,7 @@ guessed: the M1 accounting reports the realised bytes.)
 crossover budgets stated. **Cost.** ≈ 2 h (CIFAR-10) + ≈ 2 h (CIFAR-100).
 **Status: NEEDS M1.**
 
-### E5 — Component ablation at the final recipe (H1, H3, H4)
+### E5 - Component ablation at the final recipe (H1, H3, H4)
 
 **Setup.** 7-variant ladder × {CIFAR-10 ResNet-18, CIFAR-100 ResNet-18} × 3
 seeds, one session per dataset:
@@ -303,21 +303,21 @@ running (for the "static" variants, also shrink the prototype store so the
 memory budget matches the baselines).
 
 **Deliverable.** "Which component pays for itself" table; validates or corrects
-facts 1/11/12 at the final recipe. **Cost.** ~2–3 h. **Status: NEEDS M1
+facts 1/11/12 at the final recipe. **Cost.** ~2-3 h. **Status: NEEDS M1
 (`latent_replay`), otherwise READY.**
 
-### E6 — Routing decomposition and retention (H6)
+### E6 - Routing decomposition and retention (H6)
 
 **Setup.** After M2, for every E3/E7 run record at each task boundary on a fixed
 probe set (all test splits seen so far, subsampled): top-1 expert, owner-routing
 accuracy, end-to-end accuracy, expert-oracle accuracy, and
-RR_t = P(route unchanged since task t−1). Report the (task × expert) routing
+RR_t = P(route unchanged since task t-1). Report the (task × expert) routing
 matrix at the end and its growth.
 **Deliverable.** A figure separating router failure from expert/representation
 failure; the RR_t curve is the routing stability/plasticity evidence.
-**Cost.** Piggybacks on E3/E7 (~30–60 min extra). **Status: NEEDS M2.**
+**Cost.** Piggybacks on E3/E7 (~30-60 min extra). **Status: NEEDS M2.**
 
-### E7 — Expert growth and reuse under the gate (H5)
+### E7 - Expert growth and reuse under the gate (H5)
 
 **Question.** Does the allocation policy ever reuse an expert, or does every
 task get one?
@@ -325,11 +325,11 @@ task get one?
 CIFAR-100 ResNet-18 and Tiny-ImageNet, 3 seeds. Report experts per task, gate
 rejections and reasons, routing matrices, a reuse index (fraction of tasks whose
 majority expert is shared with an earlier task), accuracy and params.
-**Deliverable.** Growth curve figure; honest answer to H5.
-**Cost.** ≈ 40 min (CIFAR-100) + ≈ 4–8 h (Tiny-ImageNet, after M3).
+**Deliverable.** Growth curve figure; clear answer to H5.
+**Cost.** ≈ 40 min (CIFAR-100) + ≈ 4-8 h (Tiny-ImageNet, after M3).
 **Status: NEEDS M2 (+ M3 for Tiny-ImageNet).**
 
-### E8 — Latent/anchor drift study (H2, stale-anchor risk)
+### E8 - Latent/anchor drift study (H2, stale-anchor risk)
 
 **Setup.** CIFAR-100 ResNet-18, 3 seeds: `--refresh_anchors_after_calib` on/off ×
 `--proto_routing_alpha {0, 0.5}`; plus one trainable-encoder cell
@@ -341,7 +341,7 @@ accuracy/forgetting.
 valid" argument the latent-replay literature demands.
 **Cost.** ≈ 2 h. **Status: READY (metric exposure needs M2 or a small script).**
 
-### E9 — Capacity/cost scaling and a parameter-matched baseline (H1, AO2)
+### E9 - Capacity/cost scaling and a parameter-matched baseline (H1, AO2)
 
 **Setup.** CIFAR-100 ResNet-18, 3 seeds: `--max_experts {1,2,4,6,unlimited}` at
 fixed bytes; plus a single-head baseline whose `--expert_hidden` is widened to
@@ -351,17 +351,17 @@ invocation so other methods are unaffected); latency/FLOPs from M4.
 experts = better" reading (cf. the MoE-in-CL theory result).
 **Cost.** ≈ 2 h + latency script. **Status: READY (latency needs M4).**
 
-### E10 — Tiny-ImageNet / ImageNet-100 (H1, H2, generalization)
+### E10 - Tiny-ImageNet / ImageNet-100 (H1, H2, generalization)
 
 **Setup.** After M3, 20-task class-IL (10 classes/task) with frozen ResNet-18
 and/or ViT, feature cache; methods `palmoe, hybrid, replay*, derpp, icarl`;
 3 seeds. Optionally a 100-task (2 classes/task) long-horizon variant to match
 modern online-CL protocols.
 **Deliverable.** The "serious benchmark" table that replaces Split-CIFAR-only
-evidence. **Cost.** ≈ 4–8 h (Tiny-ImageNet, cache included); ImageNet-100 adds
-download + cache (≈ 1–2 days). **Status: NEEDS M3.**
+evidence. **Cost.** ≈ 4-8 h (Tiny-ImageNet, cache included); ImageNet-100 adds
+download + cache (≈ 1-2 days). **Status: NEEDS M3.**
 
-### E11 — Domain-incremental and task-free evaluation (H4, shared expert)
+### E11 - Domain-incremental and task-free evaluation (H4, shared expert)
 
 **Setup.** CORe50 (11 class-shared domains) via M3, shared expert
 (`--shared_expert --freeze_shared_after 2`), task-free metrics
@@ -369,25 +369,25 @@ download + cache (≈ 1–2 days). **Status: NEEDS M3.**
 MNIST rotations (`--domain_shift rotate`) remains the pilot.
 **Deliverable.** Online/recent accuracy + surprise curves; evidence that the
 generalist expert pays off when the label space is shared.
-**Cost.** ≈ 4–6 h (dataset + cache + runs). **Status: NEEDS M3.**
+**Cost.** ≈ 4-6 h (dataset + cache + runs). **Status: NEEDS M3.**
 
-### E12 — Modern baselines and positioning (novelty defense)
+### E12 - Modern baselines and positioning (novelty defense)
 
 **Setup.** (a) Implement MIR and optionally GSS in-codebase (small, replay
 family, keeps the same-protocol rule). (b) Decide whether prompt-based methods
 (L2P/DualPrompt/CODA-Prompt) are in scope: either implement on the frozen ViT or
 run them in Mammoth as a **separate, clearly-caveated** table. (c) Verify and
-discuss the 2024–2026 MoE-CL line (theory of MoE in CL; adaptive expert
-expansion; dynamic MoE adapters; task-shared/specific experts) — this is the
+discuss the 2024-2026 MoE-CL line (theory of MoE in CL; adaptive expert
+expansion; dynamic MoE adapters; task-shared/specific experts) - this is the
 related-work section's backbone, not necessarily an experiment.
 **Deliverable.** "Why this is not just another MoE-CL paper" paragraph with
 numbers; scope statement for rehearsal-free methods.
-**Cost.** 1–2 days if prompt methods are included; ~half a day otherwise.
+**Cost.** 1-2 days if prompt methods are included; ~half a day otherwise.
 **Status: NEEDS implementation / scope decision.**
 
-### E13 — Statistical protocol and artifact release
+### E13 - Statistical protocol and artifact release
 
-5-seed final tables for the 2–3 headline benchmarks; pre-registered configs;
+5-seed final tables for the 2-3 headline benchmarks; pre-registered configs;
 same-session baselines; raw JSONs + figure scripts committed; README/BENCHMARK
 rewrite with byte and param columns; artifact hash/DOI. **Status: process.**
 
@@ -397,15 +397,15 @@ rewrite with byte and param columns; artifact hash/DOI. **Status: process.**
 
 | Artifact | Source |
 | :-- | :-- |
-| Table 1 — main class-IL results | E3 (+ E1 for the ViT row) |
-| Figure 1 — equal-byte Pareto | E4 |
-| Table 2 — component ablation | E5 |
-| Figure 2 — expert growth + routing matrix | E7 |
-| Figure 3 — routing retention RR_t | E6 |
-| Table 3 — capacity/cost scaling | E9 |
-| Table 4 — long-horizon Tiny-ImageNet | E10 |
-| Table 5 — domain-incremental / task-free | E11 |
-| Appendix — drift study, buffer-policy ablation, external baselines | E8, AO10, E12 |
+| Table 1 - main class-IL results | E3 (+ E1 for the ViT row) |
+| Figure 1 - equal-byte Pareto | E4 |
+| Table 2 - component ablation | E5 |
+| Figure 2 - expert growth + routing matrix | E7 |
+| Figure 3 - routing retention RR_t | E6 |
+| Table 3 - capacity/cost scaling | E9 |
+| Table 4 - long-horizon Tiny-ImageNet | E10 |
+| Table 5 - domain-incremental / task-free | E11 |
+| Appendix - drift study, buffer-policy ablation, external baselines | E8, AO10, E12 |
 
 ## 6. Execution order and kill criteria
 
@@ -426,7 +426,7 @@ claims.)
   re-run E3 once.
 - **After E5:** if the prototype/routing components do not individually matter
   at the final recipe, state that the contribution is the combination, not any
-  single component (this is already the honest novelty framing).
+  single component (this is the novelty framing used here).
 - **After E10:** if the gap to baselines shrinks with scale, say so and shift
   the emphasis to the memory/Pareto axis.
 
@@ -454,7 +454,7 @@ before it enters the bibliography.
 2. **Prompt-based baselines:** in scope (E12) or scope the paper to
    rehearsal-based CL?
 3. **Domain benchmark:** CORe50 (small, class-shared) vs a DomainNet subset.
-4. **Venue/format:** workshop vs conference decides whether E10–E12 are
+4. **Venue/format:** workshop vs conference decides whether E10-E12 are
    mandatory or appendix material.
 5. **Compute:** all estimates assume the single laptop GPU. If a larger GPU is
-   available, E10–E12 stop being the bottleneck.
+   available, E10-E12 stop being the bottleneck.

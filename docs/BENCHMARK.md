@@ -25,7 +25,7 @@ per item), not raw images, and the hybrid's raw store is disabled
 is therefore *pure + latent-exemplar replay*; new runs name it
 `PAL-MoE + Latent Replay`. Consequences:
 
-- `memory_bytes` in each result JSON is the honest per-run byte count; item
+- `memory_bytes` in each result JSON is the per-run byte count; item
   counts are not byte counts and must not be compared across protocols;
 - the raw-vs-latent storage comparison needs the raw pipeline
   (`configs/cifar{10,100}_resnet18_frozen_raw.json`): raw ER stores 12,296 B
@@ -269,7 +269,7 @@ epochs, `configs/mnist_default.json`; base = 79.69% / 6.85% forgetting):
 | `--router_anchor_margin 1.0` | 80.77% | 6.51% | looked best on seed 42, but a controlled 3-seed check (42 1 2: 79.40 ± 1.29 / 7.10 ± 0.30) is statistically indistinguishable from the base recipe (79.54 ± 1.30 / 6.97 ± 0.27): not adopted |
 | `--generative_replay 64` | 79.29 ± 1.20% | 8.02 ± 1.25% | 5-seed validation: statistically identical to the base recipe (79.36 ± 1.16 / 7.91 ± 1.24); neutral on MNIST, worth retesting when the exemplar budget is tighter |
 | `--eval_head ncm` | 76.89% | 10.11% | worse here (top-1 routing already recovers the classes) |
-| `--shared_expert` | 78.06% / 7.84 | −1.9 vs base | first measurement without anchoring was catastrophic (45.16% / 63.99) because the always-on pathway drifted into the newest task. With the prototype anchor now added it is stable but still trails the base recipe (CPU base 80.14% / 7.09; `--freeze_shared_after 1`: 78.26% / 7.73). Kept as an opt-in for domain-shift streams where a shared pathway is expected to pay off. |
+| `--shared_expert` | 78.06% / 7.84 | -1.9 vs base | first measurement without anchoring was catastrophic (45.16% / 63.99) because the always-on pathway drifted into the newest task. With the prototype anchor now added it is stable but still trails the base recipe (CPU base 80.14% / 7.09; `--freeze_shared_after 1`: 78.26% / 7.73). Kept as an opt-in for domain-shift streams where a shared pathway is expected to pay off. |
 | shared + margin + ncm + generative | 77.64% | 9.07% | combination does not rescue the shared-expert drift |
 
 These are single-seed measurements to guide the next validation round, not
@@ -286,7 +286,7 @@ run (absolute gate, which rejected 7 of 20 expansions) is in
 `results/cifar100_big_frozen/`; the 3-seed gate ablation shows the policy is a
 wash (design fact 16) and the bottleneck is the representation, not the gate.
 Router distillation reaches 91-93% owner-routing accuracy over 6 experts; the
-negative prototype margin (−0.13) again points at the representation as the
+negative prototype margin (-0.13) again points at the representation as the
 limiting factor. Parameters are reported three ways now: total (1.65M across 6
 experts), trainable (275k after freezing history) and active per sample (275k,
 one expert).
@@ -297,12 +297,12 @@ ImageNet ResNet-18, frozen, feature cache, 3 seeds 42 1 2,
 forgetting and hybrid **49.66 ± 1.47%** / 19.56 ± 1.36, versus DER++ 45.29 ±
 0.48% / 43.81 ± 0.70% and ER 39.92 ± 0.76% / 58.87 ± 1.01%. The 20-task
 CIFAR-100 equivalent (single seed 42, `results/cifar100_resnet18/`) lifts pure
-from 9.48 ± 0.25 to 16.01 and hybrid from 9.98 ± 0.47 to 18.96 — the strongest
+from 9.48 ± 0.25 to 16.01 and hybrid from 9.98 ± 0.47 to 18.96 - the strongest
 single lever observed in this project (brainstorm 1.1, design fact 17).
 
 **Class-shared domain shift** (`--domain_shift rotate`, MNIST, shared expert
 frozen after the first task): pure 86.07% / 5.64% forgetting, boundary-free
-stream 86.16% online, prototype margin +0.117 — the stabilized generalist no
+stream 86.16% online, prototype margin +0.117 - the stabilized generalist no
 longer hurts when the label space is shared.
 
 Deliberately staged (not implemented here): GPM/Adam-NSCL gradient projection
@@ -601,8 +601,8 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     `configs/cifar100_resnet18_frozen.json`). The baselines improve too
     (DER++ 12.57, iCaRL 13.24 with the lowest forgetting at 11.03), so the
     ranking story is unchanged while the absolute level roughly doubles. The
-    prototype margin improves from −0.13 (conv) to −0.076, confirming that the
-    conv representation — not the router or the validation gate — was the
+    prototype margin improves from -0.13 (conv) to -0.076, confirming that the
+    conv representation - not the router or the validation gate - was the
     long-horizon bottleneck. The hybrid now beats iCaRL by 5.7 points; iCaRL
     keeps the lowest forgetting. 3-seed validation of this backbone is the next
     run.
@@ -626,7 +626,7 @@ The following fact documents the correction of the CIFAR-10 comparison table.
 
     PAL-MoE pure beats the best baseline (iCaRL) by 7.6 accuracy points with
     about half its forgetting, storing no raw inputs. The new byte column also
-    shows the honest caveat: at this geometry PAL stores ~8x the data bytes of
+    shows a caveat: at this geometry PAL stores ~8x the data bytes of
     the replay baselines, so this table is item-budget matched, not byte
     matched. The equal-byte Pareto (EXPERIMENT_PLAN.md, E4) is the fair
     comparison. iCaRL's zero variance is expected: the frozen ViT features are
@@ -635,21 +635,21 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     the hybrid's raw store is disabled and only latent exemplars are added).
 
     The CIFAR-100 counterpart (`configs/cifar100_vit.json`, 20 tasks, 10
-    epochs, `results/cifar100_vit_multiseed`) is honest about a baseline that
+    epochs, `results/cifar100_vit_multiseed`) also reports a baseline that
     wins: iCaRL **64.94 ± 0.00% / 12.25%** at 8.0 MB beats PAL-MoE pure
     **59.34 ± 0.32% / 18.17%** at 14.2 MB (latent replay 59.03 ± 0.47 /
     18.85). On this benchmark the method is not the accuracy leader; the
     equal-byte and long-horizon forgetting results (facts 19-20, plan §5) are
     where the trade-off lives.
 
-19. **Feature-cached runs store features, not raw inputs — and the hybrid's raw
+19. **Feature-cached runs store features, not raw inputs - and the hybrid's raw
     store is disabled there.** `--feature_cache` replaces the loaders with
     cached encoder outputs, so (a) every replay baseline and iCaRL store
     `feature_dim*4 + 8` bytes per item (256-d ResNet: 1,032 B; 768-d ViT:
     3,080 B) instead of raw 32x32 images (12,296 B), and (b)
     `store_raw = not feature_cache`, so the hybrid variant trains with latent
     exemplars only. Measured confirmation: on CIFAR-100 ResNet-18 the replay
-    baselines' `memory_bytes` at P=250 is 258 KB (ER) — 250 stored features —
+    baselines' `memory_bytes` at P=250 is 258 KB (ER) - 250 stored features -
     not the 3.07 MB a raw-image buffer would need; and the ViT CIFAR-10
     promotion table's latent-replay row is a pure + latent-replay variant, not
     raw replay. This was found while preparing the equal-byte sweep (E4): the
@@ -682,7 +682,7 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     31.79, DER++ 9.00, ER 8.40. In the feature-cache protocol everyone stores
     features (design fact 19), the byte advantage disappears, and plain replay
     leads accuracy while PAL keeps the forgetting advantage (fact 18 note).
-    Report both protocols together; the honest claim is a storage-format
+    Report both protocols together; the claim is a storage-format
     dependent trade-off, not dominance.
 
 21. **Baselines that did not pay off: the raw-store hybrid and MIR.** With the
@@ -707,7 +707,7 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     - **Trainable encoder (E8b, seed 42):** pure PAL-MoE collapses to
       9.97 / 32.81 from 37.81 / 22.03 with a frozen encoder; the latent-replay
       variant holds 10.63 / 12.65. The method depends on a frozen (or strongly
-      anchored) representation; state this explicitly.
+      anchored) representation; state this plainly.
     - **Latency (M4, batch 1):** ResNet-18 single head 1.09 ms/sample, PAL-MoE
       1.71 ms and flat in the number of stored experts; ViT-B/16 8.43 ms vs
       8.57-8.82 ms.

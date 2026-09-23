@@ -169,7 +169,7 @@ def equal_byte_section(
             grouped[key]["seeds"].append(seed)
     if not grouped:
         return None
-    lines.append(f"### Equal-byte Pareto — {group}/{dataset_key}")
+    lines.append(f"### Equal-byte Pareto: {group}/{dataset_key}")
     lines.append("")
     lines.append(
         "| Method | Budget | Realised data bytes | Avg Acc | Forgetting | Seeds |"
@@ -201,7 +201,7 @@ def equal_byte_section(
         ax.set_xscale("log")
         ax.set_xlabel("Stored data bytes")
         ax.set_ylabel("Avg accuracy")
-        ax.set_title(f"Equal-byte Pareto — {group}/{dataset_key}")
+        ax.set_title(f"Equal-byte Pareto: {group}/{dataset_key}")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8)
         fig.tight_layout()
@@ -309,7 +309,7 @@ def routing_matrix_section(root: str, lines: list[str]) -> None:
             stack = np.stack(matrices[method], axis=0)
             mean = stack.mean(axis=0)
             n_experts = mean.shape[1]
-            lines.append(f"**{protocol} — {method}**")
+            lines.append(f"**{protocol} - {method}**")
             lines.append("")
             lines.append(
                 "| Task | " + " | ".join(f"E{j}" for j in range(n_experts)) + " |"
@@ -336,7 +336,7 @@ def latency_section(root: str, lines: list[str]) -> None:
         except Exception:
             continue
         lines.append(
-            f"**{os.path.basename(path)}** — {payload.get('encoder_arch')}, "
+            f"**{os.path.basename(path)}** - {payload.get('encoder_arch')}, "
             f"feature_dim={payload.get('feature_dim')}, "
             f"input={payload.get('input_shape')}, device={payload.get('device')}"
         )

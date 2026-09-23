@@ -11,7 +11,7 @@ from `_record_baseline_result`, so method variants cannot drift apart.
 | `run_benchmark.py` | The benchmark: 14+ method ids, all knobs, single seed | `--config configs/...` |
 | `run_benchmark_multi.py` | Multi-seed driver (mean ± std), `--aggregate_only` to rebuild an aggregate | `--seeds "42 1 2" --config ...` |
 | `run_ablation.py` | Controlled grid: loss components, init, gate, top-k, encoder | `--configs "OOD"` |
-| `run_pure_explore.py` | Fast pure/hybrid mechanism sweeps during development | — |
+| `run_pure_explore.py` | Fast pure/hybrid mechanism sweeps during development | - |
 
 ## Tools
 

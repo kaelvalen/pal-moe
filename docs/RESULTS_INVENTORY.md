@@ -27,7 +27,7 @@
 | :-- | :-- | :-- | :-- |
 | `cifar10_final_full/` | Corrected CIFAR-10 table (BatchNorm artifact fix, fact 14) | EVIDENCE | BENCHMARK fact 14 |
 | `cifar10_lockfix/` | Exact routing-lock reproduction (fact 15) | EVIDENCE | BENCHMARK fact 15 |
-| `cifar10_big_frozen/`, `cifar10_big_frozen_full/` | Big CIFAR-10 runs behind facts 11–13 | EVIDENCE | BENCHMARK |
+| `cifar10_big_frozen/`, `cifar10_big_frozen_full/` | Big CIFAR-10 runs behind facts 11-13 | EVIDENCE | BENCHMARK |
 | `cifar100_big_frozen/` | Scaled 20-task CIFAR-100, single seed (fact 15/16) | EVIDENCE | BENCHMARK |
 | `cifar100_20task/` | 20-task protocol run (fact 15 provenance) | EVIDENCE | BENCHMARK |
 | `cifar100_relgate/`, `cifar100_gate_relative/`, `cifar100_gate_absolute/` | Validation-gate ablation (fact 16) | EVIDENCE | README gate note |
@@ -35,9 +35,9 @@
 | `mnist_domainshift/` | Class-shared domain-shift pilot (rotate) | EVIDENCE | README §6 |
 | `routing_asymmetry_debug.json` | Routing-funnel debug dump; referenced in `ttt.py` comments | EVIDENCE | code comments |
 | `feature_cache/` | Persisted frozen features (CIFAR-10/100 ViT; Tiny-ImageNet) | data | recipes |
-| `paper_report.md` | Auto-generated tables/figures (report script) | generated | — |
+| `paper_report.md` | Auto-generated tables/figures (report script) | generated | - |
 
-## Run-day experiments (2026-09-22, paper plan E1–E9)
+## Run-day experiments (2026-09-22, paper plan E1-E9)
 
 | Directory | Contents | Status | Referenced by |
 | :-- | :-- | :-- | :-- |
@@ -49,7 +49,7 @@
 | `drift/` | E8 anchor-refresh + inference-anchoring cells | RUN-DAY | SUNUM §5.7 |
 | `capacity/` | E9 capacity sweep + parameter-matched baselines, 3 seeds | RUN-DAY | SUNUM §5.6 |
 | `mir/` | E12 MIR baseline, 3 seeds | RUN-DAY | BENCHMARK fact 21 |
-| `tinyimagenet_multiseed/` | E10 Tiny-ImageNet 20×10 class-IL | PENDING (wave 2) | — |
+| `tinyimagenet_multiseed/` | E10 Tiny-ImageNet 20×10 class-IL | PENDING (wave 2) | - |
 | `final_mnist_multiseed/`, `final_c10r18_multiseed/` | E3 regenerations with byte accounting (5/3 seeds) | RUN-DAY | SUNUM §5.1 |
 | `final_c10conv_multiseed/`, `final_c100conv_multiseed/` | E3 conv regenerations with byte accounting, 3 seeds | RUN-DAY | SUNUM §5.1, BENCHMARK fact 22 |
 | `mnist_domainshift_multiseed/` | E11 domain-shift, 5 seeds | RUN-DAY | SUNUM §5.8 |
@@ -74,7 +74,7 @@ to be traced.
   (Fisher/snapshots) and `stored_bytes`; PAL runs also carry
   `prototype_elements`, `stores_raw`, `experts_per_task` and, with
   `--track_routing`, `routing_retention`.
-- `benchmark_meta_seed*.json` records the seed, git hash, args and duration —
+- `benchmark_meta_seed*.json` records the seed, git hash, args and duration -
   the provenance anchor for every number.
 - A directory is only quoted in `README.md`/`docs/SUNUM.md` after it contains
   its full seed set; otherwise it is labelled single-seed or pending here.

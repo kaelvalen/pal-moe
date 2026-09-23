@@ -141,7 +141,7 @@ class AlwaysTrigger:
 
     Used with ``--expand_every_task`` in the supervised task-incremental
     protocol: every task gets its own expert (up to ``--max_experts``), which
-    removes expert sharing on long horizons — 20-task CIFAR-100 with a
+    removes expert sharing on long horizons - 20-task CIFAR-100 with a
     six-expert cap forced the later tasks onto already-used experts and cost
     accuracy. The parent for the function-preserving expansion is the newest
     expert (the one that just finished the previous task).
