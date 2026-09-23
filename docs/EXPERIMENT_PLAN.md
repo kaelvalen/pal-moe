@@ -70,7 +70,7 @@ gated protocol hit the very slow prune/merge path at `--max_experts 6`
 `--max_experts 20`, so the only difference is the allocation policy. Wave 1c
 resumes from the fixed code and is followed by wave 2.
 
-**Run-day findings so far (2026-09-22):**
+**Run-day findings so far (2026-09-22/23):**
 
 - **Equal-byte (feature-cache, CIFAR-10, 3 seeds):** ER leads accuracy at every
   budget (49.86 at 1 MiB, 54.95 at 4 MiB); PAL pure is 46.32 / 50.54 with the
@@ -94,6 +94,14 @@ resumes from the fixed code and is followed by wave 2.
   **21.13 ± 0.34 / 16.09**. Inference anchoring (`--proto_routing_alpha 0.5`)
   is roughly neutral. **Action:** make refresh the default in the final ResNet
   configs and re-run the headline tables with it.
+- **Run-day night (2026-09-23):** conv regenerations (CIFAR-10: PAL pure
+  37.81 ± 0.57 / 22.03 at 2.18 MB beats DER++ at 3.08 MB), trainable-encoder
+  collapse (9.97 vs 37.81), latency (1.71 vs 1.09 ms/sample), domain-shift
+  5-seed (85.38 ± 0.47 / 6.34), and the buffer-policy gap (reservoir ER 43.23
+  vs recency 25.14). Tiny-ImageNet seeds 1/2 failed on a cache-meta mismatch
+  (ResNet had no identity head when `feature_dim == 512`); fixed with a test
+  and re-run in progress. A reservoir equal-byte check is chained after it.
+  See BENCHMARK facts 20–22 and `docs/SUNUM.md §5–6`.
 
 ## 0. Framing
 
