@@ -6,8 +6,7 @@ Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for e
 
 Documentation entry points:
 
-- [`docs/SUNUM_METNI.md`](docs/SUNUM_METNI.md): Turkish presentation script to read aloud (problem, method, setup, results, limitations).
-- [`docs/SUNUM.md`](docs/SUNUM.md): background notes, slide plan and likely questions.
+- [`docs/SUNUM.md`](docs/SUNUM.md): Turkish presentation notes (pitch, architecture, results, open problems, likely questions).
 - [`docs/RESULTS_INVENTORY.md`](docs/RESULTS_INVENTORY.md): what every `results/` directory contains and its status.
 - [`docs/RESEARCH_MAP.md`](docs/RESEARCH_MAP.md): which literature line each code component comes from.
 - [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md): structure and comment review, plus the refactor backlog.

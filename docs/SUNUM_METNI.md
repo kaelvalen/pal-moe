@@ -1,13 +1,6 @@
-# PAL-MoE sunum metni
-
-Bu metin doğrudan okunmak üzere yazıldı. Bölüm başlıkları slayt geçişlerine
-karşılık geliyor; altındaki paragraflar toplantıda söylenecek sözlerdir.
-Arka plan notları, tablolar ve muhtemel sorular için `SUNUM.md` dosyasına
-bakılabilir.
-
 ## Açılış
 
-Hocam merhaba. Bugün size PAL-MoE üzerinde yaptığım çalışmayı anlatacağım.
+Hocam . Bugün size PAL-MoE üzerinde yaptığım çalışmayı anlatacağım.
 PAL-MoE, class-incremental continual learning için geliştirdiğim, dinamik
 büyüyebilen bir Mixture-of-Experts mimarisi. Konuşmada önce problemi ve
 yöntemin nasıl çalıştığını anlatacağım, sonra deneysel kurulumu ve sonuçları
