@@ -1,5 +1,11 @@
 # PAL-MoE sunum notları
 
+Bu dosya arka plan notlarıdır. Doğrudan okunacak metin: `SUNUM_METNI.md`.
+O metin sırayla problem, yöntem, deneysel kurulum, sonuçlar, sınırlamalar ve
+kapanışı içerir; buradaki tablolar ve soru-cevap bölümü destek amaçlıdır.
+
+
+
 Bu dosya toplantı için hazırlandı: anlatım sırası, güncel sayılar, sınırlamalar
 ve muhtemel sorular burada. Ayrıntılı metodoloji `BENCHMARK.md`, deney planı
 `EXPERIMENT_PLAN.md`, literatür eşlemesi `RESEARCH_MAP.md`, sonuç dizinleri
