@@ -146,7 +146,7 @@ deneyini raw pipelinenda koştum; yani replay tabanı gerçekten ham görüntü
 saklıyor. CIFAR-100 ve ViT deneylerinde ise encoder çıktılarını önceden
 hesaplayan feature cache kullanıyorum; bu durumda bütün yöntemler özellik
 vektörü sakladığı için öğe başına bellek farkı ortadan kalkıyor. Bunun
-sonuçlara etkisini eşit-byte bölümünde ayrıca gösteriyorum.
+sonuçlara etkisini equal-byte bölümünde ayrıca gösteriyorum.
 
 Metrik olarak ortalama doğruluk, unutma, geriye transfer, router sahiplik
 doğruluğu, yönlendirme korunumu, uzman sayısı, bellek ve gecikme raporluyorum.
@@ -272,8 +272,7 @@ sırada.
 adil karşılaştırma aynı byte bütçesiyle yapılanı; bunu iki protokolde ölçtüm.
 
 Raw pipeline, CIFAR-10, 1 MiB, 3 seed. Replay tabanı ham görüntü
-saklıyor (örnek başına 12.296 byte), prototip ise 2.184 byte; yani eşit
-byte'ta yaklaşık 5.6 kat daha fazla öğe saklayabiliyorum:
+saklıyor (örnek başına 12.296 byte), prototip ise 2.184 byte; yani equal-byte'ta yaklaşık 5.6 kat daha fazla öğe saklayabiliyorum:
 
 | Method | Avg Acc | Forgetting | Realised bytes |
 | :-- | --: | --: | --: |
@@ -314,7 +313,7 @@ CIFAR-100 feature-cache, 1 MiB, 3 seed: DER++ 16.97 ± 0.63, Experience Replay (
 
 İki tabloyu birlikte sunmamın sebebi şu: iddia "her yerde daha iyi" değil.
 İddia, depolama formatına bağlı bir denge. Yayınlanan öğe-bütçesi tabloları
-benim yöntemimi kayırıyordu; onları eşit-byte sonuçlarıyla birlikte
+benim yöntemimi kayırıyordu; onları equal-byte sonuçlarıyla birlikte
 raporluyorum.
 
 ### Mekanizma ayrıştırması (CIFAR-10 ResNet-18, 3 seed)
