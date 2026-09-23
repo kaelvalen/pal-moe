@@ -154,6 +154,13 @@ Encoder olarak MNIST'te dondurulmuş bir autoencoder, CIFAR'da elli epoch
 SimCLR ile eğitilmiş bir convolutional ağ, ayrıca dondurulmuş ImageNet
 ResNet-18 ve ViT-B/16 kullandım.
 
+Burada bir protokol ayrımını baştan söyleyeyim. CIFAR-10 convolutional
+deneyini ham veri hattında koştum; yani replay tabanı gerçekten ham görüntü
+saklıyor. CIFAR-100 ve ViT deneylerinde ise encoder çıktılarını önceden
+hesaplayan feature cache kullanıyorum; bu durumda bütün yöntemler özellik
+vektörü sakladığı için öğe başına bellek farkı ortadan kalkıyor. Bunun
+sonuçlara etkisini eşit-byte bölümünde ayrıca anlatacağım.
+
 Metrik olarak ortalama doğruluk, unutma, geriye transfer, router sahiplik
 doğruluğu, yönlendirme korunumu, uzman sayısı, bellek ve gecikme raporluyorum.
 Unutma metriği sıfırda kırpılıyor, yani pozitif geriye transferi sıfır olarak
