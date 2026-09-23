@@ -89,8 +89,8 @@ resumes from the fixed code and is followed by wave 2.
   (neutral once distillation is present, revising design fact 1 for the
   current recipe). Latent replay ≈ ER at equal item budget (38.45 vs 38.58).
 - **Anchor refresh (E8, CIFAR-100 ResNet-18, 3 seeds):** flipping
-  `--refresh_anchors_after_calib` on lifts pure 15.65 ± 0.39 / 31.69 →
-  **18.31 ± 1.03 / 18.82** and the latent-replay variant 17.68 ± 0.97 / 17.47 →
+  `--refresh_anchors_after_calib` on lifts pure 15.65 ± 0.39 / 31.69 to
+  **18.31 ± 1.03 / 18.82** and the latent-replay variant 17.68 ± 0.97 / 17.47 to
   **21.13 ± 0.34 / 16.09**. Inference anchoring (`--proto_routing_alpha 0.5`)
   is roughly neutral. **Action:** make refresh the default in the final ResNet
   configs and re-run the headline tables with it.
@@ -147,7 +147,7 @@ show what the allocation policy actually decides.
 | R4 | **MNIST 5-seed** (`results/benchmark_multi.json`): pure 79.36 ± 1.16 / 7.91 ± 1.24; hybrid 80.05 ± 1.08 / 5.61 ± 1.12; DER++ 86.93 ± 0.91 / 7.31. | Medium | Toy dataset; keep as a sanity/ablation bed, not as a headline. |
 | R5 | **CIFAR-100 ResNet-18 single seed** (`results/cifar100_resnet18`): pure 16.01 / 28.89; hybrid 18.96 / 19.78 vs DER++ 12.57 / 67.28, iCaRL 13.24 / 11.03. | Medium (single seed) | Backbone swap is the largest lever measured (fact 17). Recipe for 3 seeds exists (`cifar100_resnet18_multiseed.sh`), not yet run. |
 | R6 | **Domain-shift MNIST** (`results/mnist_domainshift`): pure 86.07 / 5.64; task-free online 86.16; margin +0.117. | Medium (single seed, pilot) | Supports the shared-expert/domain-incremental story; needs a real domain benchmark (E11). |
-| R7 | **Controlled mechanism ablations** (facts 1, 11, 12, 15): OOD 49.85→76.60; distillation 21.3→38.0 raw router; calibration/distillation substitutes; exact routing lock. | Strong internal validity | Seed-42 / small budgets. Must be repeated as one matrix at the final recipe (E5). |
+| R7 | **Controlled mechanism ablations** (facts 1, 11, 12, 15): OOD 49.85 to 76.60; distillation 21.3 to 38.0 raw router; calibration/distillation substitutes; exact routing lock. | Strong internal validity | Seed-42 / small budgets. Must be repeated as one matrix at the final recipe (E5). |
 | R8 | **Gate policy ablation** (facts 16, `results/cifar100_gate_*`): relative vs absolute gate is a wash. | Strong negative result | Honest, but it weakens H5: the allocation policy currently does not change outcomes on conv CIFAR-100. |
 
 ### 1.2 Apples-to-oranges list (fix or flag before publishing)
@@ -409,8 +409,8 @@ rewrite with byte and param columns; artifact hash/DOI. **Status: process.**
 
 ## 6. Execution order and kill criteria
 
-**Order:** M1 → E1 → E2 → E4 → E7 → E5 → E6 → E3 → E8 → E9 → E10 → E11 → E12
-→ E13. (E1/E2 need no code and immediately strengthen the weakest documented
+**Order:** M1 -> E1 -> E2 -> E4 -> E7 -> E5 -> E6 -> E3 -> E8 -> E9 -> E10 -> E11 -> E12
+-> E13. (E1/E2 need no code and immediately strengthen the weakest documented
 claims.)
 
 **Decision points.**

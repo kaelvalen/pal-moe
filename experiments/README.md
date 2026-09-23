@@ -17,7 +17,7 @@ from `_record_baseline_result`, so method variants cannot drift apart.
 
 | Script | Purpose |
 | :-- | :-- |
-| `paper_report.py` | Scan `results/` → `results/paper_report.md` + Pareto/growth/latency figures (skips `results/archive/`) |
+| `paper_report.py` | Scan `results/` into `results/paper_report.md` + Pareto/growth/latency figures (skips `results/archive/`) |
 | `measure_latency.py` | Per-sample forward latency (batch 1/128) for the runner geometries |
 | `prepare_tiny_imagenet.py` | Flatten the official Tiny-ImageNet train layout into an ImageFolder tree (symlinks) |
 | `repair_missing_rows.py` | Merge a single-method re-run into existing per-seed JSONs (dry run by default) |
