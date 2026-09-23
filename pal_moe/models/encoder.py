@@ -160,12 +160,20 @@ class SharedEncoder(nn.Module):
 
         feature_dim = backbone.fc.in_features
         backbone.fc = nn.Identity()
-        return nn.Sequential(
-            backbone,
-            nn.Linear(feature_dim, output_dim),
-            nn.BatchNorm1d(output_dim),
-            nn.ReLU(inplace=True),
+        # Backbone width before the projection head; used to detect an identity
+        # projection (output_dim == width), which makes the frozen features
+        # seed-independent so the persistent cache can be shared across seeds.
+        self.backbone_feature_dim = int(feature_dim)
+        head: nn.Module = (
+            nn.Identity()
+            if output_dim == feature_dim
+            else nn.Sequential(
+                nn.Linear(feature_dim, output_dim),
+                nn.BatchNorm1d(output_dim),
+                nn.ReLU(inplace=True),
+            )
         )
+        return nn.Sequential(backbone, head)
 
     def _build_vit(
         self,

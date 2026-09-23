@@ -1729,6 +1729,19 @@ def test_resnet_encoder_shapes():
     assert enc1.net[0].conv1.in_channels == 1
 
 
+def test_resnet_identity_head_makes_features_seed_invariant():
+    """output_dim == backbone width => identity head and a shareable cache."""
+    from pal_moe.models.encoder import SharedEncoder
+
+    enc = SharedEncoder(input_dim=3072, output_dim=512, arch="resnet18")
+    assert enc.backbone_feature_dim == 512
+    assert isinstance(enc.net[1], nn.Identity)
+
+    projected = SharedEncoder(input_dim=3072, output_dim=256, arch="resnet18")
+    assert projected.backbone_feature_dim == 512
+    assert not isinstance(projected.net[1], nn.Identity)
+
+
 def test_diagnose_detects_resnet_and_encoder_meta(tmp_path):
     from experiments.diagnose_checkpoint import (
         _detect_encoder_arch,
