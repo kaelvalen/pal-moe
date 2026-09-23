@@ -30,7 +30,7 @@ from `_record_baseline_result`, so method variants cannot drift apart.
 
 | Script | Purpose |
 | :-- | :-- |
-| `paper_all.sh`, `paper_all_resume.sh` | Full paper queue (wave 1 → wave 2), one detached command |
+| `paper_all.sh`, `paper_all_resume.sh` | Full paper queue (wave 1 then wave 2), one detached command |
 | `paper_wave1b.sh`, `paper_wave1c.sh`, `paper_wave1d.sh` | Consolidation waves (equal-byte, growth, ablation, drift, capacity) |
 | `paper_wave2.sh` | Raw equal-byte, MIR, Tiny-ImageNet, slow regenerations, latency, domain-shift |
 | `paper_status.sh` | Progress/FAILED/summary check for the running queue |
