@@ -252,19 +252,19 @@ gösteriyor.
 | Method | Avg Acc | Forgetting | Memory |
 | :-- | --: | --: | --: |
 | iCaRL (k=25) | **14.06** | **10.28** | 10.65 MB |
-| PAL-MoE + Latent Replay | 12.70 ± 0.81 | 43.02 | 2.00 MB |
-| PAL-MoE pure | 12.13 ± 0.57 | 40.62 | 2.04 MB |
-| DER++ (P=250) | 11.66 ± 0.38 | 62.36 | 0.71 MB |
-| MIR (P=250) | 7.90 | 65.33 | 0.51 MB |
-| Experience Replay (ER, P=250) | 7.67 | 65.72 | 0.51 MB |
-| EWC | 3.64 | 72.31 | - |
-| Naive | 3.54 | 71.73 | - |
+| PAL-MoE pure | 12.59 ± 0.80 | 39.72 | 2.04 MB |
+| PAL-MoE + Latent Replay | 11.73 ± 1.51 | 44.62 | 2.00 MB |
+| DER++ (P=250) | 11.69 ± 0.32 | 62.41 | 0.71 MB |
+| MIR (P=250) | 7.93 ± 0.04 | 65.14 | 0.51 MB |
+| Experience Replay (ER, P=250) | 7.78 ± 0.18 | 65.52 | 0.51 MB |
+| EWC | 3.68 | 72.34 | - |
+| Naive | 3.51 | 71.28 | - |
 
-Replay ailesi içinde PAL-MoE açık ara önde: Experience Replay (ER)ne göre 4.5 puan
-daha doğru ve unutması 65.7'ye karşı 40.6. iCaRL doğruluk ve unutmada önde
+Replay ailesi içinde PAL-MoE pure önde: Experience Replay'e göre 4.8 puan
+daha doğru ve unutması 65.5'e karşı 39.7. iCaRL doğruluk ve unutmada önde
 ama 200 sınıfta 5000 ham örnek saklıyor: 10.65 MB'a karşı PAL-MoE 2.04 MB,
-yani 5.2 kat bellek. Equal-byte'ta bu tablonun değişmesini bekliyorum; o koşu
-sırada.
+yani 5.2 kat bellek. Equal-byte koşusu bu tablonun değişip değişmediğini
+gösterecek.
 
 ### Equal-byte karşılaştırması
 
@@ -346,7 +346,7 @@ Hybrid yaklaşık 1.2 puan kazandırıyor ama 6.6 kat bellek harcıyor. Eşit
 byte'ta kaybediyor (1 MiB: 39.93'a karşı 46.16), yani hybrid'i ana sonuç
 olarak değil, bellek esnekliği olarak sunmak gerekiyor.
 
-MIR baseline'ı da Experience Replay (ER)ni geçemedi: CIFAR-10'da 37.62 ± 1.04
+MIR baseline'ı da Experience Replay'i geçemedi: CIFAR-10'da 37.62 ± 1.04
 (unutma 61.79), Experience Replay (ER) 39.92 (unutma 58.87); CIFAR-100'de 10.50
 (unutma 66.16), Experience Replay (ER) 10.93 (unutma 66.91).
 
@@ -389,7 +389,7 @@ prototype anchoring (alpha=0.5) yaklaşık nötr.
 | Domain shift (MNIST döndürme, 5 seed) | 85.38 ± 0.47 doğruluk, 6.34 unutma |
 | Trainable encoder | Pure varyant 37.81'den 9.97'ye düşüyor; yöntem dondurulmuş temsile bağımlı |
 | Latency (batch 1) | ResNet-18: tek kafa 1.09 ms, PAL-MoE 1.71 ms (uzman sayısından bağımsız); ViT: 8.43 ms vs 8.57-8.82 ms |
-| Buffer politikası | Feature-cache P=250'de reservoir sampling tabanlara yaklaşık 4 puan doğruluk kazandırıyor: ER 43.23 (recency 39.26), DER++ 48.25 (recency 44.37). Raw equal-byte'ta etki küçük. |
+| Buffer politikası | Feature-cache P=250, 3 seed: reservoir sampling tabanlara yaklaşık 3 puan doğruluk ve 4-7 puan daha az unutma kazandırıyor. ER 42.38 ± 0.78 (recency 39.26 ± 0.92), DER++ 47.75 ± 0.39 (recency 44.37 ± 0.62). Raw equal-byte'ta etki küçük (ER 33.18 vs 30.17), yani PAL'ın raw üstünlüğü recency varsayılanından gelmiyor. |
 
 ## Sınırlamalar
 
@@ -417,8 +417,8 @@ Yedincisi, CORe50 gibi daha zorlu bir domain-incremental benchmark henüz yok;
 şimdilik MNIST döndürme pilotuyla sınırlı. Prompt tabanlı rehearsal-free
 rakipler de kapsam dışı.
 
-Sekizincisi, Tiny-ImageNet equal-byte hücreleri ve reservoir ekinin kalan
-seed'leri henüz koşuyor; sonuçlar geldikçe tablolara eklenecek.
+Sekizincisi, Tiny-ImageNet equal-byte hücreleri henüz koşmadı; sonuç
+geldiğinde tabloya eklenecek.
 
 ## Sonuç ve sonraki adımlar
 

@@ -712,15 +712,14 @@ The following fact documents the correction of the CIFAR-10 comparison table.
       1.71 ms and flat in the number of stored experts; ViT-B/16 8.43 ms vs
       8.57-8.82 ms.
     - **Buffer policy (AO10):** with reservoir sampling the replay baselines
-      gain about 4 accuracy points and 5-8 forgetting points in the
-      feature-cache protocol at P=250 (seed-42 appendix: ER 43.23 / 51.75 vs
-      recency 39.26 ± 0.92 / 59.69; DER++ 48.25 / 40.65 vs recency
+      gain about 3 accuracy points and 4-7 forgetting points in the
+      feature-cache protocol at P=250 (3 seeds: ER 42.38 ± 0.78 / 52.98 vs
+      recency 39.26 ± 0.92 / 59.69; DER++ 47.75 ± 0.39 / 41.52 vs recency
       44.37 ± 0.62 / 45.16). In the raw equal-byte sweep the effect is small
       (1 MiB, 3 seeds: ER 33.18 ± 1.11 / 68.04 vs 30.17 / 72.77; DER++
       37.79 ± 1.17 / 60.38 vs 36.81 / 61.42), so the PAL lead in the raw
-      comparison is not an artefact of the recency default. The appendix
-      comparison is seed 42; seeds 1/2 are running. Online EWC stays weak
-      (17.45 / 89.12), so the constant-memory Fisher did not help.
+      comparison is not an artefact of the recency default. Online EWC stays
+      weak (17.45 / 89.12), so the constant-memory Fisher did not help.
 
 ## Ablations
 
