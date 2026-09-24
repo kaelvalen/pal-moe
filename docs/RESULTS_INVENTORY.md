@@ -21,6 +21,27 @@ not cited).
 | `cifar10_vit_multiseed/` | CIFAR-10 ViT-B/16, 3 seeds (+ latent-replay repair) | HEADLINE | BENCHMARK fact 18 |
 | `cifar100_vit_multiseed/` | CIFAR-100 ViT-B/16, 3 seeds | HEADLINE | SUNUM §5.3 |
 
+## Stage 1 (2026-09-25, measurement programme)
+
+Status legend adds: STAGE1 (evidence for `docs/STAGE1_RESULTS.md`).
+
+| Directory / file | Contents | Status | Referenced by |
+| :-- | :-- | :-- | :-- |
+| `e0/e0_all_vit_b_16_seed42.json` | representation ceiling, adapter ranks 0/8/32/64, oracle routing, router recall@K | STAGE1 | RESULTS F1-F5 |
+| `e0/v1_repro_seed42/` | v1 + iCaRL re-run at HEAD (59.30 vs the published 59.34; iCaRL exact) | STAGE1 | RESULTS §2 |
+| `e0/e0_adapter*, e0_ncm*, e0_shared*` | mixture / reranking / rejection negatives and the L2 rungs | STAGE1 | PLAN 3, RESULTS F5 |
+| `s2/s2_ladder_study.json` | complexity ladder L0-L4, 3 seeds, CIFAR-100/ViT | STAGE1 | RESULTS §3 |
+| `s3/s3_backbone_study.json` | six backbones, deltas, transfer, ViT consistency gate | STAGE1 | RESULTS §4 |
+| `s3/<backbone>/s2_ladder_study_*.json` | per-backbone ladder, 3 seeds | STAGE1 | RESULTS §4 |
+| `s3/s3_caches.json` | the projected-cache index (latent_dim 768, rep_seed) | STAGE1 | PLAN 5 |
+| `s7/s7_transfer_cifar10.json` | per-checkpoint transfer curves, few-shot suite, evaluator validation | STAGE1 | RESULTS §5 |
+| `s4/s4_dataset_study.json` | four datasets x six levels x three seeds, transfer per cell, S0 contracts, recipe stamp | STAGE1 | RESULTS §6 |
+| `logs/` | per-stage logs from `experiments/run_all.py` | STAGE1 | - |
+
+Feature caches (`results/s3/cache_*`, `results/s4/cache_*`, `results/feature_cache/*`)
+are gitignored (`*.pt`); `experiments/s3_run.py` and `experiments/s4_datasets.py`
+rebuild them from scratch.
+
 ## Protocol / correction evidence
 
 | Directory | Contents | Status | Referenced by |

@@ -4,14 +4,37 @@
 
 Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for each task while a **prototype-anchored linear router** selects the expert for each input. The replay memory stores **128-dimensional latent vectors instead of raw images**, so its footprint is measured in kilobytes, and the pure (zero-raw-replay) mode requires no exemplar images at all.
 
+> **Current status (Stage 1, 2026-09-25).** A systematic measurement programme
+> ([`docs/STAGE1_RESULTS.md`](docs/STAGE1_RESULTS.md)) has revised the picture
+> this README describes. On frozen features a **training-free prototype readout
+> (NCM) beats v1 on CIFAR-100/ViT with zero parameters and 307 KB** (70.34 vs
+> 59.30), a closed-form ridge readout wins on six backbones and four datasets,
+> and the binding constraint is **selection**: oracle routing is +27 points
+> above the routed model, while no reranking on the frozen space recovers it.
+> The expert bank buys isolation (+14.6 on CIFAR-100, +15.5 on Tiny-ImageNet)
+> rather than capacity, and that isolation costs few-shot generalization
+> (-14.8 points at one example per class on the ViT). The v1 tables below are
+> still the published record for the v1 design; read them together with
+> `STAGE1_RESULTS.md` sections 7 and 10.
+
 Documentation entry points:
 
+- [`docs/STAGE1_RESULTS.md`](docs/STAGE1_RESULTS.md): **all Stage 1 results in one place** (E0, S2, S3, S7, S4), the consolidated findings, the pre-registered hypothesis verdicts, and what the evidence does *not* say.
+- [`docs/STAGE1_PLAN.md`](docs/STAGE1_PLAN.md): the stage order, the two experiment rules, and the per-stage write-ups.
+- [`docs/MEASUREMENT_CONTRACT.md`](docs/MEASUREMENT_CONTRACT.md) and [`docs/ARCHITECTURE_CONTRACT.md`](docs/ARCHITECTURE_CONTRACT.md): what a run must report (S0) and the four interfaces plus registries (S1).
 - [`docs/SUNUM.md`](docs/SUNUM.md): Turkish presentation notes (pitch, architecture, results, open problems, likely questions).
 - [`docs/RESULTS_INVENTORY.md`](docs/RESULTS_INVENTORY.md): what every `results/` directory contains and its status.
 - [`docs/RESEARCH_MAP.md`](docs/RESEARCH_MAP.md): which literature line each code component comes from.
 - [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md): structure and comment review, plus the refactor backlog.
 - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) and [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md): protocol, design facts and the paper experiment plan.
-- [`docs/PALMOE_V2_SPEC.md`](docs/PALMOE_V2_SPEC.md): design freeze for v2 (residual adapter experts, expansion-safe routing, counterfactual allocation, distribution memory). Additive plan; it does not change v1 behaviour.
+- [`docs/PALMOE_V2_SPEC.md`](docs/PALMOE_V2_SPEC.md): the pre-measurement v2 design freeze, kept for the record. S1 supersedes it on the abstraction question and the measurements supersede it on the mechanism question.
+
+Reproduce every Stage 1 result with one command:
+
+```bash
+.venv/bin/python experiments/run_all.py --list      # what is done, what is left
+.venv/bin/python experiments/run_all.py --dry-run   # the exact commands
+```
 
 One caveat before quoting the tables below: they use the published item-budget
 comparison. The equal-byte comparison splits by storage format. In the raw
