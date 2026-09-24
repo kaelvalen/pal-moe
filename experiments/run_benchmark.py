@@ -1504,15 +1504,14 @@ def run_benchmark(
     print("=" * 80)
 
     # Save to json
-    results_path = os.path.join(output_dir, f"benchmark_results_seed{args.seed}.json")
-    with open(results_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"\nSaved benchmark results to {results_path}")
-
     meta_path = os.path.join(output_dir, f"benchmark_meta_seed{args.seed}.json")
     run_meta = {
         "seed": args.seed,
         "dataset": dataset,
+        # The resolved backbone, not the raw flag: `args.encoder_arch` is None
+        # whenever the dataset default applies, and the contract needs the
+        # actual architecture for a record to be reproducible.
+        "backbone": encoder_arch,
         "device": str(device),
         "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
         "duration_sec": round(time.time() - _t_start, 1),
@@ -1521,6 +1520,26 @@ def run_benchmark(
         "python": sys.version.split()[0],
         "args": vars(args),
     }
+
+    # Measurement contract (docs/MEASUREMENT_CONTRACT.md, S0): attach the
+    # model-independent run record to every method. Additive by design - no
+    # existing key is touched, so the published tables do not move - and
+    # uniform by construction: one insertion point covers all 14 method blocks
+    # instead of one per method.
+    from pal_moe.evaluation.schema import record_from_runner_result
+
+    for method_name, payload in list(results.items()):
+        if not isinstance(payload, dict):
+            continue
+        result_with_method = dict(payload)
+        result_with_method.setdefault("method", method_name)
+        payload["contract"] = record_from_runner_result(result_with_method, run_meta)
+
+    results_path = os.path.join(output_dir, f"benchmark_results_seed{args.seed}.json")
+    with open(results_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nSaved benchmark results to {results_path}")
+
     with open(meta_path, "w") as f:
         json.dump(run_meta, f, indent=2, default=str)
     print(f"Saved run metadata to {meta_path}")
