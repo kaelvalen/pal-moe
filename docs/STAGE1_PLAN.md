@@ -327,3 +327,83 @@ blocks design behaves as intended (the records stay readable and are correctly
 excluded from learning-block studies), but a future S7 run should record the
 accuracy matrix it already computes, which would let the transfer conditions
 enter a full study.
+
+---
+
+## 7. S4 results - dataset generalization
+
+One canonical backbone (frozen ViT-B/16, latent_dim 768), one protocol
+(Class-IL), three seeds; only the dataset changes. Each dataset keeps the
+repo's canonical split, and the transfer probe is always CIFAR-10, so **the
+CIFAR-10 row is the in-domain case and the other three are cross-dataset**.
+
+| dataset | T | NCM | Ridge | Shared-J | Shared-S | PerTask | Oracle | routing tax | isolation | few1 delta |
+| :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| MNIST | 5 | 84.99 | **97.76** | 96.49 | 83.86 | 85.56 | 99.70 | 14.14 | +1.69 | -3.73 |
+| CIFAR-10 | 5 | 91.17 | **94.81** | 90.41 | 83.76 | 91.61 | 99.14 | 7.53 | +7.85 | **+17.23** |
+| CIFAR-100 | 20 | 70.34 | **76.77** | 75.81 | 56.00 | 70.58 | 97.46 | 26.88 | +14.58 | -10.19 |
+| Tiny-ImageNet | 20 | 79.95 | **84.03** | 82.57 | 64.93 | 80.38 | 94.10 | 13.72 | +15.45 | -5.46 |
+
+Deltas:
+
+| dataset | L3 - Ridge | isolation (L3 - L2b) | routing tax (L4 - L3) | L2a - Ridge |
+| :-- | --: | --: | --: | --: |
+| MNIST | -12.21 | +1.69 | +14.14 | -1.27 |
+| CIFAR-10 | -3.20 | +7.85 | +7.53 | -4.40 |
+| CIFAR-100 | -6.19 | +14.58 | +26.88 | -0.96 |
+| Tiny-ImageNet | -3.65 | +15.45 | +13.72 | -1.46 |
+
+### 7.1 Answers to G1-G6
+
+**G1 - readout dominance: confirmed on 4/4 datasets.** `L3 - ridge` is negative
+everywhere (-3.20 to -12.21), with the largest loss on the easiest dataset
+(MNIST) and the smallest on CIFAR-10.
+
+**G2 - isolation benefit: positive on 4/4, and it grows with the stream
+length.** 5 tasks: +1.69 (MNIST) and +7.85 (CIFAR-10). 20 tasks: +14.58
+(CIFAR-100) and +15.45 (Tiny-ImageNet). Isolation is worth little on a short
+stream and a lot on a long one - the S2 value was not an artefact of that
+backbone.
+
+**G3 - routing tax tracks difficulty, not length.** 7.53 (CIFAR-10),
+13.72 (Tiny-ImageNet, 20 tasks), 14.14 (MNIST), 26.88 (CIFAR-100). The
+20-task Tiny-ImageNet tax is half the CIFAR-100 one, so task count is not the
+driver; representation ambiguity is (consistent with S3's recall@3
+correlation).
+
+**G4 - representation dependence: the full-split transfer probe is
+uninformative here.** Every cell sits at 94.8-95.1 because the ViT/CIFAR-10
+pair is saturated, so it cannot rank methods. The few-shot delta is the
+discriminating axis, exactly as S7 found.
+
+**G5 - the low-data penalty depends on the domain, not on the mechanism.**
+In-domain: **+17.23**. Cross-dataset: -3.73, -5.46, -10.19. Adaptation helps
+few-shot transfer inside the stream's own distribution and hurts it outside.
+
+**G6 - scaling.** Isolation benefit grows with T (G2). Routing tax does not
+(G3). Memory and parameter cost are recorded per cell in the study file; the
+`T in {2,5,10,20}` sweep (S4b) is what would separate the two effects
+cleanly.
+
+### 7.2 The shared-adapter result, correctly measured
+
+`L2a - ridge` is -0.96 to -4.40, so a single shared adapter trained on all
+tasks at once is **within one to four points of the closed-form readout
+everywhere** (CIFAR-100: -0.96; MNIST: -1.27). The same adapter under the
+sequential constraint (`L2b`) drops 12-20 points. The loss therefore lives in
+the *sequential constraint*, not in the adapter's capacity - still the cleanest
+statement of what the expert bank is for, now on four datasets.
+
+### 7.3 A bug this stage found
+
+`s4_datasets.py` reimplemented the ladder loop instead of calling
+`s2_ladder.run_level`, and lost the `spec.joint` branch. `L2a_shared_joint`
+therefore ran as `L2b_shared_seq` and the two rows were **numerically
+identical** on every dataset - visible in the log, invisible in the aggregate
+table. Caught and fixed by removing the 12 contaminated cells and re-running
+only those (60 skipped, recipe stamp preserved).
+
+This is the fourth instance of the same failure class in this session: a copied
+code path loses the branching of the original. The general lesson for the
+remaining stages is to call the existing entry point rather than re-deriving
+the loop.
