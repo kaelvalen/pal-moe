@@ -11,6 +11,7 @@ Documentation entry points:
 - [`docs/RESEARCH_MAP.md`](docs/RESEARCH_MAP.md): which literature line each code component comes from.
 - [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md): structure and comment review, plus the refactor backlog.
 - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) and [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md): protocol, design facts and the paper experiment plan.
+- [`docs/PALMOE_V2_SPEC.md`](docs/PALMOE_V2_SPEC.md): design freeze for v2 (residual adapter experts, expansion-safe routing, counterfactual allocation, distribution memory). Additive plan; it does not change v1 behaviour.
 
 One caveat before quoting the tables below: they use the published item-budget
 comparison. The equal-byte comparison splits by storage format. In the raw
