@@ -180,15 +180,33 @@ def run_cell(
     n = len(tasks)
     R = np.zeros((n, n), dtype=np.float32)
     fwt = []
-    for t, task in enumerate(tasks):
-        if model.seen:
-            _adapted, delta = s2_ladder.forward_transfer(model, task, num_classes, dim)
-            fwt.append(delta)
-        model.seen = sorted(set(model.seen) | set(task["classes"]))
-        model.fit_task(task, t)
-        model.register_task(task, t)
-        for i in range(t + 1):
-            R[t, i] = model.evaluate_task(tasks[i])
+    if model_spec.joint:
+        # The joint control reads every task at once: an upper bound for the
+        # shared adapter, not a CL result. Omitting this branch silently turns
+        # L2a into a duplicate of L2b, which is exactly what it did before the
+        # bug was caught in the log.
+        all_feats = torch.cat([t["splits"]["train"][0] for t in tasks], dim=0)
+        all_labels = torch.cat([t["splits"]["train"][1] for t in tasks], dim=0)
+        model.seen = sorted({c for t in tasks for c in t["classes"]})
+        for i, task in enumerate(tasks):
+            model.register_task(task, i)
+        model.fit_task(None, 0, joint_data=(all_feats, all_labels))
+        if model_spec.readout in s2_ladder.CLOSED_FORM_READOUTS:
+            model.readout.fit(all_feats, all_labels, seen_classes=model.seen)
+        for i in range(n):
+            R[n - 1, i] = model.evaluate_task(tasks[i])
+    else:
+        for t, task in enumerate(tasks):
+            if model.seen:
+                _adapted, delta = s2_ladder.forward_transfer(
+                    model, task, num_classes, dim
+                )
+                fwt.append(delta)
+            model.seen = sorted(set(model.seen) | set(task["classes"]))
+            model.fit_task(task, t)
+            model.register_task(task, t)
+            for i in range(t + 1):
+                R[t, i] = model.evaluate_task(tasks[i])
 
     T = n - 1
     forget = [
