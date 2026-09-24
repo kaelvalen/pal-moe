@@ -23,8 +23,8 @@ systematically* is a successful Stage 1.
 | S1 | architecture contract: Backbone / Expert / Readout / Router registries | **done** (`ARCHITECTURE_CONTRACT.md`, `pal_moe/arch/`) |
 | S2 | complexity ladder, one backbone, 3 seeds | **done** (`experiments/s2_ladder.py`, section 3) |
 | S3 | backbone generalization: `random -> mlp -> conv -> resnet18 -> vit` | **done** (`experiments/s3_run.py`, `s3_report.py`, section 5) |
-| S4 | dataset generalization: MNIST / CIFAR-10 / CIFAR-100 / Tiny-ImageNet | planned |
-| S5 | protocol generalization: Class-IL / Task-IL / Domain-IL labelling | planned |
+| S4 | dataset generalization: MNIST / CIFAR-10 / CIFAR-100 / Tiny-ImageNet | **done** (`STAGE1_RESULTS.md` section 6) |
+| S5 | protocol axis: Class-IL / Task-IL factorial | **done** (`experiments/s5_protocols.py`, `STAGE1_RESULTS.md` section 7) |
 | S6 | task-order, class-order, domain, unseen-task, expert transfer | planned |
 | S7 | representation transfer: checkpoint -> frozen probe on an unseen dataset | **done** (`experiments/s7_transfer.py`, section 6) |
 | S8 | budget / data-regime / compute scaling | planned |

@@ -400,9 +400,25 @@ class LadderModel:
     # -- evaluation ------------------------------------------------------
 
     @torch.no_grad()
-    def evaluate_task(self, task, oracle: bool = False, task_id=None) -> float:
+    def evaluate_task(
+        self,
+        task,
+        oracle: bool = False,
+        task_id=None,
+        class_masking: bool = False,
+    ) -> float:
+        """Accuracy on one task's test split.
+
+        `class_masking` restricts the class search space to that task's own
+        classes, which is what makes an evaluation **Task-IL** rather than
+        Class-IL. It is orthogonal to `oracle` (whether the task id is used for
+        *routing*): knowing which task an input belongs to and knowing which
+        classes are answerable are two different pieces of information, and S5
+        measures them separately (docs/STAGE1_RESULTS.md section 6).
+        """
         feats, labels = task["splits"]["test"]
         feats, labels = feats.to(self.device), labels.to(self.device)
+        allowed = [int(c) for c in task["classes"]] if class_masking else None
         correct = 0
         for start in range(0, feats.size(0), 512):
             z = feats[start : start + 512]
@@ -412,6 +428,8 @@ class LadderModel:
                 oracle=oracle,
                 task_id=task_id if task_id is not None else task["task_id"],
             )
+            if allowed is not None:
+                logits = mask_unseen(logits, allowed)
             correct += int((logits.argmax(dim=-1) == y).sum())
         return correct / max(feats.size(0), 1)
 

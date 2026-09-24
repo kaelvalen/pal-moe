@@ -116,6 +116,15 @@ _FACTOR_DEFAULTS: dict[str, Any] = {
     "readout": None,
     "readout_estimator": None,
     "expert": None,
+    # Protocol refinements (S5). `protocol` says which stream this is;
+    # `class_masking` and `routing_mode` say which information the model was
+    # given at INFERENCE, and they are independent: an oracle-routed class-IL
+    # run is not a Task-IL run. Mixing them is the mistake the schema prevents
+    # (docs/MEASUREMENT_CONTRACT.md R3).
+    "class_masking": None,
+    "routing_mode": None,
+    "increment_type": None,
+    "class_space": None,
     "data_fraction": 1.0,
     "budget": {
         "memory_bytes": None,
@@ -468,12 +477,18 @@ def aggregate_runs(
     """
     records = list(records)
     protocols = {
-        (r["factors"].get("protocol"), r["factors"].get("task_id_at_inference"))
+        (
+            r["factors"].get("protocol"),
+            r["factors"].get("task_id_at_inference"),
+            r["factors"].get("class_masking"),
+            r["factors"].get("routing_mode"),
+        )
         for r in records
     }
     if len(protocols) > 1:
         raise ValueError(
-            f"refusing to aggregate across protocols (R3): {sorted(protocols)}"
+            "refusing to aggregate across protocols (R3): "
+            f"{sorted(protocols, key=str)}"
         )
     requires = set(requires_blocks)
     missing = [

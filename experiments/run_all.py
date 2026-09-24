@@ -23,6 +23,7 @@ Stages and their outputs:
     s3       backbone generalization ladder (needs s3x)          results/s3/*/
     s3r      backbone report, deltas, transfer                   results/s3/s3_backbone_study.json
     s7       representation transfer (needs s3x)                 results/s7/
+    s5       protocol axis: Class-IL vs Task-IL, 2x2 factorial    results/s5/
     s4       dataset generalization, 4 datasets x 6 levels x 3 seeds  results/s4/
 """
 
@@ -81,6 +82,7 @@ class Stage:
 
 
 def _s4_cells_done(count: int = 72) -> bool:
+    """S4's study grows while it runs, so existence is not completion."""
     path = ROOT / "results" / "s4" / "s4_dataset_study.json"
     if not path.exists():
         return False
@@ -89,6 +91,12 @@ def _s4_cells_done(count: int = 72) -> bool:
             return len(json.load(fh).get("cells", [])) >= count
     except Exception:
         return False
+
+
+def stage_is_done(stage: Stage) -> bool:
+    if stage.name == "s4":
+        return _s4_cells_done()
+    return stage.is_done()
 
 
 def build_stages(args) -> list[Stage]:
@@ -248,6 +256,29 @@ def build_stages(args) -> list[Stage]:
             minutes=25,
         ),
         Stage(
+            "s5",
+            "protocol axis: Class-IL / Task-IL 2x2 factorial",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/s5_protocols.py",
+                    "--datasets",
+                    "cifar100,cifar10",
+                    "--seeds",
+                    seeds,
+                    "--epochs",
+                    str(args.epochs),
+                    "--device",
+                    args.device,
+                    "--out",
+                    "results/s5",
+                ]
+            ],
+            done_when=[ROOT / "results" / "s5" / "s5_protocol_study.json"],
+            minutes=50,
+        ),
+        Stage(
             "s4",
             "dataset generalization: MNIST / CIFAR-10 / CIFAR-100 / Tiny-ImageNet",
             [
@@ -280,10 +311,7 @@ def run_stage(stage: Stage, force: bool, dry: bool) -> dict:
     LOGS.mkdir(parents=True, exist_ok=True)
     log_path = LOGS / f"{stage.name}.log"
 
-    if stage.name == "s4" and not force:
-        done = _s4_cells_done()
-    else:
-        done = stage.is_done()
+    done = stage_is_done(stage)
     if done and not force:
         print(f"  SKIP  {stage.name:6s} (output exists)")
         return {
@@ -363,7 +391,7 @@ def main() -> None:
     by_name = {s.name: s for s in stages}
     if args.list:
         for stage in stages:
-            mark = "done" if stage.is_done() else "todo"
+            mark = "done" if stage_is_done(stage) else "todo"
             print(
                 f"  {stage.name:6s} [{mark}] ~{stage.minutes:5.0f} min  {stage.description}"
             )

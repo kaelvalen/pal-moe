@@ -187,7 +187,95 @@ the capacity.
 
 ---
 
-## 7. Consolidated findings
+## 7. S5 - the protocol axis
+
+`oracle routing` and `Task-IL` are not the same thing: the first hands the model
+the task id *for routing* while it still chooses among every class it has seen,
+the second additionally restricts the class search space to the task's own
+classes. S5 measures the 2x2 factorial, so the gain decomposes into two
+mechanisms instead of one number:
+
+    class_masking=False, routing=learned   Class-IL (the reference)
+    class_masking=False, routing=oracle    task id for routing only
+    class_masking=True,  routing=learned   class space restricted only
+    class_masking=True,  routing=oracle    Task-IL (the standard protocol)
+
+Training is protocol-independent, so each (level, seed) trains once and is
+evaluated four times. Frozen ViT-B/16, 3 seeds.
+
+**CIFAR-100**
+
+| level | Class-IL | +oracle | mask | Task-IL | routing effect | masking effect | Task-IL - Class-IL |
+| :-- | --: | --: | --: | --: | --: | --: | --: |
+| `L0_ncm` | 70.34 | 70.34 | 95.73 | 95.73 | 0.00 | **25.39** | 25.39 |
+| `L1_ridge` | 76.77 | 76.77 | 96.79 | 96.79 | 0.00 | **20.02** | 20.02 |
+| `L2a_shared_joint` | 75.81 | 75.81 | 96.97 | 96.97 | 0.00 | **21.17** | 21.17 |
+| `L2b_shared_seq` | 56.00 | 56.00 | 92.85 | 92.85 | 0.00 | **36.85** | 36.85 |
+| `L3_per_task` | 70.58 | 97.46 | 95.78 | 97.55 | **26.88** | **25.20** | 26.96 |
+| `L4_oracle` | 97.46 | 97.46 | 97.55 | 97.55 | 0.00 | 0.09 | 0.09 |
+
+**CIFAR-10**
+
+| level | Class-IL | +oracle | mask | Task-IL | routing effect | masking effect | Task-IL - Class-IL |
+| :-- | --: | --: | --: | --: | --: | --: | --: |
+| `L0_ncm` | 91.17 | 91.17 | 98.33 | 98.33 | 0.00 | 7.16 | 7.16 |
+| `L1_ridge` | 94.81 | 94.81 | 99.07 | 99.07 | 0.00 | 4.26 | 4.26 |
+| `L2a_shared_joint` | 90.41 | 90.41 | 97.79 | 97.79 | 0.00 | 7.38 | 7.38 |
+| `L2b_shared_seq` | 83.76 | 83.76 | 97.92 | 97.92 | 0.00 | 14.16 | 14.16 |
+| `L3_per_task` | 91.61 | 99.14 | 98.53 | 99.20 | **7.53** | 6.92 | 7.59 |
+| `L4_oracle` | 99.14 | 99.14 | 99.20 | 99.20 | 0.00 | 0.06 | 0.06 |
+
+### 7.1 Findings
+
+**P1 - the setup validates itself.** Ten of the twelve rows must show a routing
+effect of exactly zero, because L0/L1 have no router, L2a/L2b apply the same
+adapter to everything, and L4 *is* the oracle. They do, to the digit. A mistake
+in the factorial or in the oracle path would have shown up as a spurious gain.
+
+**P2 - the protocol gap is large and strongly level-dependent.** Task-IL minus
+Class-IL is +20.02 for ridge, +21.17 for the joint shared adapter, and
+**+36.85 for the sequential shared adapter** on CIFAR-100. L2b's Class-IL
+collapse (56.00) is therefore mostly a *class-space* failure, not an adaptation
+failure: the same adapter reaches 92.85 under Task-IL. Under Task-IL the
+expert bank's advantage over the shared adapter shrinks from +14.58 to +4.70.
+
+**P3 - the two mechanisms carry the same information.** For L3 the routing
+effect is 26.88 and the masking effect 25.20, but the combined gain is only
+26.96, not ~52. They are almost fully redundant: telling the model which task
+it is answering and restricting the classes it may answer *are the same
+reminder*. This is the mechanism behind the E0 reranking failures - the
+router's confusion and the cross-task class confusion are one quantity, so no
+reranker reading the same frozen space has an independent signal to exploit.
+
+**P4 - once the task id is known, the class restriction is redundant.** L4's
+masking effect is 0.09 on CIFAR-100 and 0.06 on CIFAR-10. Routing to the right
+expert already implies the right class set, because the experts were trained
+per task.
+
+**P5 - the router is a class-level decision, not a task-level one.**
+`MI(Expert;Class)` is 0.619 against `MI(Expert;Task)` 0.545 on CIFAR-100
+(0.796 vs 0.792 on CIFAR-10). The prototype router picks the nearest class mean
+and the class-to-expert map is many-to-one, so "task specialization" is
+imposed *after* a class decision. That is the structural reason P3 holds.
+
+**P6 - transfer is protocol-independent, as it must be.** Every level reports
+the same transfer under both protocols (94.60 vs 94.60 for L3 on CIFAR-100),
+because the protocol changes only the evaluation, not the trained
+representation. A difference there would have meant a leak between the axes.
+
+### 7.2 What this changes
+
+The Class-IL numbers in sections 3-6 are not a property of the *models*: the
+same trained model is 20-37 points better when the protocol supplies task
+information. Any claim of the form "method X reaches 76.77 on CIFAR-100" is a
+Class-IL claim, and the Task-IL number for the same run is 96.79. The
+measurement contract now records `protocol`, `class_masking` and `routing_mode`
+as separate factors, and the aggregator refuses to mix them (R3), so the two
+cannot be conflated in a table again.
+
+---
+
+## 8. Consolidated findings
 
 **F1. The readout was the first bottleneck, and a training-free prototype
 readout solves it.** NCM on frozen features beats v1 and iCaRL on CIFAR-100
@@ -230,7 +318,7 @@ is what discriminates.
 
 ---
 
-## 8. Pre-registered hypotheses and their verdicts
+## 9. Pre-registered hypotheses and their verdicts
 
 | hypothesis | statement | verdict |
 | :-- | :-- | :-- |
@@ -251,7 +339,7 @@ is what discriminates.
 
 ---
 
-## 9. Measurement bugs this programme found
+## 10. Measurement bugs this programme found
 
 Five, each of which would have produced a confident wrong number:
 
@@ -281,7 +369,7 @@ requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 10. What this evidence does NOT say
+## 11. What this evidence does NOT say
 
 - It does **not** say "mixture of experts is unnecessary". It says that under
   this benchmark, protocol, budget and backbone, the incremental expert
@@ -303,13 +391,13 @@ requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 11. Open items and the stage order
+## 12. Open items and the stage order
 
 | stage | content | blocker |
 | :-- | :-- | :-- |
 | S4-r | corruption robustness, routing stability `TV(p(x), p(x~))` | needs corrupted caches (~2 h of ViT extraction) |
 | S4b | task-count sweep `T in {2,5,10,20}` | splitters have no sub-task support |
-| S5 | Task-IL / Domain-IL labelling | runner has no `--eval_protocol`; oracle routing is already the Task-IL counterpart |
+| S5 | Task-IL / Class-IL protocol axis | **done** (section 7); Domain-IL is S5b because a domain shift is a pixel-level transform and needs new feature caches |
 | S6 | task order, class order, unseen task, expert transfer | splitters have no order parameters |
 | S8 | memory / data-regime / compute budgets | no `--data_fraction`, no generic budget flag |
 | S9-S11 | robustness, scalability, statistics | unstarted |
@@ -320,7 +408,7 @@ number above depends on being explicit about.
 
 ---
 
-## 12. Artefacts
+## 13. Artefacts
 
 | path | contents |
 | :-- | :-- |
