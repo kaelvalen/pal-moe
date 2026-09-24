@@ -24,6 +24,7 @@ Stages and their outputs:
     s3r      backbone report, deltas, transfer                   results/s3/s3_backbone_study.json
     s7       representation transfer (needs s3x)                 results/s7/
     s5       protocol axis: Class-IL vs Task-IL, 2x2 factorial    results/s5/
+    s5b      domain-incremental rotated MNIST, unseen domain      results/s5b/
     s4       dataset generalization, 4 datasets x 6 levels x 3 seeds  results/s4/
 """
 
@@ -277,6 +278,28 @@ def build_stages(args) -> list[Stage]:
             ],
             done_when=[ROOT / "results" / "s5" / "s5_protocol_study.json"],
             minutes=50,
+        ),
+        Stage(
+            "s5b",
+            "Domain-IL: rotated MNIST domains, unseen-domain accuracy",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/s5b_domains.py",
+                    "--seeds",
+                    seeds,
+                    "--epochs",
+                    str(args.epochs),
+                    "--device",
+                    args.device,
+                    "--out",
+                    "results/s5b",
+                ]
+            ],
+            done_when=[ROOT / "results" / "s5b" / "s5b_domain_study.json"],
+            needs=["s5"],
+            minutes=60,
         ),
         Stage(
             "s4",

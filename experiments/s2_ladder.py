@@ -190,10 +190,24 @@ class LadderModel:
     requirement of the S2 recipe.
     """
 
-    def __init__(self, spec: LevelSpec, dim: int, num_classes: int, args, device):
+    def __init__(
+        self,
+        spec: LevelSpec,
+        dim: int,
+        num_classes: int,
+        args,
+        device,
+        router_slots=None,
+    ):
         self.spec = spec
         self.dim = dim
         self.num_classes = num_classes
+        # The router may need more slots than there are classes: under Domain-IL
+        # every task carries the same labels, so keying prototypes by class id
+        # makes each task overwrite the previous one's prototypes and the router
+        # collapses to a single expert (measured: reuse 0.25, MI 0.0000). Keying
+        # by (task, class) instead keeps one prototype per domain-class pair.
+        self.router_slots = int(router_slots or num_classes)
         self.device = device
         self.args = args
         self.seen: list[int] = []
@@ -358,13 +372,22 @@ class LadderModel:
     # -- registration ----------------------------------------------------
 
     @torch.no_grad()
-    def register_task(self, task, task_index: int) -> None:
+    def register_task(
+        self, task, task_index: int, router_offset: int | None = None
+    ) -> None:
+        """Register a task's prototypes.
+
+        `router_offset` shifts the router's prototype keys by `task_index *
+        classes_per_task` so that tasks sharing a label space (Domain-IL) get
+        their own prototypes instead of overwriting each other. The readout
+        keeps using the true labels either way.
+        """
         feats, labels = task["splits"]["train"]
         feats, labels = feats.to(self.device), labels.to(self.device)
         if self.router is None and self.spec.router == "prototype":
             self.router = PrototypeRouter(
                 dim=self.dim,
-                num_classes=self.num_classes,
+                num_classes=self.router_slots,
                 num_experts=max(1, self.args.max_experts),
             ).to(self.device)
 
@@ -376,7 +399,12 @@ class LadderModel:
             means[c] = feats[mask].mean(dim=0)
             self.class_expert[int(c)] = task_index
             if self.router is not None:
-                self.router.register_class(int(c), task_index, means[c])
+                key = (
+                    router_offset + task["classes"].index(c)
+                    if router_offset is not None
+                    else int(c)
+                )
+                self.router.register_class(key, task_index, means[c])
 
         for _c, mean in means.items():
             self.proto_z.append(mean.detach().clone())

@@ -275,7 +275,93 @@ cannot be conflated in a table again.
 
 ---
 
-## 8. Consolidated findings
+## 8. S5b - Domain-IL: is the routing tax a Class-IL artifact?
+
+Domain-IL keeps the label space fixed and moves the input distribution, so
+`class_space` stays shared and class masking is a no-op **by construction**.
+That removes the explanation S5 pointed at (P2/P3: the class-space restriction
+and the routing decision carry the same information) and leaves the question
+that decides how to read every earlier section: is isolation useful across
+shifted distributions, or was its benefit the class-space problem of Class-IL?
+
+Domains are rotations of MNIST (0/90/180/270 in the stream, 45 held out), each
+carrying **all 10 classes**, through the canonical frozen ViT-B/16. Three seeds.
+
+| level | learned | oracle | routing effect | unseen (learned) | unseen (oracle) | reuse | MI(E;Domain) | MI(E;Class) |
+| :-- | --: | --: | --: | --: | --: | --: | --: | --: |
+| `L0_ncm` | 72.74 | 72.74 | 0.00 | 58.19 | 58.19 | - | - | - |
+| `L1_ridge` | **91.58** | 91.58 | 0.00 | 61.88 | 61.88 | - | - | - |
+| `L2a_shared_joint` | 89.02 | 89.02 | 0.00 | **65.54** | 65.54 | - | - | - |
+| `L2b_shared_seq` | 82.15 | 82.15 | 0.00 | 46.10 | 46.10 | - | - | - |
+| `L3_per_task` | 84.20 | 95.89 | **+11.69** | 56.44 | 73.37 | 1.00 | **0.3600** | 0.0024 |
+| `L4_oracle` | 95.89 | 95.89 | 0.00 | 73.37 | 73.37 | - | - | - |
+
+The structural check holds again: `L3` under oracle routing equals `L4` exactly
+(95.54 / 96.05 / 96.06), so the oracle path and the factorial are sound.
+
+### 8.1 Findings
+
+**D1 - the routing tax is not a class-space artifact, but more than half of the
+Class-IL tax was.** Under a genuine distribution shift with a fixed label space
+the routing effect is **+11.69**, against **+26.88** in Class-IL. So a real
+"identify the distribution" problem exists independently of the class-space
+problem, and S5's redundancy (P3) explains the larger Class-IL number rather
+than the whole of it.
+
+**D2 - the router tracks whichever axis separates the tasks.** `MI(E;Domain)`
+is **0.3600** and `MI(E;Class)` **0.0024**, the exact inverse of Class-IL
+(`MI(E;Class)` 0.619 > `MI(E;Task)` 0.545). The class-first structure S5
+measured is therefore a property of the *problem*, not a bias of the router:
+when classes are shared there is nothing to gain from class geometry and the
+prototypes organize by domain instead.
+
+**D3 - isolation's raw value is the same in both protocols; Domain-IL just
+cannot cash it.** Oracle-routed `L3 - L2b` is **+13.74** here against **+14.58**
+in Class-IL: the bank's capacity to isolate is protocol-independent. With the
+learned router the advantage collapses to **+2.05**, because the router's
+11.69-point tax eats it. Isolation is worth having, and its value is realised or
+lost entirely in the routing.
+
+**D4 - readout dominance holds, and the oracle now beats it.** `L1_ridge`
+(0 parameters) is 91.58 against L3's 84.20 and L2b's 82.15, exactly the S2-S4
+ordering; only the oracle-routed bank (95.89) is above it.
+
+**D5 - for a genuinely unseen distribution, joint training beats sequential by
+19.4 points.** Unseen-domain accuracy: `L2a` 65.54 against `L2b` 46.10. The
+sequential shared adapter overfits the four rotations it saw, while the joint
+one keeps enough generality to face a fifth. `L3` with the learned router
+(56.44) is worse than both, and the `L4` row (73.37) is the 0-degree expert
+applied to the 45-degree domain - the closest match available, not a fair
+oracle, because the held-out cache carries `task_id = 0` by construction.
+
+**D6 - forgetting is 0 by construction and is the wrong metric here.** Every
+domain adds training data for the *same* ten classes, so old-domain accuracy
+never degrades. Under Domain-IL the informative measurements are the routing
+tax and unseen-domain accuracy, and `forgetting` should not be quoted.
+
+**D7 - no domain-to-domain forward transfer** (`L2b` +0.017, `L3` -0.024),
+consistent with S2 and S7.
+
+### 8.2 Bugs this stage found
+
+Two, both of which made the whole stage meaningless rather than merely noisy:
+
+1. **Prototype keys collided across domains.** Keying the router by class id
+   meant every domain overwrote the previous one's prototypes: all ten classes
+   ended up mapped to the last domain's expert. The tell was `reuse = 0.25` and
+   `MI = 0.0000` with `L3` at 36.41%. Fixed by keying prototypes by
+   `(task, class)`; `L3` then reached 84.20%.
+2. **The rotation was applied to the training split only.** `train_x =
+   rotated(...)` but `test_x = stack(test)`, so all five domains shared one
+   unrotated test set and "domain accuracy" and "unseen-domain accuracy" were
+   the same measurement. The tell was `torch.equal(test_0, test_45) == True`
+   and `unseen == acc` to the digit. Fixed, with two guards that would have
+   caught it immediately: an assertion that a non-zero rotation changes its
+   test split, and a pairwise-distinctness check across the domain caches.
+
+---
+
+## 9. Consolidated findings
 
 **F1. The readout was the first bottleneck, and a training-free prototype
 readout solves it.** NCM on frozen features beats v1 and iCaRL on CIFAR-100
@@ -318,7 +404,7 @@ is what discriminates.
 
 ---
 
-## 9. Pre-registered hypotheses and their verdicts
+## 10. Pre-registered hypotheses and their verdicts
 
 | hypothesis | statement | verdict |
 | :-- | :-- | :-- |
@@ -339,7 +425,7 @@ is what discriminates.
 
 ---
 
-## 10. Measurement bugs this programme found
+## 11. Measurement bugs this programme found
 
 Five, each of which would have produced a confident wrong number:
 
@@ -363,13 +449,22 @@ Five, each of which would have produced a confident wrong number:
    from `s2_ladder` and dropped the `joint` branch, making `L2a` numerically
    identical to `L2b` on every dataset - visible in the log, invisible in the
    aggregate.
+6. **A prototype key that is not unique silently collapses the router.**
+   Domain-IL gives every task the same labels, so keying prototypes by class id
+   made each domain overwrite the previous one's and the router collapsed to a
+   single expert (`reuse = 0.25`, `MI = 0.0000`).
+7. **A transform applied to train but not to test.** The domain rotation
+   reached the training split only, so every domain shared one unrotated test
+   set; `unseen == acc` to the digit was the tell. Both guards are now in
+   place: non-zero transforms must change the test split, and domain caches
+   must have pairwise-distinct test features.
 
 The first four are measurement-layer bugs; the fifth is the reason the plan now
 requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 11. What this evidence does NOT say
+## 12. What this evidence does NOT say
 
 - It does **not** say "mixture of experts is unnecessary". It says that under
   this benchmark, protocol, budget and backbone, the incremental expert
@@ -391,13 +486,14 @@ requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 12. Open items and the stage order
+## 13. Open items and the stage order
 
 | stage | content | blocker |
 | :-- | :-- | :-- |
 | S4-r | corruption robustness, routing stability `TV(p(x), p(x~))` | needs corrupted caches (~2 h of ViT extraction) |
 | S4b | task-count sweep `T in {2,5,10,20}` | splitters have no sub-task support |
-| S5 | Task-IL / Class-IL protocol axis | **done** (section 7); Domain-IL is S5b because a domain shift is a pixel-level transform and needs new feature caches |
+| S5 | Task-IL / Class-IL protocol axis | **done** (section 7) |
+| S5b | Domain-IL rotated MNIST, unseen domain | **done** (section 8) |
 | S6 | task order, class order, unseen task, expert transfer | splitters have no order parameters |
 | S8 | memory / data-regime / compute budgets | no `--data_fraction`, no generic budget flag |
 | S9-S11 | robustness, scalability, statistics | unstarted |
@@ -408,7 +504,7 @@ number above depends on being explicit about.
 
 ---
 
-## 13. Artefacts
+## 14. Artefacts
 
 | path | contents |
 | :-- | :-- |
