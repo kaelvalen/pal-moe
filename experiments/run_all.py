@@ -101,6 +101,7 @@ CELL_TARGETS = {
     "s8": (ROOT / "results" / "s8" / "s8_budget_study.json", 56),
     "s9": (ROOT / "results" / "s9" / "s9_robustness_study.json", 170),
     "s10": (ROOT / "results" / "s10" / "s10_scaling_study.json", 160),
+    "s11": (ROOT / "results" / "s11" / "s11_confirmatory_study.json", 228),
 }
 
 
@@ -481,6 +482,28 @@ def build_stages(args) -> list[Stage]:
             ],
             done_when=[],  # handled by the cell count below
             needs=["s9"],
+            minutes=60,
+        ),
+        Stage(
+            "s11",
+            "confirmatory: six pre-registered hypotheses, paired over six seeds",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/s11_confirmatory.py",
+                    "--seeds",
+                    "42,1,2,3,4,5",
+                    "--epochs",
+                    str(args.epochs),
+                    "--device",
+                    args.device,
+                    "--out",
+                    "results/s11",
+                ]
+            ],
+            done_when=[],  # handled by the cell count below
+            needs=["s10"],
             minutes=60,
         ),
     ]

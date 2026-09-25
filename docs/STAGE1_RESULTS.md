@@ -1021,7 +1021,177 @@ sweep.
 
 ---
 
-## 14. Consolidated findings
+## 14. S11 - the confirmatory stage
+
+S11 adds no model, no router, no loss, no merge rule. It tests six claims that
+earlier stages derived, under a pre-registered protocol, with the design chosen
+for *small samples* rather than borrowed from large-sample practice.
+
+### 14.1 Design
+
+**Paired by construction.** The same feature cache, the same partition and the
+same seed produce `L4 - L3`, `L3 - L2b` and `L1 - L3` as differences *within* a
+seed, so the report shows the per-seed distribution first and the summary after.
+Treating those as independent samples would add variance that the design does
+not have.
+
+**Six seeds, for an arithmetic reason.** With N = 5 the exact two-sided sign test
+cannot reach p < 0.05 at all: its smallest value is `2 * 0.5^5 = 0.0625`. With
+N = 6 it can (`0.0312`). Five seeds would have made the stage unable to reject
+anything by its own test.
+
+**Exact small-sample inference.** A sign test and a paired permutation test over
+all `2^6 = 64` sign flips. No asymptotic p-value is relied on.
+
+**Multiplicity by max-statistic, not by a factor of `m`.** The primary family is
+nine tests and they are strongly correlated (all functions of the same six
+seeds), so the family-wise correction is a single-step Westfall-Young
+max-statistic over the joint sign-flip distribution, with the two-sided
+Wilcoxon statistic as the per-test statistic (scale-free and comparable across
+tests, and non-degenerate where a t-statistic would be infinite). Holm is
+reported alongside and **cannot reject any test at N = 6** - it needs
+`p <= alpha/m` and the smallest achievable permutation p-value is 0.031 - so its
+failure is arithmetic, not evidence.
+
+**A pre-registered smallest effect of interest** for the capacity claim: 2.0
+points of tax. H4 is an equivalence question ("capacity does not move the tax"),
+and an equivalence question needs a threshold before the data.
+
+**Reuse instead of re-running.** The order-variance arm is S6's nine order
+configurations at the same operating point, and the scale arm's endpoints are
+S10's cells. Both are read, not re-run, and the overlap with S8 and S10 is
+checked exactly.
+
+### 14.2 The primary results
+
+Per-seed differences, then mean, SD, a t-based interval (a summary only) and the
+max-statistic-adjusted p:
+
+| test | per-seed differences (points) | mean | sd | WY-adjusted p |
+| :-- | :-- | --: | --: | --: |
+| H1 `L1 - L3` (`coherent`) | +3.56 +3.31 +3.41 +3.52 +3.56 +3.51 | **+3.48** | 0.10 | **0.0312** |
+| H1 `L1 - L3` (`dispersed`) | +6.11 +6.06 +6.10 +6.13 +6.12 +6.15 | **+6.11** | 0.03 | **0.0312** |
+| H2 tax (`coherent`) | +13.98 +13.97 +13.98 +14.06 +14.08 +13.95 | **+14.00** | 0.05 | **0.0312** |
+| H2 tax (`dispersed`) | +26.63 +26.62 +26.64 +26.65 +26.68 +26.61 | **+26.64** | 0.02 | **0.0312** |
+| H3 overlap contrast | +12.65 +12.65 +12.66 +12.59 +12.60 +12.66 | **+12.64** | 0.03 | **0.0312** |
+| H5 memory effect (`coherent`) | +2.82 +2.77 +2.69 +2.78 +2.75 +2.76 | **+2.76** | 0.04 | **0.0312** |
+| H5 memory effect (`dispersed`) | +2.71 +2.71 +2.70 +2.70 +2.71 +2.71 | **+2.71** | 0.01 | **0.0312** |
+| H6 `R_iso - R_iso_ncm` (`coherent`) | +0.326 +0.293 +0.286 +0.304 +0.327 +0.313 | **+0.308** | 0.017 | **0.0312** |
+| H6 `R_iso - R_iso_ncm` (`dispersed`) | +0.349 +0.338 +0.366 +0.363 +0.373 +0.338 | **+0.354** | 0.015 | **0.0312** |
+
+**All nine primary tests reject at 0.0312, which is the smallest p-value six
+seeds can produce.** That is the honest ceiling of this design: the evidence is
+as strong as the sample allows, and the effect sizes are large relative to their
+spread - the tax is 14.00 +- 0.05 and 26.64 +- 0.02 across seeds, so it is a
+deterministic property of the regime rather than a seed-dependent quantity.
+
+**H6 in its own units.** `R_iso - R_iso_ncm` is +0.31 (`coherent`) and +0.35
+(`dispersed`): the two ratios differ substantially and systematically, so any
+statement about "realized isolation" has to say which denominator it means. In
+`dispersed` the difference is almost the whole ratio, because `R_iso_ncm` is at
+the floor while `R_iso` is ~0.35 - the shared-sequential denominator flatters
+realization precisely where the S8/S10 conclusion says nothing is realized.
+
+### 14.3 H4 and H5: capacity against resolution, on the same seeds
+
+| quantity | per-seed (points) | mean | sd | reading |
+| :-- | :-- | --: | --: | :-- |
+| tax change, rank 2 -> 128 (`coherent`) | +1.56 +1.77 +1.52 +1.59 +1.69 +1.65 | **+1.63** | 0.09 | within the 2.0-point SESOI |
+| tax change, rank 2 -> 128 (`dispersed`) | +1.63 +1.73 +1.41 +1.81 +1.62 +1.54 | **+1.62** | 0.14 | within the 2.0-point SESOI |
+| tax change, 1 -> 16 prototypes (`coherent`) | +2.82 +2.77 +2.69 +2.78 +2.75 +2.76 | **+2.76** | 0.04 | resolution helps |
+| tax change, 1 -> 16 prototypes (`dispersed`) | +2.71 +2.71 +2.70 +2.70 +2.71 +2.71 | **+2.71** | 0.01 | resolution helps |
+| residual tax at 16 prototypes (`coherent`) | +11.16 +11.20 +11.29 +11.28 +11.33 +11.19 | **+11.24** | 0.07 | not eliminated |
+| residual tax at 16 prototypes (`dispersed`) | +23.92 +23.91 +23.94 +23.95 +23.97 +23.90 | **+23.93** | 0.03 | not eliminated |
+
+**H4 confirmed as an equivalence, not as a null.** The rank axis leaves the tax
+inside the pre-registered 2.0-point window in both regimes - and the point
+estimate is *positive* (+1.63 / +1.62), so a 64x increase in adapter rank does
+not reduce the tax at all. The contrast with the memory axis (+2.76 / +2.71 the
+other way) is what makes this a measurement rather than an absence: on the same
+seeds, resolution moves the tax and capacity does not.
+
+**H5 confirmed in both directions.** Resolution reduces the tax by ~2.7 points
+and leaves 11.24 / 23.93 behind. "Helps but does not eliminate" is the literal
+measurement, not a hedge.
+
+**H2's framing note.** `rank` increases the *capacity* of `L3` and `L4`; what it
+does not do is close the observed gap. Saying "rank does nothing" would be
+wrong: `L4` gains +3.4 points from rank 2 to 128 in `coherent`, and the tax
+grows by +1.63 because `L3` gains less.
+
+### 14.4 The secondary arms
+
+**The scale chain, on six seeds at the endpoints** (`dispersed`, T = 5 -> 25):
+
+```text
+L4   +4.30 +- 0.15   the oracle improves (fewer classes per expert)
+L3   -0.91 +- 0.10   the learned system does not
+tax  +5.21 +- 0.13   so the tax grows
+L2b  -2.09 +- 1.68   noisy, and not significant (permutation p = 0.0625)
+```
+
+The first three confirm S10's chain on more seeds: **the tax grows because the
+oracle improves and `L3` does not follow**, not because the experts get worse.
+`L2b`'s spread (one seed is even positive) is the honest counter-example to any
+claim that everything scales smoothly.
+
+**Order variance, read from S6's nine configurations:**
+
+```text
+tax across 3 class orders x 3 task orders:  mean +25.41  sd 0.30  range [+25.13, +25.92]
+L0_ncm across the same configurations:      sd 0.64
+L3_per_task across the same configurations: sd 0.65
+```
+
+The tax varies *less* across order configurations than the level accuracies it
+is built from. S6 holds one task out, so even the order-invariant levels move;
+against that baseline the tax is the more stable quantity, which is a stronger
+version of S6's original statement.
+
+**Anchors.** The operating point reproduces S8 exactly (10/10 cells,
+`max |delta| = 0.0`) and the scale endpoints reproduce S10 exactly (6/6 cells,
+`max |delta| = 0.0`).
+
+### 14.5 The six verdicts
+
+| hypothesis | verdict | evidence |
+| :-- | :-- | :-- |
+| H1 `L1` competitive/superior to the learned variants, no gradient optimization | **confirmed** | +3.48 / +6.11 over `L3`, all six seeds, WY p = 0.0312 |
+| H2 `L4 - L3` is a systematic tax | **confirmed** | 14.00 +- 0.05 / 26.64 +- 0.02 |
+| H3 the tax grows with cross-task overlap | **confirmed** | +12.64 +- 0.03, paired by seed |
+| H4 capacity does not reduce the tax | **confirmed by equivalence** | +1.63 / +1.62, inside the 2.0-point window |
+| H5 resolution helps but does not eliminate | **confirmed** | -2.76 / -2.71, residual 11.24 / 23.93 |
+| H6 available and realised isolation are distinct | **confirmed** | `R_iso - R_iso_ncm` = +0.31 / +0.35 |
+
+The chain Stage 1 has been building is intact under a pre-registered test:
+
+```text
+expert capacity exists
+  -> capacity scales with T (S10: L4 +4.3, L3 -0.9)
+  -> routing resolution partially helps (S11: -2.7 of a 14-27 point tax)
+  -> routing realization remains the bottleneck (S11: residual 11-24 points,
+     R_iso_ncm at the floor in the hard-routing regime)
+```
+
+### 14.6 What S11 does not establish
+
+- **Six seeds is the floor of what can reject**, not a large sample. Every
+  primary p-value is 0.0312 because that is the minimum; the stage shows the
+  effects are consistent and large, not that they are precisely estimated.
+- **The SESOI was chosen by the analyst.** A 2.0-point window for the capacity
+  claim is defensible against a 14-27 point tax, but it is a choice, and a
+  1.0-point window would have failed H4's equivalence check (+1.63 / +1.62).
+  The direction is unaffected: capacity does not *reduce* the tax.
+- **H4 is still not causal.** S10's collinearity caveat stands: the rank axis
+  isolates capacity with the candidate count fixed, and the memory axis isolates
+  resolution with the bank fixed, but neither isolates them in the same
+  manipulation.
+- **Nothing here tests a different routing mechanism.** The claim is about the
+  ladder as built. S11 says where the loss is, not how to recover it.
+
+---
+
+## 15. Consolidated findings
 
 **F1. The readout was the first bottleneck, and a training-free prototype
 readout solves it.** NCM on frozen features beats v1 and iCaRL on CIFAR-100
@@ -1127,9 +1297,26 @@ anything.** `R_iso_ncm` falls monotonically with `T` in all four combinations
 and 0.014 -> 0.007 on Tiny-ImageNet). At `T = 25` a 20-expert bank is worth
 +0.11 points over a training-free nearest-class-mean.
 
+**F21. All six pre-registered hypotheses survive a confirmatory test at six
+seeds.** Nine primary tests, every one rejecting at the Westfall-Young-adjusted
+p = 0.0312 - the smallest value six seeds can produce. The tax is 14.00 +- 0.05
+(`coherent`) and 26.64 +- 0.02 (`dispersed`) across seeds: a deterministic
+property of the regime, not a seed-dependent quantity.
+
+**F22. Capacity and resolution are separated by measurement, not by argument.**
+On the same seeds, a 64x increase in adapter rank moves the tax by +1.63 / +1.62
+points (inside a pre-registered 2.0-point equivalence window, and *upward*),
+while 16 prototypes per class move it by -2.76 / -2.71. Resolution helps and
+leaves 11.24 / 23.93 points behind.
+
+**F23. `R_iso` and `R_iso_ncm` differ by +0.31 / +0.35, and the difference is
+the whole ratio in the hard-routing regime.** Any statement about "realized
+isolation" must name its denominator; the shared-sequential one flatters
+realization exactly where nothing is realized.
+
 ---
 
-## 15. Pre-registered hypotheses and their verdicts
+## 16. Pre-registered hypotheses and their verdicts
 
 | hypothesis | statement | verdict |
 | :-- | :-- | :-- |
@@ -1161,12 +1348,18 @@ and 0.014 -> 0.007 on Tiny-ImageNet). At `T = 25` a 20-expert bank is worth
 | S2 (S10) | the degradation is attributable to candidate count rather than bank size | **not separable by this sweep**: one expert per task makes them collinear; the fixed-`m` decomposition points at ranking, and a causal test needs a bank whose size and candidate count move independently |
 | S3 (S10) | more experts buy more realizable isolation | **refuted at scale**: `R_iso_ncm` falls monotonically with `T` to 0.004-0.012 |
 | S4 (S10) | the tax growth comes from the router degrading | **refuted, and the opposite holds**: `L3` is flat while `L4` gains +3.8 to +6.5, so the oracle improves |
+| H1 (S11) | `L1` competitive/superior to the learned variants, no gradient optimization | **confirmed**: +3.48 / +6.11 over `L3`, six seeds, WY p = 0.0312 |
+| H2 (S11) | `L4 - L3` is a systematic tax | **confirmed**: 14.00 +- 0.05 / 26.64 +- 0.02 |
+| H3 (S11) | the tax grows with cross-task overlap | **confirmed**: +12.64 +- 0.03, paired by seed |
+| H4 (S11) | capacity does not reduce the tax | **confirmed by equivalence**: +1.63 / +1.62 inside the pre-registered 2.0-point window |
+| H5 (S11) | resolution helps but does not eliminate | **confirmed**: -2.76 / -2.71, residual 11.24 / 23.93 |
+| H6 (S11) | available and realised isolation are distinct | **confirmed**: `R_iso - R_iso_ncm` = +0.31 / +0.35 |
 
 ---
 
-## 16. Measurement bugs this programme found
+## 17. Measurement bugs this programme found
 
-Ten, each of which would have produced a confident wrong number:
+Twelve, each of which would have produced a confident wrong number:
 
 1. **The forward-transfer definition was degenerate.** "Evaluate on the next
    task before training it" returns structurally 0 in a growing-head
@@ -1221,15 +1414,32 @@ Ten, each of which would have produced a confident wrong number:
     ladder is bit-reproducible, and the 0.1-point difference was exactly
     canonical-against-`dispersed`. The tolerance was tightened back to float
     noise rather than widened to hide it.
+11. **A one-sided statistic cannot detect a consistent negative effect.** S11's
+    max-statistic correction used `W+` (the sum of ranks of positive
+    differences), which scores a perfectly consistent *negative* effect as zero:
+    the memory axis, where all six seeds agreed the tax falls, came out "not
+    rejected" at p = 1.0 while its raw permutation p was 0.0312. The statistic
+    must be two-sided (`max(W+, W-)`). This is the first bug in the programme
+    that is in the *inference* layer rather than the measurement layer - it
+    would have produced a confidently wrong verdict about a hypothesis the data
+    supports.
+12. **A sign convention inverted a hypothesis.** S11's memory-axis test computed
+    `(L4 - L3_rich) - (L4 - L3_base)` instead of `L3_rich - L3_base`, reporting
+    "the memory axis makes the tax worse" with the right magnitude and the wrong
+    sign. Both bugs were caught by re-deriving the report from the stored cells
+    (`--report-only`), which is why the report is computed from the cells rather
+    than accumulated during the run.
 
 The first four are measurement-layer bugs; the fifth is the reason the plan now
 requires calling the existing entry point instead of re-deriving a loop; the
 eighth and ninth are the same failure class one level down - a harness detail
-(evaluation order, key space) silently redefining the experiment.
+(evaluation order, key space) silently redefining the experiment; the eleventh
+and twelfth are one level further out, in the statistics that decide what the
+experiment said.
 
 ---
 
-## 17. What this evidence does NOT say
+## 18. What this evidence does NOT say
 
 - It does **not** say "mixture of experts is unnecessary". It says that under
   this benchmark, protocol, budget and backbone, the incremental expert
@@ -1259,12 +1469,19 @@ eighth and ninth are the same failure class one level down - a harness detail
   attribute the degradation causally (section 13.3). Its latency numbers are
   microsecond-scale measurements on a shared GPU and are indicative only, and
   its sweep points are two seeds.
+- S11's six seeds are the *floor* of what can reject, not a large sample: every
+  primary p-value is 0.0312 because that is the minimum achievable, so the stage
+  shows the effects are consistent and large, not that they are precisely
+  estimated. Its 2.0-point equivalence window is an analyst choice (a 1.0-point
+  window would have failed H4's check at +1.63 / +1.62, though the direction -
+  capacity does not *reduce* the tax - is unaffected), and H4 remains
+  non-causal for the reason S10 gives.
 - Every result is on frozen features. The plastic-encoder branch - the one
   thing that could plausibly change F3 - is untouched.
 
 ---
 
-## 18. Open items and the stage order
+## 19. Open items and the stage order
 
 | stage | content | blocker |
 | :-- | :-- | :-- |
@@ -1279,49 +1496,52 @@ eighth and ninth are the same failure class one level down - a harness detail
 | S10 | scalability: task count, two datasets, candidate-set control | **done** (section 13) |
 | S11 | confirmatory protocol: 5 seeds, order variance, paired tests | **next** |
 
-The recommended next step is **S11**, and it should be *confirmatory* rather than
-another exploratory stage: every claim below is already derived from a previous
-experiment, so S11's job is to test them under a pre-registered protocol -
-more seeds, confidence intervals, and order variance - not to discover
-something new. The six hypotheses, each with the stage that produced it:
+| S11 | confirmatory protocol: six hypotheses, paired over six seeds | **done** (section 14) |
+
+**Stage 1 is complete.** Every stage on the main path is done, and the two
+deferred branches were resolved rather than dropped: S4-r (corruption
+robustness) became S9, and S4b (task-count sweep) became S10's dataset and
+task-count extension.
+
+The programme's answer to its own question - *which capacity is actually
+required in which problem regime, and where does it stop generalizing* - is not
+"the modular machinery wins" or "it loses". It is a decomposition, and the last
+three stages test it rather than extend it:
 
 ```text
-1  L1_ridge stays the strong simple baseline            S2, S3, S4, S7, S8, S9
-2  L4 - L3 is a systematic routing tax, not seed noise  S2, S5b, S6b, S8
-3  the tax grows with cross-task overlap                S6b (13.98 vs 26.63), S9
-4  extra capacity does not close the tax                S8 (flat over 64x rank), S10
-5  routing resolution helps but does not finish the job S8 (13.98 -> 11.29,
-                                                        26.63 -> 23.94)
-6  available and realised isolation stay distinct       S5b, S6b, S8, S10
+capacity exists                  E0, S2: adapter capacity saturates at rank 8
+capacity is not the constraint   S3, S8, S10: the tax is flat over 64x rank and
+                                 grows while the oracle improves
+routing is the constraint        S5b, S6b: the tax is a property of the task
+                                 geometry (13.98 vs 26.63), not of the order
+the failure is in the ranking    S10: coverage falls at fixed m while selector
+                                 headroom at fixed m is constant
+resolution is the only lever     S8, S11: -2.7 of a 14-27 point tax, residual
+                                 11.24 / 23.93
+the closed-form readout wins     S2-S4, S7-S9, S11: 34/34 conditions, and the
+                                 most shift-robust level in the ladder
+and it holds under shift         S9: the decomposition survives 34 conditions
+and at scale                     S10: 160 cells, two datasets
+and under pre-registration        S11: nine primary tests, WY p = 0.0312
 ```
 
-The protocol S11 should run, sized from the effect sizes already measured:
+**What the next programme should target is now measured rather than assumed.**
+A routing-mechanism redesign should aim at the *ranking* - which experts become
+candidates - and not at the selector (constant headroom at fixed `m`, S10) or at
+expert capacity (flat tax over 64x rank, S8/S11). Its failure mode to beat is
+diffuseness rather than confident error (S6, S9: `max-share` and `recall@3` fall
+together), and the only lever measured to move the tax at all is router
+resolution (-2.7 points for 4x the router memory, S8/S11). The evaluation
+protocol for that programme is already built: `coverage(m)` and `selection_gap(m)`
+at fixed `m` (S10), the two realization ratios kept apart (S8), and the tax
+measured at a fixed budget rather than across budgets.
 
-- **Seeds**: 5 seeds on the S8 operating point (rank 8, one prototype,
-  `top_k = 1`), which is where hypotheses 1, 2, 6 live, in both S6b regimes.
-- **Order variance**: 3 class-order and 3 task-order seeds at `T = 20`, the
-  variance component S6 measured but only for the tax.
-- **Paired tests**: the same feature cache and the same partition per seed, so
-  `L3 - L2b`, `L4 - L3` and `L1 - L3` are paired differences, not two-sample
-  comparisons.
-- **Effect sizes to detect**: the tax is 13.98-26.63 (large), the memory axis is
-  +2.69 (medium), the capacity axis is +1.83/+0.44 over a 64x rank span (small
-  and the one most at risk of being seed noise - which is exactly what S11 is
-  for).
-
-A `capacity closes the tax` result would falsify hypothesis 4 and would be the
-most valuable outcome S11 could produce, so the protocol must be able to see it:
-the rank sweep at 5 seeds, not just the operating point.
-
-The routing-mechanism redesign belongs *after* S11. By then the target is
-measured rather than assumed: S10 locates the failure in the ranking (E2/E3),
-S8 shows resolution is the only lever that moves it, and S9 shows the failure
-mode is diffuseness. A new router should be aimed at those, and S11 is what
-makes the claim it is aimed at statistically solid.
+A new router is a new hypothesis, so it belongs to a new pre-registration, not
+to Stage 1.
 
 ---
 
-## 19. Artefacts
+## 20. Artefacts
 
 | path | contents |
 | :-- | :-- |
@@ -1335,6 +1555,7 @@ makes the claim it is aimed at statistically solid.
 | `results/s8/` | 56-cell budget study (rank x prototypes x top-k, both regimes) + report |
 | `results/s9/` | shift caches (13 conditions) + 170-cell robustness study (2 regimes x 2 families) |
 | `results/s10/` | 160-cell scalability study (2 datasets x 4 task counts x 2 constructions x 2 seeds) |
+| `results/s11/` | 228-cell confirmatory study (6 seeds, rank and prototype sweeps, scale endpoints) + hypotheses, order variance, anchors |
 | `results/logs/` | per-stage logs from `experiments/run_all.py` |
 | feature caches | gitignored (`*.pt`); `experiments/s3_run.py` and `s4_datasets.py` rebuild them |
 

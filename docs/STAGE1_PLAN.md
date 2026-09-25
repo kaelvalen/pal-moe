@@ -32,7 +32,7 @@ systematically* is a successful Stage 1.
 | S8 | resource budget: parameter / memory / active, in both routing regimes | **done** (`experiments/s8_budget.py`, `s8_report.py`, `STAGE1_RESULTS.md` section 11) |
 | S9 | robustness: corruption, spurious cue, both routing regimes | **done** (`experiments/s9_robustness.py`, `s9_corruptions.py`, `STAGE1_RESULTS.md` section 12) |
 | S10 | scalability: task count, two datasets, candidate-set control | **done** (`experiments/s10_scaling.py`, `STAGE1_RESULTS.md` section 13) |
-| S11 | confirmatory protocol: 5 seeds, order variance, paired tests | **next** |
+| S11 | confirmatory protocol: six hypotheses, paired over six seeds | **done** (`experiments/s11_confirmatory.py`, `STAGE1_RESULTS.md` section 14) |
 
 Two rules apply to every stage, and they are the reason the ladder is
 trustworthy:
