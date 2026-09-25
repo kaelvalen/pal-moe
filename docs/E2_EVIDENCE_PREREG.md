@@ -135,6 +135,31 @@ training objective rather than turning it into a post-hoc alignment. It is also
 the only form that is globally consistent in the sense the earlier studies
 established.
 
+### 2.4b Execution guards (runtime facts, not documentation)
+
+"Jointly optimised" is a claim about the optimizer's parameter list, so it is
+checked at runtime and recorded per task:
+
+```text
+trained        the current adapter E_t, on L_task + L_evidence
+               ALL seen evidence projections W_e, on L_evidence
+               the shared query P, on L_evidence
+               the shared readout g, on L_task
+frozen         previous adapters E_1..E_{t-1}: requires_grad is False AND they are
+               absent from the optimizer's parameter list
+verified       for every W_e: requires_grad is True, and its .grad is non-empty
+               after the first optimizer step of the task - the check that the
+               old projections really are being re-aligned
+recorded       the trainable-parameter count per group, per task
+```
+
+**`L_evidence` is a mean, never a sum.** The term averages over the stored
+prototypes, and inside each prototype's term over its negatives (the
+`1/(T_t - 1)` mean the decision-routing study pinned). A sum would make the
+term's absolute weight grow with the task count, which is an implicit curriculum
+on top of the loss shape - the same failure the earlier studies excluded by
+averaging.
+
 ### 2.5 What is held fixed
 
 ```text
@@ -173,6 +198,9 @@ reported, and the row is named.
 ## 5. Guards
 
 ```text
+execution guards     the runtime checks of section 2.4b: old W_e trainable with
+                     non-empty gradients, previous adapters absent from the
+                     optimizer, L_evidence averaged and not summed
 E0 anchor            the baseline arm reproduces S11's L3 per seed exactly,
                      keyed by (construct, level, rank, protos, num_tasks, seed)
 shared query         one P for every expert, by object identity, plus an assert
