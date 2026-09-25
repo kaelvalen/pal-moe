@@ -26,9 +26,10 @@ systematically* is a successful Stage 1.
 | S4 | dataset generalization: MNIST / CIFAR-10 / CIFAR-100 / Tiny-ImageNet | **done** (`STAGE1_RESULTS.md` section 6) |
 | S5 | protocol axis: Class-IL / Task-IL factorial | **done** (`experiments/s5_protocols.py`, `STAGE1_RESULTS.md` section 7) |
 | S5b | Domain-IL: rotated MNIST, unseen domain | **done** (`experiments/s5b_domains.py`, `STAGE1_RESULTS.md` section 8) |
-| S6 | task-order, class-order, domain, unseen-task, expert transfer | planned |
+| S6 | order sensitivity: class order, task order, unseen task | **done** (`experiments/s6_order.py`, `STAGE1_RESULTS.md` section 9) |
+| S6b | designed difficulty: coherent vs dispersed task partitions | **done** (`experiments/s6b_difficulty.py`, `STAGE1_RESULTS.md` section 10) |
 | S7 | representation transfer: checkpoint -> frozen probe on an unseen dataset | **done** (`experiments/s7_transfer.py`, section 6) |
-| S8 | budget / data-regime / compute scaling | planned |
+| S8 | resource budget: parameter / memory / active, in both routing regimes | **running** (`experiments/s8_budget.py`, `STAGE1_RESULTS.md` section 11) |
 | S9 | robustness: corruption, spurious correlation | planned |
 | S10 | scalability: task count 2..100 | planned |
 | S11 | statistical validation: 3-5 seeds x task orders, paired tests | planned |
@@ -408,3 +409,62 @@ This is the fourth instance of the same failure class in this session: a copied
 code path loses the branching of the original. The general lesson for the
 remaining stages is to call the existing entry point rather than re-deriving
 the loop.
+
+---
+
+## 8. S8 pre-registration - what a budget is expected to buy
+
+Written before the S8 run finished, so that the expectations are on record as
+expectations and cannot be read back as findings.
+
+S6b established the two difficulty axes are separable: `intra_task_similarity`
+drives the oracle (within-task discrimination) and `cross_task_similarity`
+drives the routing tax. S8 therefore sweeps the budget in both regimes and
+reports, per regime and per budget point:
+
+```text
+parameter budget   -> adapter rank          -> expert capacity
+memory budget      -> prototypes per class  -> routing resolution
+active budget      -> experts per sample    -> inference compute
+
+routing_tax        = L4 - L3                (at a fixed budget)
+isolation_realised = L3 - L2b
+isolation_available = L4 - L2b
+R_iso              = realised / available   (the primary mechanism metric)
+```
+
+L4 is an oracle upper bound and is measured **at every rank**, so the question
+"does more capacity close the routing gap" is asked at a fixed budget instead of
+across budgets.
+
+**Expected shape, registered as an assumption.**
+
+- In `coherent` (routing cheap), extra expert capacity should be *realizable*:
+  `L3` should recover a larger fraction of `L4`, i.e. `R_iso` should rise with
+  the parameter budget.
+- In `dispersed` (routing expensive), extra experts should create more
+  *available* isolation than the router can cash: `isolation_available` should
+  grow faster than `isolation_realised`, so `R_iso` should fall or stay flat.
+- If `L3 -> L4` does not close as the budget grows in either regime, the
+  bottleneck is routing realization, not capacity - which is the S5b/S6b thesis
+  tested under a budget.
+- The memory axis is the direct test of the routing-resolution hypothesis: more
+  prototypes per class should raise `recall@3` before it raises accuracy.
+- The active axis should *not* be free: mixing several experts per sample was
+  already measured to hurt (E0), so the expected shape is a cost without a
+  matching gain, and the honest report is that the active axis is not where the
+  budget should go.
+
+**The baseline question is not optional.** S8's question is not only "does more
+resource improve PAL-MoE" but "does buying expert modularity beat spending the
+same budget on a simple readout". `L1_ridge` is therefore kept at every table:
+its stored sufficient statistics (`A` is `769 x 769`) cost 2.9 MB, which is
+*memory-comparable to the whole expert bank at rank 8* (1.56 MB). That is a
+resource fact, not an accuracy claim, and it belongs in the budget comparison.
+
+**Not published as a single curve.** A combined accuracy-per-byte curve would
+average over a factor of two in the routing tax (S6b: 13.98 against 26.63), so
+the regimes are reported separately. One seed of the extra budget points and three
+seeds of the operating point (rank 8) are the compromise: the sweep is read as a
+curve shape, and the operating point - which must reproduce S6b exactly - carries
+the full seed set.

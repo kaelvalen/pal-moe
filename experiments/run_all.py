@@ -82,9 +82,8 @@ class Stage:
         return bool(self.done_when) and all(p.exists() for p in self.done_when)
 
 
-def _s4_cells_done(count: int = 72) -> bool:
-    """S4's study grows while it runs, so existence is not completion."""
-    path = ROOT / "results" / "s4" / "s4_dataset_study.json"
+def _cells_done(path: Path, count: int) -> bool:
+    """A study that grows while it runs: existence is not completion."""
     if not path.exists():
         return False
     try:
@@ -94,9 +93,19 @@ def _s4_cells_done(count: int = 72) -> bool:
         return False
 
 
+# Studies whose completion is a cell count rather than the existence of a file.
+CELL_TARGETS = {
+    "s4": (ROOT / "results" / "s4" / "s4_dataset_study.json", 72),
+    "s6": (ROOT / "results" / "s6" / "s6_order_study.json", 45),
+    "s6b": (ROOT / "results" / "s6b" / "s6b_difficulty_study.json", 30),
+    "s8": (ROOT / "results" / "s8" / "s8_budget_study.json", 56),
+}
+
+
 def stage_is_done(stage: Stage) -> bool:
-    if stage.name == "s4":
-        return _s4_cells_done()
+    target = CELL_TARGETS.get(stage.name)
+    if target is not None:
+        return _cells_done(*target)
     return stage.is_done()
 
 
@@ -321,6 +330,75 @@ def build_stages(args) -> list[Stage]:
             ],
             done_when=[],  # handled by the cell count below
             minutes=210,
+        ),
+        Stage(
+            "s6",
+            "order sensitivity: class order, task order, unseen task",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/s6_order.py",
+                    "--seeds",
+                    seeds.split(",")[0],
+                    "--epochs",
+                    str(args.epochs),
+                    "--device",
+                    args.device,
+                    "--out",
+                    "results/s6",
+                ]
+            ],
+            done_when=[],  # handled by the cell count below
+            needs=["s2"],
+            minutes=45,
+        ),
+        Stage(
+            "s6b",
+            "designed difficulty: coherent vs dispersed task partitions",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/s6b_difficulty.py",
+                    *common,
+                    "--out",
+                    "results/s6b",
+                ]
+            ],
+            done_when=[],  # handled by the cell count below
+            needs=["s6"],
+            minutes=45,
+        ),
+        Stage(
+            "s8",
+            "resource budget (parameter / memory / active) in both routing regimes",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/s8_budget.py",
+                    "--ranks",
+                    "2",
+                    "8",
+                    "32",
+                    "128",
+                    "--prototypes",
+                    "1",
+                    "4",
+                    "16",
+                    "--topks",
+                    "1",
+                    "2",
+                    "4",
+                    *common,
+                    "--out",
+                    "results/s8",
+                ]
+            ],
+            done_when=[],  # handled by the cell count below
+            needs=["s6b"],
+            minutes=150,
         ),
     ]
 

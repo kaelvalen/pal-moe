@@ -334,6 +334,7 @@ def _diff(levels: dict, a: str, b: str) -> float | None:
 
 
 def _contract(cell: dict) -> dict:
+    spec = s2_ladder.LEVELS_BY_NAME[cell["level"]]
     record = build_run_record(
         factors={
             "dataset": "cifar100",
@@ -350,12 +351,8 @@ def _contract(cell: dict) -> dict:
             "model_family": cell["level"],
             "backbone": "vit_b_16+proj768",
             "backbone_pretraining": "imagenet_frozen",
-            "readout": "ncm" if cell["level"] == "L0_ncm" else "ridge",
-            "expert": (
-                "none"
-                if cell["level"] in ("L0_ncm", "L1_ridge")
-                else "residual_adapter"
-            ),
+            "readout": spec.readout,
+            "expert": spec.expert or "none",
         },
         metrics={
             "learning": {

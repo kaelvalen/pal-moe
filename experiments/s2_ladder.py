@@ -208,6 +208,12 @@ class LadderModel:
         # collapses to a single expert (measured: reuse 0.25, MI 0.0000). Keying
         # by (task, class) instead keeps one prototype per domain-class pair.
         self.router_slots = int(router_slots or num_classes)
+        # S8 resource knobs. `router_prototypes` is the memory axis (how many
+        # prototypes per class the router stores), `top_k_experts` the
+        # active-compute axis (how many experts are evaluated per sample); the
+        # parameter axis is the adapter rank, set through `build_expert`.
+        self.router_prototypes = 1
+        self.top_k_experts = 1
         self.device = device
         self.args = args
         self.seen: list[int] = []
@@ -258,15 +264,42 @@ class LadderModel:
         ids, _ = self.router.top_k(z, k=1)
         return ids.squeeze(-1)
 
+    def route_tasks_topk(self, z: torch.Tensor, k: int):
+        """Top-k expert ids and mixture weights: the active-compute axis (S8).
+
+        `k = 1` reproduces the hard router exactly, so the first point of that
+        sweep is the S2-S6 baseline rather than a new method.
+        """
+        ids, scores = self.router.top_k(z, k=k)
+        temperature = float(getattr(self.router, "temperature", 1.0) or 1.0)
+        weights = torch.softmax(scores / temperature, dim=-1)
+        return ids, weights
+
+    def apply_experts_mixture(self, z, ids, weights) -> torch.Tensor:
+        """`z + sum_j w_j (E_{t_j}(z) - z)`, a convex mixture of adapters."""
+        out = z.clone()
+        for j in range(ids.size(1)):
+            for t in torch.unique(ids[:, j]).tolist():
+                if not (0 <= int(t) < len(self.experts)):
+                    continue
+                mask = ids[:, j] == t
+                delta = self.experts[int(t)].transform(z[mask]) - z[mask]
+                out[mask] = out[mask] + weights[mask, j].unsqueeze(-1) * delta
+        return out
+
     # -- forward ---------------------------------------------------------
 
     def logits(
         self, z: torch.Tensor, oracle: bool = False, task_id=None
     ) -> torch.Tensor:
-        task_ids = self.route_tasks(z, oracle=oracle, task_id=task_id)
-        return mask_unseen(
-            self.readout.predict(self.apply_experts(z, task_ids)), self.seen
-        )
+        top_k = int(getattr(self, "top_k_experts", 1) or 1)
+        if top_k > 1 and self.router is not None and not oracle:
+            ids, weights = self.route_tasks_topk(z, top_k)
+            adapted = self.apply_experts_mixture(z, ids, weights)
+        else:
+            task_ids = self.route_tasks(z, oracle=oracle, task_id=task_id)
+            adapted = self.apply_experts(z, task_ids)
+        return mask_unseen(self.readout.predict(adapted), self.seen)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         return self.logits(z)
@@ -371,6 +404,25 @@ class LadderModel:
 
     # -- registration ----------------------------------------------------
 
+    @staticmethod
+    def _class_prototypes(feats: torch.Tensor, k: int) -> list[torch.Tensor]:
+        """`k` representatives of one class: the mean when k=1, else k-means.
+
+        Deterministic (5 iterations from a fixed seeded init), because a budget
+        sweep must not introduce its own variance source.
+        """
+        if k <= 1 or feats.size(0) <= k:
+            return [feats.mean(dim=0)]
+        generator = torch.Generator().manual_seed(0)
+        centres = feats[torch.randperm(feats.size(0), generator=generator)[:k]].clone()
+        for _ in range(5):
+            assign = torch.cdist(feats, centres).argmin(dim=1)
+            for j in range(k):
+                members = feats[assign == j]
+                if members.size(0) > 0:
+                    centres[j] = members.mean(dim=0)
+        return [centre for centre in centres]
+
     @torch.no_grad()
     def register_task(
         self, task, task_index: int, router_offset: int | None = None
@@ -387,10 +439,12 @@ class LadderModel:
         if self.router is None and self.spec.router == "prototype":
             self.router = PrototypeRouter(
                 dim=self.dim,
-                num_classes=self.router_slots,
+                num_classes=self.router_slots
+                * max(1, int(getattr(self, "router_prototypes", 1) or 1)),
                 num_experts=max(1, self.args.max_experts),
             ).to(self.device)
 
+        per_class_prototypes = max(1, int(getattr(self, "router_prototypes", 1) or 1))
         means = {}
         for c in task["classes"]:
             mask = labels == c
@@ -399,12 +453,20 @@ class LadderModel:
             means[c] = feats[mask].mean(dim=0)
             self.class_expert[int(c)] = task_index
             if self.router is not None:
-                key = (
+                base_key = (
                     router_offset + task["classes"].index(c)
                     if router_offset is not None
                     else int(c)
                 )
-                self.router.register_class(key, task_index, means[c])
+                # The memory axis: `k` prototypes per class instead of one mean.
+                # k=1 is the mean (the S2-S6 behaviour); larger k buys routing
+                # resolution at k times the stored bytes.
+                for slot, prototype in enumerate(
+                    self._class_prototypes(feats[mask], per_class_prototypes)
+                ):
+                    self.router.register_class(
+                        base_key * per_class_prototypes + slot, task_index, prototype
+                    )
 
         for _c, mean in means.items():
             self.proto_z.append(mean.detach().clone())
@@ -493,6 +555,55 @@ class LadderModel:
         return {
             "params": params,
             "flops_forward": flops,
+            "optimizer_steps": self.optimizer_steps,
+        }
+
+    def resources(self) -> dict:
+        """The three S8 resource axes, measured rather than declared.
+
+        `total_params` is everything that must be stored, `trainable_params` is
+        what an update touches (the newest expert plus the readout), and
+        `active_params` is what one sample's forward pass evaluates. For a bank
+        of per-task experts the first and the last differ by the expert count,
+        which is exactly the distinction S8 needs: a 20-expert bank is not 20x
+        the per-sample compute.
+        """
+        readout_params = int(sum(p.numel() for p in self.readout.parameters()))
+        readout_buffers = int(sum(b.numel() for b in self.readout.buffers()))
+        expert_params = [
+            int(sum(p.numel() for p in e.parameters())) for e in self.experts
+        ]
+        active_experts = min(
+            max(int(getattr(self, "top_k_experts", 1) or 1), 1), len(expert_params)
+        )
+        router_bytes = 0
+        if self.router is not None:
+            router_bytes = int(
+                sum(b.numel() * b.element_size() for b in self.router.buffers())
+            )
+        expert_bytes = sum(n * 4 for n in expert_params)
+        # A closed-form readout's state is its stored sufficient statistics, so it
+        # is counted as parameter-equivalents: otherwise ridge would appear to
+        # cost nothing while storing 2.9 MB of `A`, `B` and `W`.
+        readout_state = readout_params + readout_buffers
+        readout_bytes = readout_state * 4
+        return {
+            "total_params": readout_state + sum(expert_params),
+            "trainable_params": readout_params
+            + (expert_params[-1] if expert_params else 0),
+            "active_params": readout_state
+            + active_experts * (expert_params[0] if expert_params else 0),
+            "readout_state": readout_state,
+            "num_experts": len(expert_params),
+            "active_experts": active_experts if expert_params else 0,
+            "num_prototypes": (
+                int(self.router.counts.gt(0).sum()) if self.router is not None else 0
+            ),
+            "memory_bytes": readout_bytes + expert_bytes + router_bytes,
+            "router_bytes": router_bytes,
+            "expert_bytes": expert_bytes,
+            "readout_bytes": readout_bytes,
+            "flops_forward": self.cost()["flops_forward"],
             "optimizer_steps": self.optimizer_steps,
         }
 
