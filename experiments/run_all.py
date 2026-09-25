@@ -103,6 +103,7 @@ CELL_TARGETS = {
     "s10": (ROOT / "results" / "s10" / "s10_scaling_study.json", 160),
     "s11": (ROOT / "results" / "s11" / "s11_confirmatory_study.json", 228),
     "agg": (ROOT / "results" / "agg" / "aggregation_study.json", 24),
+    "ef": (ROOT / "results" / "ef" / "expert_formulation_study.json", 24),
 }
 
 
@@ -526,6 +527,26 @@ def build_stages(args) -> list[Stage]:
             done_when=[],  # handled by the cell count below
             needs=["s11"],
             minutes=25,
+        ),
+        Stage(
+            "ef",
+            "expert formulation E1: one shared decision space",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/expert_formulation.py",
+                    "--seeds",
+                    "42,1,2,3,4,5",
+                    "--device",
+                    args.device,
+                    "--out",
+                    "results/ef",
+                ]
+            ],
+            done_when=[],  # handled by the cell count below
+            needs=["agg"],
+            minutes=35,
         ),
     ]
 
