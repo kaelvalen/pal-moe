@@ -130,7 +130,7 @@ class E2Model:
                 h = normalize(self.W[t](self.experts[t].transform(z)))
                 logits = s11.s2_ladder.mask_unseen(self.readout.predict(h), self.seen)
                 l_task = F.cross_entropy(logits, y)
-                l_evidence = self._evidence_loss()
+                l_evidence = self._evidence_loss(t)
                 loss = l_task + self.args.evidence_lambda * l_evidence
                 optimizer.zero_grad()
                 loss.backward()
@@ -174,24 +174,35 @@ class E2Model:
                 optimizer.step()
         handle.remove()
 
-    def _evidence_loss(self):
+    def _evidence_loss(self, task_index=None, rows=False):
         """Mean over stored prototypes of a CE over all seen experts. No g.
 
         Batched: the pinned contract is full-batch over every prototype at every
         optimizer step, so the prototypes are stacked once per task and scored by
         each expert in one batched call. The arithmetic is identical to a
         per-prototype loop; only the Python overhead changes.
+
+        `w_alignment="owner_only"` (the intervention arm) detaches the projected
+        feature of an old expert on prototype rows it does not own, so an old W_j
+        receives only its own task's evidence gradient; the values are untouched.
+        `rows=True` exposes the per-prototype cross-entropies for the audit only.
         """
         if not self.prototypes:
             return torch.zeros((), device=self.device)
         z = torch.stack([p for p, _ in self.prototypes])  # [P, dim]
         owners = torch.tensor([o for _, o in self.prototypes], device=self.device)
+        cut = getattr(self.args, "w_alignment", "all") == "owner_only"
         scores = []
         for j in range(len(self.experts)):
             h = normalize(self.W[j](self.experts[j].transform(z)))  # [P, D_E]
             q = normalize(self.P(z))  # [P, D_E]
+            if cut and task_index is not None and j < task_index:
+                keep = (owners == j).unsqueeze(-1)
+                h = torch.where(keep, h, h.detach())
             scores.append((q * h).sum(dim=-1))  # [P]
         stacked = torch.stack(scores, dim=1)  # [P, T_t]
+        if rows:
+            return F.cross_entropy(stacked, owners, reduction="none"), owners
         return F.cross_entropy(stacked, owners)
 
     @torch.no_grad()
@@ -303,9 +314,12 @@ def main():
     )
     parser.add_argument(
         "--w_alignment",
-        choices=["current", "all"],
+        choices=["current", "all", "owner_only"],
         default="all",
-        help="coupling arm: current = freeze old W (C0); all = pinned E2 (C1)",
+        help=(
+            "coupling arm: current = freeze old W (C0); all = pinned E2 (C1); "
+            "owner_only = old W see only their own task's evidence gradient"
+        ),
     )
     parser.add_argument("--out", default="results/e2")
     args = parser.parse_args()

@@ -145,10 +145,13 @@ anchor invariance       with the cut disabled, every C1 and C0 cell must equal t
 cut audit               one pre-run audited training, separate from the cells. At
                         each task t > 0, on a fixed batch:
                         (a) forward value: l_cut == l_full (torch.equal)
-                        (b) for each old j, grad_cut(W_j) equals the gradient of
-                            sum_{p: owner(p)=j} CE_p w.r.t. W_j, exactly
+                        (b) for each old j, grad_cut(W_j) equals the owner-only
+                            part of the same mean-reduced loss under the same
+                            P-normalisation, (1/P) * sum_{p: owner(p)=j} CE_p,
+                            to machine precision (max relative error <= 1e-6)
                         (c) every other trainable parameter (P, g, W_t, E_t):
-                            grad_cut == grad_full, bitwise
+                            grad_cut == grad_full, bitwise (old W_j are excluded:
+                            the cut is expected to change exactly them)
                         any failure is a veto (not executed)
 training guards         the pinned E2 guard per cell: every old W has a nonzero
                         gradient, previous experts frozen and absent from the
@@ -159,6 +162,14 @@ no tuning               epochs 10, lr 1e-3, batch 128, rank 8, one prototype per
                         same construction, feature cache and inference path as the
                         coupling study
 ```
+
+**Amendment 1 (pre-run, definitional).** V3(b) now states the reduction and the
+normalisation explicitly: the reference is the owner-only part of the same
+mean-reduced evidence loss, `(1/P) * sum_{p: owner(p)=j} CE_p` with `P` the number
+of stored prototypes, checked to machine precision rather than bitwise so that a
+correct cut is not vetoed by floating-point association. V3(c) records that the old
+`W_j` are excluded from the bitwise set by construction. No design variable,
+endpoint or outcome reading changes; the run had not started when this was written.
 
 Implementation notes, pinned so the manipulation is unambiguous: the cut is a
 property of the arm (`w_alignment = owner_only`, a new choice; `all` and `current`
@@ -172,7 +183,8 @@ Artifacts: `experiments/intervention.py`, `results/intervention/intervention_stu
 ## 6. Feasibility
 
 ```text
-audit        one 2-task audited training plus the comparisons, well under a minute
+audit        one audited training through all 20 tasks, checks at every t > 0;
+             well under a minute at this scale
 cells        18 x ~20 s ~ 6 min (the coupling study measured 18.4 s per cell)
 total        well under the 12 h ceiling; the interference ladder's 30 cells ran in
              a single pass
