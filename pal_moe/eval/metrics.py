@@ -20,8 +20,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..memory.prototype_memory import PrototypeMemory
-from ..models.moe import DynamicMoE
+from pal_moe.legacy.memory.prototype_memory import PrototypeMemory
+from pal_moe.legacy.models.moe import DynamicMoE
 
 
 @dataclass

@@ -1,20 +1,5 @@
-from .agem import AGEM
-from .der import DERPP, ERACE
-from .ewc import EWC
-from .icarl import ICaRL
-from .latent_replay import LatentReplayTrainer
-from .mir import MIR
-from .naive import NaiveFineTuning
-from .replay import ReplayTrainer
+"""Moved to `pal_moe.legacy.baselines` (v3 restructure). Alias shim: same module objects."""
 
-__all__ = [
-    "NaiveFineTuning",
-    "EWC",
-    "ReplayTrainer",
-    "DERPP",
-    "ERACE",
-    "AGEM",
-    "ICaRL",
-    "LatentReplayTrainer",
-    "MIR",
-]
+from pal_moe.legacy._alias import alias_package
+
+alias_package(__name__, "pal_moe.legacy.baselines")

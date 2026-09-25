@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 
 from ..data.feature_cache import CachedFeatureEncoder
-from ..models.encoder import SharedEncoder
+from pal_moe.legacy.models.encoder import SharedEncoder
 from .registry import register_backbone
 
 __all__ = [

@@ -1,10 +1,5 @@
-from .energy_trigger import EnergyTrigger, energy
-from .expert_trigger import AlwaysTrigger, QuantitativeTrigger, TriggerEvaluationResult
+"""Moved to `pal_moe.legacy.trigger` (v3 restructure). Alias shim: same module objects."""
 
-__all__ = [
-    "QuantitativeTrigger",
-    "AlwaysTrigger",
-    "TriggerEvaluationResult",
-    "EnergyTrigger",
-    "energy",
-]
+from pal_moe.legacy._alias import alias_package
+
+alias_package(__name__, "pal_moe.legacy.trigger")

@@ -3,15 +3,15 @@ PAL-MoE: Prototype-Anchored Lifelong Mixture of Experts in PyTorch.
 Continual learning framework for mitigating catastrophic forgetting in dynamic MoE.
 """
 
-from .adaptation.ttt import ContinualTrainer, TestTimeAdapter
-from .builder.expert_builder import ExpertBuilder
-from .evaluation.metrics import ContinualEvaluator
-from .memory.prototype_memory import PrototypeMemory
-from .models.encoder import EMAEncoder, SharedEncoder
-from .models.expert import MLPExpert
-from .models.moe import DynamicMoE, PALMoE
-from .models.router import DynamicRouter
-from .trigger.expert_trigger import QuantitativeTrigger
+from .legacy.adaptation.ttt import ContinualTrainer, TestTimeAdapter
+from .legacy.builder.expert_builder import ExpertBuilder
+from .eval.metrics import ContinualEvaluator
+from .legacy.memory.prototype_memory import PrototypeMemory
+from .legacy.models.encoder import EMAEncoder, SharedEncoder
+from .legacy.models.expert import MLPExpert
+from .legacy.models.moe import DynamicMoE, PALMoE
+from .legacy.models.router import DynamicRouter
+from .legacy.trigger.expert_trigger import QuantitativeTrigger
 
 __version__ = "0.1.0"
 

@@ -1,4 +1,4 @@
-"""Memory: the v1 prototype memory (moved to `pal_moe.legacy.memory`; aliased here)."""
+"""v1 prototype memory and generative latent replay (frozen)."""
 
 from .prototype_memory import Prototype, PrototypeMemory
 
