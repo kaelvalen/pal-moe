@@ -79,7 +79,54 @@ reported as the remaining unexplained part.
   mismatch lives; any memory/budget or deployment reading (stored features are not
   proposed as a method); anything beyond the pinned formulation.
 
-## 6. Records
+## 6. Chain position and claim status
+
+```text
+COUPLING
+   |
+   v
+INTERFERENCE
+   |   descriptive mechanistic support
+   v
+INTERVENTION
+   +-- non-owner paths -> the dominant causal component of routing damage
+   v
+OWNER-SIDE
+   +-- owner-side update -> the dominant causal component of accuracy damage
+   v
+READOUT REFIT
+   +-- current-task evidence -> does not recover old classes
+   +-- replay / old-task evidence -> recovers most of the loss
+          +-- consistent with a decode/readout mismatch
+          +-- 8-12% residual gap -> unexplained
+```
+
+The claims, separated:
+
+| claim | status |
+| :-- | :-- |
+| owner-side update has a causal effect on accuracy | **supported** |
+| most of that effect is consistent with a readout/decode mismatch | **supported** |
+| replay / old-task evidence is required for the recovery | **supported** |
+| the representation is fully intact | not shown |
+| the residual gap is representation degradation | not shown |
+| the whole owner-side damage is readout mismatch | rejected / not supported |
+
+The chain's tightest formulation:
+
+> Non-owner path intervention produces the dominant causal component of routing
+> damage; owner-side updating produces the dominant causal component of accuracy
+> damage. Most of the owner-side accuracy loss is recoverable by post-hoc readout
+> refitting with replayed old-task evidence, consistent with a decode/readout
+> mismatch, while a small residual accuracy gap remains unexplained.
+
+The large `R2 - R1` difference is the empirical counterpart of the
+`pal_moe/arch/readouts.py` warning: re-opening rows on current-task data alone does
+not serve old classes. The residual is left unexplained on purpose; separating
+representation degradation, expert degradation or normalisation effects needs a new
+intervention of its own.
+
+## 7. Records
 
 ```text
 6ef995e   the pre-registration

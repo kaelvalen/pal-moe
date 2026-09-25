@@ -62,13 +62,12 @@ Status legend adds: CHAIN (evidence for the follow-up chain documents).
 | `owner_side/owner_side_study.json` | two-component decomposition, 18 cells | CHAIN | OWNER_SIDE_RESULTS.md |
 | `refit/refit_study.json` | readout refit / replay, 18 cells x 3 readout treatments | CHAIN | REFIT_RESULTS.md |
 
-Chain state: the collapse is decomposed into two causally established components -
-a non-owner pathway dominating routing damage and an owner-side update dominating
-the accuracy damage - and neither pathway is endpoint-exclusive
-(`OWNER_SIDE_RESULTS.md`, section 6). A post-hoc readout refit recovers 88-92% of
-the owner-only gap to C0 while a current-task-only refit recovers none, so the
-owner-side loss is consistent with a decode/readout mismatch, with a small residual
-unexplained (`REFIT_RESULTS.md`).
+Chain state: non-owner path intervention produces the dominant causal component of
+routing damage; owner-side updating produces the dominant causal component of
+accuracy damage. Most of the owner-side accuracy loss is recoverable by post-hoc
+readout refitting with replayed old-task evidence, consistent with a decode/readout
+mismatch, while a small residual accuracy gap remains unexplained
+(`OWNER_SIDE_RESULTS.md`, section 6; `REFIT_RESULTS.md`, section 6).
 
 ## Protocol / correction evidence
 
