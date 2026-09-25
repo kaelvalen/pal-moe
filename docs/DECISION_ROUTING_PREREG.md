@@ -113,6 +113,35 @@ the formulation was the limit. If it does not, the constraint is not the
 supervision's shape either, and the winner-take-all half becomes the next
 hypothesis with a stronger prior.
 
+## 2b. The three arms, and what each isolates
+
+| arm | training | role |
+| :-- | :-- | :-- |
+| prototype router | none | local non-parametric **absolute reference** |
+| pointwise gate | cross-entropy on stored prototypes | learned global **pointwise reference** |
+| comparative gate | the hinge on the same stored prototypes | **primary manipulation** |
+
+```text
+prototype -> pointwise      isolates "local rule -> global learned fit"
+pointwise -> comparative    isolates the supervision's shape (one variable)
+```
+
+For that reason the primary endpoint is `comparative - pointwise`, and the
+result is reported under a neutral name - the **comparative-minus-pointwise
+coverage difference** - not as a "routing gain". The study measures the effect of
+the supervision's form; it does not decide which form is right.
+
+**Both anchors are kept, separately, because they are not the same quantity:**
+
+```text
+C@3 prototype router   0.9494 / 0.8915   (RRF frozen_off)
+C@3 pointwise gate     0.9404 / 0.8465   (RRF frozen_on, prototypes + CE)
+```
+
+Reproduction is a **veto, not a tolerance**: if the pointwise gate does not
+reproduce its anchor, the comparative result is not read at all; if the prototype
+router does not reproduce its own, the run is invalid rather than partial.
+
 ## 3. Control matrix
 
 ```text
@@ -175,19 +204,32 @@ negative results (pointwise supervision, comparative supervision) behind it.
 
 ## 6. Statistics
 
-The S11 protocol: paired by seed, six seeds (the floor at which an exact
-two-sided test can reject), exact sign and permutation tests, Westfall-Young
-max-statistic correction over the family (two regimes), TOST where the claim is
-equivalence.
+Families are declared separately so it is never ambiguous later what entered a
+correction:
+
+```text
+primary family      comparative - pointwise,  2 regimes   (the loss-only contrast)
+secondary family    comparative - prototype,  2 regimes   (against the local rule)
+secondary diagnostic   the same contrasts over tasks 1..T-1, where negatives exist
+```
+
+Paired by seed, six seeds, exact sign and permutation tests, Westfall-Young
+max-statistic correction **within each family separately**, TOST where the claim
+is equivalence.
 
 ## 7. Cost
 
 ```text
-2 arms (baseline, comparative) x 2 regimes x 6 seeds = 24 trainings
+2 trained arms + 1 training-free control
+x 2 regimes x 6 seeds
+= 36 evaluation cells
+= 24 trainings + 12 training-free evaluations
 ```
 
-The baseline arm is S11's `L3` and is re-run in the same process so both arms
-share one bank per seed and one evaluation path; reproducing it is the anchor.
+One bank per (regime, seed) is trained and shared by all three arms, in one
+process with one evaluation path, so the arms differ only in the scorer. The two
+anchored arms (prototype router, pointwise gate) must reproduce their values or
+the run is invalid.
 
 ## 8. Out of scope
 
