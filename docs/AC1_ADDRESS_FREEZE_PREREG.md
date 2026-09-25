@@ -116,6 +116,8 @@ precedent and its wording).
 
 ## 5. Vetoes
 
+**Amendment 1 (§10) supersedes the anchor band in this block before execution.**
+
 ```text
 anchor equivalence   the six C0 cells, run with the passive drift probe active,
                      must match the stored coupling / intervention / owner-side
@@ -214,3 +216,74 @@ the LLM / VLM port            gated on a positive AC1-AC3 chain
 - **Does not license:** any claim about the values (frozen throughout), the readout,
   accuracy as an endpoint of its own, scaling beyond `T = 20`, or the training-free
   prototype baseline being "the" target rather than the reference it is.
+
+## 10. Amendment 1 (2026-09-25): the anchor band, from the six-cell substrate pilot
+
+**Registered before the amended execution. The body above is unchanged; this section
+supersedes only the `anchor equivalence` band of section 5.** The first execution
+stopped at the anchor veto, as the pre-registration requires; this is the diagnosis
+and the amendment, not a re-reading of a result.
+
+The first execution produced the six anchor cells and the veto fired on the
+`dispersed` cells. The measured deltas against the stored cells, all five metrics and
+all six cells:
+
+```text
+cell            metric                stored              pilot               |delta|
+coherent/42     accuracy              0.7433              0.7433              0
+                coverage_at_3         0.9328000485897064  0.9328000009059906  4.8e-08
+                conditional_oracle@3  0.7968481989708405  0.7968481989708405  0
+                ceiling_at_3          0.74330003871862    0.743300000721937   3.8e-08
+                oracle_accuracy       0.8797              0.8797              0
+coherent/1      accuracy              0.7378              0.7378              0
+                coverage_at_3         0.9299000382423401  0.9298999935388566  4.5e-08
+                conditional_oracle@3  0.793418647166362   0.793418647166362   0
+                ceiling_at_3          0.7378000303421858  0.7377999948736084  3.6e-08
+                oracle_accuracy       0.8769              0.8769              0
+coherent/2      accuracy              0.7436              0.7436              0
+                coverage_at_3         0.9329000443220139  0.9328999936580658  5.1e-08
+                conditional_oracle@3  0.797084360595991   0.797084360595991   0
+                ceiling_at_3          0.7436000353283841  0.7435999949449434  4.0e-08
+                oracle_accuracy       0.8791              0.8791              0
+dispersed/42    accuracy              0.7025              0.7025              0
+                coverage_at_3         0.8579000413417817  0.8581000059843064  2.0e-04
+                conditional_oracle@3  0.8188600069938221  0.8186691527793963  1.9e-04
+                ceiling_at_3          0.7025000338531315  0.702500004899167   2.9e-08
+                oracle_accuracy       0.977               0.977               0
+dispersed/1     accuracy              0.6999              0.7000              1.0e-04
+                coverage_at_3         0.8521000385284424  0.8526999980211258  6.0e-04
+                conditional_oracle@3  0.8213824668466142  0.8209217778820218  4.6e-04
+                ceiling_at_3          0.6999000316465871  0.6999999983754991  1.0e-04
+                oracle_accuracy       0.9769              0.9769              0
+dispersed/2     accuracy              0.7017              0.7021              4.0e-04
+                coverage_at_3         0.854300034046173   0.8541999965906143  1.0e-04
+                conditional_oracle@3  0.8213742245112958  0.8219386560524468  5.6e-04
+                ceiling_at_3          0.701700027964649   0.702099997197694   4.0e-04
+                oracle_accuracy       0.9777              0.9777              0
+```
+
+Three pieces of evidence, and then the band:
+
+1. **Implementation equivalence, 6/6.** The pristine pre-AC1 implementation
+   (`4628b47:experiments/e2_evidence.py`) returns the pilot cells **bitwise**, on all
+   five metrics, for all six anchors, on this substrate. The `p_alignment` change is
+   therefore behaviour-preserving on the plastic path; the deltas are between this
+   substrate and the substrate that produced the stored cells (which the records do
+   not identify - the study JSONs carry no device field).
+2. **The coherent construction is exact.** All five metrics on all three coherent
+   cells reproduce to `<= 5.1e-08` - order float32.
+3. **The dispersed residual is a boundary effect, not a behavioural one.** In every
+   dispersed cell the identity `ceiling_at_3 = coverage_at_3 x conditional_oracle@3`
+   holds exactly in both runs, and coverage and conditional_oracle move **in
+   opposite directions** while `oracle_accuracy` is unchanged and the ceiling moves
+   by the same amount as accuracy. That is the signature of a handful of test
+   samples (1-4 per 10 000) crossing a float32 near-tie at the top-3 / argmax
+   boundary, not of a different trajectory.
+
+**Amended band: `|delta| <= 1.5e-3` on all five metrics for the anchor veto.** It is
+2.5x the largest measured substrate delta (6.0e-04) and 11x below the smallest effect
+this study is designed to read - the coherent C0 -> E0 coverage gap, 0.0175 (the
+dispersed one is 0.0367). The implementation-equivalence check is upgraded from pilot
+evidence to a checklist item: the runner records the harness revision, and section
+5's `implementation equivalence` line requires a bitwise match against the pristine
+implementation before any outcome is read.
