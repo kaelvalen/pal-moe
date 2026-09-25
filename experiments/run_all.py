@@ -100,6 +100,7 @@ CELL_TARGETS = {
     "s6b": (ROOT / "results" / "s6b" / "s6b_difficulty_study.json", 30),
     "s8": (ROOT / "results" / "s8" / "s8_budget_study.json", 56),
     "s9": (ROOT / "results" / "s9" / "s9_robustness_study.json", 170),
+    "s10": (ROOT / "results" / "s10" / "s10_scaling_study.json", 160),
 }
 
 
@@ -453,6 +454,34 @@ def build_stages(args) -> list[Stage]:
             done_when=[],  # handled by the cell count below
             needs=["s9x"],
             minutes=40,
+        ),
+        Stage(
+            "s10",
+            "scalability: task/expert count, two datasets, candidate-set control",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/s10_scaling.py",
+                    "--datasets",
+                    "cifar100",
+                    "tinyimagenet",
+                    "--constructs",
+                    "contiguous",
+                    "dispersed",
+                    "--seeds",
+                    seeds,
+                    "--epochs",
+                    str(args.epochs),
+                    "--device",
+                    args.device,
+                    "--out",
+                    "results/s10",
+                ]
+            ],
+            done_when=[],  # handled by the cell count below
+            needs=["s9"],
+            minutes=60,
         ),
     ]
 

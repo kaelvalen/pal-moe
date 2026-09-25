@@ -874,7 +874,154 @@ into routing under hard routing, into the representation under easy routing.
 
 ---
 
-## 13. Consolidated findings
+## 13. S10 - scalability: the extra capacity is stranded behind the router
+
+S8 showed capacity does not close the routing tax, S9 showed the tax grows with
+representation damage. S10 scales the task/expert count and asks which of the
+three things `T` moves at once the tax tracks:
+
+```text
+T up -> stored experts up     (bank size)
+T up -> routing candidates up (candidate count)
+T up -> classes per expert down (specialization: fewer classes each, so the
+                                oracle's job gets *easier* while routing gets
+                                harder)
+```
+
+That third term is what makes the sweep interpretable: the partition granularity
+moves the expert's difficulty and the router's difficulty in opposite
+directions. Two datasets and two constructions, one variable at a time:
+
+```text
+cifar100       100 classes, T in {5, 10, 20, 25}   (20/10/5/4 classes per task)
+tinyimagenet   200 classes, T in {10, 20, 40, 50}  (20/10/5/4 classes per task)
+contiguous     blocks of classes in label order
+dispersed      round-robin in the source's semantic order (S6b's construction)
+```
+
+160 cells, two seeds. `classes_per_task` is recorded per cell, because `T`
+changes partition granularity as well as expert count. The T = 20 CIFAR-100
+cells reproduce S2's canonical partition (`contiguous`) and S8's `dispersed`
+construction exactly: **5/5 cells each, `max |delta| = 0.0`**.
+
+### 13.1 The scaling tables
+
+`cifar100`:
+
+| construct | T | cls/task | L0 | L1 | L2b | L3 | L4 | tax | realised | available | R_iso_ncm | R_iso | recall@1 | recall@3 | max-share | H_norm | stored KiB |
+| :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| contiguous | 5 | 20 | 70.34 | 76.77 | 55.93 | 71.83 | 91.06 | +19.23 | +15.91 | +35.13 | 0.072 | 0.453 | 0.760 | 0.956 | 0.760 | 0.547 | 841.6 |
+| contiguous | 10 | 10 | 70.34 | 76.77 | 55.11 | 71.04 | 95.25 | +24.21 | +15.93 | +40.14 | 0.028 | 0.397 | 0.726 | 0.912 | 0.726 | 0.508 | 1081.6 |
+| contiguous | 20 | 5 | 70.34 | 76.77 | 56.21 | 70.59 | 97.45 | +26.86 | +14.38 | +41.24 | 0.009 | 0.349 | 0.710 | 0.888 | 0.710 | 0.454 | 1561.6 |
+| contiguous | 25 | 4 | 70.34 | 76.77 | 57.01 | 70.55 | 97.55 | +27.01 | +13.54 | +40.55 | 0.008 | 0.334 | 0.711 | 0.888 | 0.711 | 0.430 | 1801.6 |
+| dispersed | 5 | 20 | 70.34 | 76.77 | 56.61 | 71.42 | 93.77 | +22.35 | +14.82 | +37.17 | 0.046 | 0.399 | 0.734 | 0.940 | 0.734 | 0.585 | 841.6 |
+| dispersed | 10 | 10 | 70.34 | 76.77 | 53.41 | 71.01 | 96.27 | +25.26 | +17.60 | +42.86 | 0.026 | 0.411 | 0.720 | 0.904 | 0.720 | 0.502 | 1081.6 |
+| dispersed | 20 | 5 | 70.34 | 76.77 | 55.95 | 70.68 | 97.31 | +26.63 | +14.73 | +41.36 | 0.013 | 0.356 | 0.713 | 0.891 | 0.713 | 0.432 | 1561.6 |
+| dispersed | 25 | 4 | 70.34 | 76.77 | 53.79 | 70.45 | 98.08 | +27.64 | +16.66 | +44.29 | 0.004 | 0.376 | 0.707 | 0.883 | 0.707 | 0.427 | 1801.6 |
+
+`tinyimagenet`:
+
+| construct | T | cls/task | L0 | L1 | L2b | L3 | L4 | tax | realised | available | R_iso_ncm | R_iso | recall@1 | recall@3 | max-share | H_norm | stored KiB |
+| :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| contiguous | 10 | 20 | 79.95 | 84.03 | 64.63 | 80.63 | 91.34 | +10.71 | +16.00 | +26.71 | 0.059 | 0.599 | 0.849 | 0.951 | 0.849 | 0.311 | 1683.1 |
+| contiguous | 20 | 10 | 79.95 | 84.03 | 65.04 | 80.43 | 94.08 | +13.65 | +15.40 | +29.04 | 0.034 | 0.530 | 0.830 | 0.930 | 0.830 | 0.292 | 2163.1 |
+| contiguous | 40 | 5 | 79.95 | 84.03 | 64.69 | 80.13 | 95.69 | +15.56 | +15.44 | +31.00 | 0.011 | 0.498 | 0.820 | 0.919 | 0.820 | 0.260 | 3123.1 |
+| contiguous | 50 | 4 | 79.95 | 84.03 | 62.87 | 80.15 | 96.41 | +16.26 | +17.27 | +33.54 | 0.012 | 0.515 | 0.815 | 0.917 | 0.815 | 0.247 | 3603.1 |
+| dispersed | 10 | 20 | 79.95 | 84.03 | 59.29 | 80.15 | 94.49 | +14.34 | +20.86 | +35.20 | 0.014 | 0.593 | 0.816 | 0.932 | 0.816 | 0.378 | 1683.1 |
+| dispersed | 20 | 10 | 79.95 | 84.03 | 60.44 | 80.14 | 96.85 | +16.71 | +19.70 | +36.41 | 0.011 | 0.541 | 0.806 | 0.916 | 0.806 | 0.337 | 2163.1 |
+| dispersed | 40 | 5 | 79.95 | 84.03 | 60.13 | 80.00 | 98.08 | +18.09 | +19.87 | +37.95 | 0.002 | 0.523 | 0.803 | 0.908 | 0.803 | 0.286 | 3123.1 |
+| dispersed | 50 | 4 | 79.95 | 84.03 | 60.69 | 80.07 | 98.30 | +18.23 | +19.39 | +37.62 | 0.007 | 0.515 | 0.802 | 0.906 | 0.802 | 0.270 | 3603.1 |
+
+### 13.2 Findings
+
+**E1 - the tax grows with `T`, and the growth is entirely the oracle improving.**
+In all four (dataset x construction) combinations `L4` rises by +3.81 to +6.49
+points while `L3` is flat to slightly declining (-0.08 to -1.28):
+
+```text
+cifar100   contiguous   L4 91.06 -> 97.55 (+6.49)   L3 71.83 -> 70.55 (-1.28)
+           dispersed    L4 93.77 -> 98.08 (+4.31)   L3 71.42 -> 70.45 (-0.97)
+tiny       contiguous   L4 91.34 -> 96.41 (+5.07)   L3 80.63 -> 80.15 (-0.48)
+           dispersed    L4 94.49 -> 98.30 (+3.81)   L3 80.15 -> 80.07 (-0.08)
+```
+
+Scaling `T` makes each expert's job easier - four to twenty classes instead of
+five - and the oracle realises that fully. `L3` realises none of it. **The extra
+specialization capacity is stranded behind the router**, which is the S8 result
+with the sign of the capacity change reversed and the conclusion unchanged.
+
+**E2 - the router's ranking degrades with the candidate count, at every fixed
+candidate budget.** Coverage at a fixed `m` falls monotonically as `T` grows
+(`cifar100`, contiguous / dispersed): `coverage(1)` 0.760/0.734 -> 0.711/0.707,
+`coverage(3)` 0.956/0.940 -> 0.888/0.883, `coverage(8)` 0.993/0.991 ->
+0.967/0.966. `tinyimagenet` shows the same at a higher level: `coverage(1)`
+0.849/0.816 -> 0.815/0.802, `coverage(3)` 0.951/0.932 -> 0.917/0.906. The
+degradation is real but small and saturating: most of it happens between `T = 5`
+and `T = 10`.
+
+**E3 - the selector headroom at a fixed `m` is constant, so this is a ranking
+problem and not a selection problem.** `headroom(3)` is 0.162/0.180 at `T = 5`
+and 0.170/0.172 at `T = 25` (`cifar100`), 0.078/0.099 at `T = 10` and 0.094 at
+`T = 50` (`tinyimagenet`). A perfect selector over the router's top-3 candidates
+would recover the same number of points at every scale. `headroom(T)` does grow
+(0.192 -> 0.270), but only because `m` grows with `T`: the mechanism does not
+change, the candidate budget does.
+
+**E4 - `R_iso_ncm` falls toward zero as the bank grows.** `cifar100`
+contiguous 0.072 -> 0.008, dispersed 0.046 -> 0.004; `tinyimagenet` contiguous
+0.059 -> 0.012, dispersed 0.014 -> 0.007. At `T = 25` on CIFAR-100 the entire
+20-expert bank is worth +0.11 points over a training-free NCM (70.45 against
+70.34). **The larger the bank, the smaller the fraction of it that is worth
+anything.**
+
+**E5 - the available/realised gap widens with `T`.** `isolation_available` grows
+(+5.4, +1.4, +4.8, +2.4 points across the four combinations) while
+`isolation_realised` is flat or falls (-2.4, +1.8, -0.6, -1.5), so `R_iso` falls
+with scale (0.453 -> 0.334 `cifar100` contiguous). More isolation is on offer at
+every step and proportionally less of it is cashed - the same shape S6b found
+across regimes, now along the scale axis.
+
+**E6 - the two regimes converge as `T` grows.** The S6b contrast is +3.12 points
+of tax at `T = 5` (19.23 contiguous against 22.35 dispersed) and +0.63 at
+`T = 25` (27.01 against 27.64). With four classes per task both partitions are
+spread thin, and the geometry difference that drove S6b shrinks.
+
+**E7 - what scaling `T` actually buys in bytes.** The marginal cost of one
+rank-8 expert is 49 KiB. At `T = 5` the bank is 246 of 842 stored KiB (29%); at
+`T = 25` it is 1230 of 1802 (68%). So scaling `T` is mostly a decision to buy
+expert bytes, and E1/E4 say those bytes buy nothing over a training-free NCM.
+
+**E8 - latency grows with `T`** (`cifar100` contiguous 0.0029 -> 0.0104
+ms/sample, `tinyimagenet` dispersed 0.0044 -> 0.0188). These are microsecond
+scale measurements on a shared GPU, so they are indicative rather than precise;
+the direction is consistent across datasets and the magnitude tracks the expert
+count.
+
+### 13.3 The three-factor answer, stated honestly
+
+| factor | how it scales | measured effect |
+| :-- | :-- | :-- |
+| bank size (stored bytes, params) | linear, 49 KiB per expert | **none**: `L3` flat, `R_iso_ncm` -> 0 |
+| expert specialization (classes per task) | `100/T` (20 -> 4) | **real but stranded**: `L4` +3.8 to +6.5, `L3` unchanged |
+| candidate count (`T`) | linear | **ranking degrades**: `coverage(1)` -5 pp, `coverage(3)` -7 pp at fixed `m` |
+
+The tax therefore scales with the growth of the expert bank and the candidate
+set while routing concentration degrades with `T` - and the decomposition says
+where the loss is: not in a selector that picks badly among candidates (E3), and
+not in the bank's capacity to specialise (E1), but in the **ranking** that
+decides which experts are candidates at all (E2).
+
+What S10 cannot do is attribute the degradation *causally* to candidate count
+rather than to bank size, because one expert per task makes the two collinear by
+construction. The candidate-set decomposition is the strongest available
+separation - it holds the bank fixed and varies only the budget `m` - and it
+points at the ranking. A causal test needs a bank whose size and candidate count
+can be moved independently, which is a routing-mechanism experiment, not a
+sweep.
+
+---
+
+## 14. Consolidated findings
 
 **F1. The readout was the first bottleneck, and a training-free prototype
 readout solves it.** NCM on frozen features beats v1 and iCaRL on CIFAR-100
@@ -963,9 +1110,26 @@ learned shortcut in both regimes (`correlated > absent > flipped` at every
 level), and where its cost lands depends on the routing regime: into the
 assignment under hard routing, into the representation under easy routing.
 
+**F18. Scaling the task/expert count makes the experts' job easier and the
+router's job harder, and only the first is realised.** `L4` gains +3.8 to +6.5
+points from `T = 5` to `T = 25` (four to twenty classes per expert) while `L3`
+is flat to slightly worse (-0.08 to -1.28), so the tax grows entirely from the
+oracle side. Two datasets, two constructions, 160 cells.
+
+**F19. The routing failure at scale is a ranking problem, not a selection
+problem.** At a fixed candidate budget `m`, coverage falls with `T`
+(`coverage(1)` 0.760 -> 0.711, `coverage(3)` 0.956 -> 0.888 on CIFAR-100) while
+the selector headroom at fixed `m` is constant (0.162 -> 0.170 at `m = 3`).
+
+**F20. The larger the bank, the smaller the fraction of it that is worth
+anything.** `R_iso_ncm` falls monotonically with `T` in all four combinations
+(0.072 -> 0.008 CIFAR-100 contiguous, 0.046 -> 0.004 dispersed, 0.059 -> 0.012
+and 0.014 -> 0.007 on Tiny-ImageNet). At `T = 25` a 20-expert bank is worth
++0.11 points over a training-free nearest-class-mean.
+
 ---
 
-## 14. Pre-registered hypotheses and their verdicts
+## 15. Pre-registered hypotheses and their verdicts
 
 | hypothesis | statement | verdict |
 | :-- | :-- | :-- |
@@ -993,10 +1157,14 @@ assignment under hard routing, into the representation under easy routing.
 | R3 (S9) | the routing tax is driven by task overlap, not by the benchmark | **confirmed**: the tax rises monotonically with representation damage, the S6b mechanism under a new manipulation |
 | R4 (S9) | the closed-form readout stays the strongest baseline | **confirmed**: 34/34 conditions, and the most shift-robust level |
 | R5 (S9) | a spurious cue is absorbed as a shortcut | **confirmed**, with a regime-dependent landing site: routing under `dispersed`, representation under `coherent` |
+| S1 (S10) | routing degradation grows with task/expert count | **confirmed**: the tax rises in all four combinations (dataset x construction) |
+| S2 (S10) | the degradation is attributable to candidate count rather than bank size | **not separable by this sweep**: one expert per task makes them collinear; the fixed-`m` decomposition points at ranking, and a causal test needs a bank whose size and candidate count move independently |
+| S3 (S10) | more experts buy more realizable isolation | **refuted at scale**: `R_iso_ncm` falls monotonically with `T` to 0.004-0.012 |
+| S4 (S10) | the tax growth comes from the router degrading | **refuted, and the opposite holds**: `L3` is flat while `L4` gains +3.8 to +6.5, so the oracle improves |
 
 ---
 
-## 15. Measurement bugs this programme found
+## 16. Measurement bugs this programme found
 
 Ten, each of which would have produced a confident wrong number:
 
@@ -1061,7 +1229,7 @@ eighth and ninth are the same failure class one level down - a harness detail
 
 ---
 
-## 16. What this evidence does NOT say
+## 17. What this evidence does NOT say
 
 - It does **not** say "mixture of experts is unnecessary". It says that under
   this benchmark, protocol, budget and backbone, the incremental expert
@@ -1086,47 +1254,74 @@ eighth and ninth are the same failure class one level down - a harness detail
   three-seed operating point exactly, but the shifted points are one seed each.
   At severity 5 (noise, blur) every level is near chance, so the tax at those
   points compares two near-floor numbers.
+- S10's two factors are collinear by construction: one expert per task means
+  bank size and candidate count both scale with `T`, so the sweep cannot
+  attribute the degradation causally (section 13.3). Its latency numbers are
+  microsecond-scale measurements on a shared GPU and are indicative only, and
+  its sweep points are two seeds.
 - Every result is on frozen features. The plastic-encoder branch - the one
   thing that could plausibly change F3 - is untouched.
 
 ---
 
-## 17. Open items and the stage order
+## 18. Open items and the stage order
 
 | stage | content | blocker |
 | :-- | :-- | :-- |
 | S4-r | corruption robustness, routing stability `TV(p(x), p(x~))` | **superseded by S9** (section 12) |
-| S4b | task-count sweep `T in {2,5,10,20}` | splitters have no sub-task support; S10 is the same question with the pieces S8 built |
+| S4b | task-count sweep `T in {2,5,10,20}` | **subsumed by S10** (section 13) |
 | S5 | Task-IL / Class-IL protocol axis | **done** (section 7) |
 | S5b | Domain-IL rotated MNIST, unseen domain | **done** (section 8) |
 | S6 | order sensitivity (class and task order) | **done** (section 9) |
 | S6b | designed difficulty: coherent vs dispersed partitions | **done** (section 10) |
 | S8 | resource budget: parameter / memory / active, both regimes | **done** (section 11) |
 | S9 | robustness: corruption and spurious cue, both regimes | **done** (section 12) |
-| S10 | scalability: task count and expert count | **next** |
-| S11 | statistical validation: confirmatory seed/CI protocol | after S10 |
+| S10 | scalability: task count, two datasets, candidate-set control | **done** (section 13) |
+| S11 | confirmatory protocol: 5 seeds, order variance, paired tests | **next** |
 
-The recommended next step is **S10**, and S8+S9 give it a specific question rather
-than a generic sweep. Two pieces already exist: `L3` allocates one expert per
-task, so increasing `T` increases storage, expert count and routing candidates at
-once, and S9 showed the router's failure mode under shift is *diffuseness*
-(max-share falling, `recall@3` falling) rather than a confident wrong pick. So
-S10's question is which of those three `T`-effects the tax actually tracks:
+The recommended next step is **S11**, and it should be *confirmatory* rather than
+another exploratory stage: every claim below is already derived from a previous
+experiment, so S11's job is to test them under a pre-registered protocol -
+more seeds, confidence intervals, and order variance - not to discover
+something new. The six hypotheses, each with the stage that produced it:
 
 ```text
-T up  ->  stored bytes up        (measured per cell already)
-T up  ->  experts per bank up    (capacity, which S8 showed does not close the tax)
-T up  ->  routing candidates up  (resolution, which S8 showed partly does)
+1  L1_ridge stays the strong simple baseline            S2, S3, S4, S7, S8, S9
+2  L4 - L3 is a systematic routing tax, not seed noise  S2, S5b, S6b, S8
+3  the tax grows with cross-task overlap                S6b (13.98 vs 26.63), S9
+4  extra capacity does not close the tax                S8 (flat over 64x rank), S10
+5  routing resolution helps but does not finish the job S8 (13.98 -> 11.29,
+                                                        26.63 -> 23.94)
+6  available and realised isolation stay distinct       S5b, S6b, S8, S10
 ```
 
-If the tax tracks candidate count rather than expert capacity, the routing
-mechanism redesign that follows S11 has a target: make the router's decision
-easier, not the experts stronger. S4b is subsumed by this: it is the same sweep
-with the S8 resource instrumentation.
+The protocol S11 should run, sized from the effect sizes already measured:
+
+- **Seeds**: 5 seeds on the S8 operating point (rank 8, one prototype,
+  `top_k = 1`), which is where hypotheses 1, 2, 6 live, in both S6b regimes.
+- **Order variance**: 3 class-order and 3 task-order seeds at `T = 20`, the
+  variance component S6 measured but only for the tax.
+- **Paired tests**: the same feature cache and the same partition per seed, so
+  `L3 - L2b`, `L4 - L3` and `L1 - L3` are paired differences, not two-sample
+  comparisons.
+- **Effect sizes to detect**: the tax is 13.98-26.63 (large), the memory axis is
+  +2.69 (medium), the capacity axis is +1.83/+0.44 over a 64x rank span (small
+  and the one most at risk of being seed noise - which is exactly what S11 is
+  for).
+
+A `capacity closes the tax` result would falsify hypothesis 4 and would be the
+most valuable outcome S11 could produce, so the protocol must be able to see it:
+the rank sweep at 5 seeds, not just the operating point.
+
+The routing-mechanism redesign belongs *after* S11. By then the target is
+measured rather than assumed: S10 locates the failure in the ranking (E2/E3),
+S8 shows resolution is the only lever that moves it, and S9 shows the failure
+mode is diffuseness. A new router should be aimed at those, and S11 is what
+makes the claim it is aimed at statistically solid.
 
 ---
 
-## 18. Artefacts
+## 19. Artefacts
 
 | path | contents |
 | :-- | :-- |
@@ -1139,6 +1334,7 @@ with the S8 resource instrumentation.
 | `results/s6b/` | designed difficulty: `coherent` vs `dispersed`, three seeds |
 | `results/s8/` | 56-cell budget study (rank x prototypes x top-k, both regimes) + report |
 | `results/s9/` | shift caches (13 conditions) + 170-cell robustness study (2 regimes x 2 families) |
+| `results/s10/` | 160-cell scalability study (2 datasets x 4 task counts x 2 constructions x 2 seeds) |
 | `results/logs/` | per-stage logs from `experiments/run_all.py` |
 | feature caches | gitignored (`*.pt`); `experiments/s3_run.py` and `s4_datasets.py` rebuild them |
 
