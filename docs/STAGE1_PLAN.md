@@ -29,7 +29,7 @@ systematically* is a successful Stage 1.
 | S6 | order sensitivity: class order, task order, unseen task | **done** (`experiments/s6_order.py`, `STAGE1_RESULTS.md` section 9) |
 | S6b | designed difficulty: coherent vs dispersed task partitions | **done** (`experiments/s6b_difficulty.py`, `STAGE1_RESULTS.md` section 10) |
 | S7 | representation transfer: checkpoint -> frozen probe on an unseen dataset | **done** (`experiments/s7_transfer.py`, section 6) |
-| S8 | resource budget: parameter / memory / active, in both routing regimes | **running** (`experiments/s8_budget.py`, `STAGE1_RESULTS.md` section 11) |
+| S8 | resource budget: parameter / memory / active, in both routing regimes | **done** (`experiments/s8_budget.py`, `s8_report.py`, `STAGE1_RESULTS.md` section 11) |
 | S9 | robustness: corruption, spurious correlation | planned |
 | S10 | scalability: task count 2..100 | planned |
 | S11 | statistical validation: 3-5 seeds x task orders, paired tests | planned |
@@ -468,3 +468,63 @@ the regimes are reported separately. One seed of the extra budget points and thr
 seeds of the operating point (rank 8) are the compromise: the sweep is read as a
 curve shape, and the operating point - which must reproduce S6b exactly - carries
 the full seed set.
+
+### 8.1 The two ratios are two questions, not one
+
+`R_iso` and a baseline-free companion are both reported, because they ask
+different things:
+
+```text
+R_iso     = (L3 - L2b) / (L4 - L2b)   how much of the isolation capacity is
+                                      realised relative to the current
+                                      shared-sequential system
+R_iso_ncm = (L3 - L0)  / (L4 - L0)    how much of the oracle isolation capacity
+                                      is realised relative to the simple
+                                      readout reference
+```
+
+`R_iso`'s denominator is not a fixed reference: the shared sequential adapter
+moves with the rank too, and a larger shared adapter is not automatically a
+better one. So a rise in `R_iso` can be produced by `L3` improving, by `L2b`
+degrading, or by both, and the raw `L2b`/`L3`/`L4` trajectories must be read
+alongside it. `L0` is budget-free, so `R_iso_ncm` isolates "the expert bank
+improved" from "the shared baseline degraded". The first is relative
+realization of modularity; the second is absolute incremental value.
+
+### 8.2 Forgetting is not one behaviour class
+
+- `L0_ncm` / `L1_ridge`: the accumulated statistics and the frozen readout mean
+  forgetting is expected to be structurally ~0 in this Class-IL setup. A nonzero
+  value would indicate a bug, not a result.
+- `L2b` / `L3`: the learned adapter keeps moving the representation (`L2b`) and
+  the router keeps growing (`L3`), so old-task accuracy can genuinely decay.
+  Forgetting is a real measurement axis here, and `accuracy` and `forgetting`
+  must not be collapsed into a single notion of "performance".
+
+### 8.3 Outcome taxonomy for the hard-routing regime
+
+The coherent result (if it holds) does not license a prediction for `dispersed`.
+Three outcomes are distinguishable, and they must be told apart from the data
+rather than assumed:
+
+- **A** `L3` rises while `L2b` falls: `R_iso` can grow *artificially*, driven by
+  the denominator. Read `R_iso_ncm` for the honest signal.
+- **B** `L3` and `L2b` move together: whether the isolation is genuinely
+  capacity-driven is then read directly, and the two ratios should agree.
+- **C** `L4 - L3` grows while `R_iso_ncm` falls: capacity is available and the
+  router cannot realise it. That is the strongest possible confirmation of the
+  S5b/S6b thesis under a budget.
+
+### 8.4 The curves to read together at the end
+
+```text
+capability   L2b   L3   L4   L3 - L0
+mechanism    routing tax   R_iso   R_iso_ncm   forgetting
+resources    memory_bytes   trainable_params   active_params
+```
+
+and then how each of those separates between `coherent` and `dispersed`. The
+rank sweep is the *parameter* axis; the primary claim of S8 is how the same
+curves behave on the memory and active axes, because those are the axes where
+the mechanism ("more prototypes" against "more experts per sample") is
+unambiguous about what the resource buys.

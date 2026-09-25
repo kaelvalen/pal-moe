@@ -169,10 +169,14 @@ def run_cell(cell: dict, tasks: list[dict], args, device) -> dict:
             R[t, i] = model.evaluate_task(tasks[i], oracle=oracle, task_id=i)
 
     T = n - 1
-    # Retention, not forgetting: in Class-IL with per-task experts the accuracy
-    # matrix is lower-triangular after the freeze, so `forgetting` is 0 by
-    # construction (docs/STAGE1_RESULTS.md section 13). What is informative is
-    # how well old tasks are answered at the end.
+    # Retention, not forgetting, is what the freeze guarantees: for NCM/ridge in
+    # Class-IL the matrix is lower-triangular after the freeze so `forgetting`
+    # is 0 by construction, but with an adapter the representation keeps moving
+    # (L2b) and the router keeps growing (L3), so both can lose old-task
+    # accuracy. Report both, computed the same way as S2/S6b.
+    forget = [
+        max(0.0, float(np.max(R[i : T + 1, i])) - float(R[T, i])) for i in range(T)
+    ]
     return {
         "construct": cell["construct"],
         "level": cell["level"],
@@ -184,10 +188,27 @@ def run_cell(cell: dict, tasks: list[dict], args, device) -> dict:
         "classes_per_task": len(tasks[0]["classes"]),
         "accuracy": float(np.mean(R[T, :])),
         "retention": float(np.mean(R[T, :T])) if T > 0 else 0.0,
+        "forgetting": float(np.mean(forget)) if forget else 0.0,
         "acc_matrix": R.tolist(),
         "resources": model.resources(),
         "routing": model.routing_stats(tasks, k=3),
     }
+
+
+def _forgetting(cell: dict) -> float:
+    """Recomputed from the stored matrix, so cells written before this metric
+    existed still contribute."""
+    if "forgetting" in cell:
+        return float(cell["forgetting"])
+    matrix = cell["acc_matrix"]
+    T = len(matrix) - 1
+    if T <= 0:
+        return 0.0
+    forget = [
+        max(0.0, max(matrix[t][i] for t in range(i, T + 1)) - matrix[T][i])
+        for i in range(T)
+    ]
+    return float(sum(forget) / len(forget))
 
 
 def aggregate(cells: list[dict], ranks, prototypes, topks) -> dict:
@@ -241,6 +262,12 @@ def aggregate(cells: list[dict], ranks, prototypes, topks) -> dict:
                 "L2b": l2b,
                 "L3": l3,
                 "L4": l4,
+                "forgetting": {
+                    level: st(
+                        [_forgetting(r) for r in pick(construct, level=level, **point)]
+                    )
+                    for level in ("L2b_shared_seq", "L3_per_task", "L4_oracle")
+                },
                 "resources": (first(construct, level="L3_per_task", **point) or {}).get(
                     "resources"
                 ),
@@ -253,17 +280,38 @@ def aggregate(cells: list[dict], ranks, prototypes, topks) -> dict:
                 row["routing_tax"] = l4["mean"] - l3["mean"]
             if row.get("isolation_available", 0) > 1e-9:
                 row["R_iso"] = row["isolation_realised"] / row["isolation_available"]
+            # A baseline-free companion to R_iso. `L2b` moves with the rank too
+            # (a larger shared adapter is not automatically a better one), so a
+            # second ratio against the budget-free NCM anchor separates "the
+            # expert bank improved" from "the shared baseline degraded".
+            l0 = acc(construct, level="L0_ncm")
+            if l3 and l4 and l0 and (l4["mean"] - l0["mean"]) > 1e-9:
+                row["R_iso_vs_ncm"] = (l3["mean"] - l0["mean"]) / (
+                    l4["mean"] - l0["mean"]
+                )
             parameter.append(row)
         entry["axes"]["parameter"] = parameter
 
         memory = []
+        # L4 is oracle-routed, so it does not depend on the router's prototype
+        # budget: the tax at a memory point is measured against the same oracle.
+        l4_at_operating = acc(
+            construct, level="L4_oracle", rank=OPERATING_RANK, protos=1, top_k=1
+        )
         for protos in prototypes:
             point = dict(rank=OPERATING_RANK, protos=protos, top_k=1)
             rows = pick(construct, level="L3_per_task", **point)
+            l3 = st([r["accuracy"] for r in rows]) if rows else None
             memory.append(
                 {
                     "protos": protos,
-                    "L3": st([r["accuracy"] for r in rows]) if rows else None,
+                    "L3": l3,
+                    "forgetting": st([_forgetting(r) for r in rows]),
+                    "routing_tax": (
+                        l4_at_operating["mean"] - l3["mean"]
+                        if l3 and l4_at_operating
+                        else None
+                    ),
                     "resources": rows[0]["resources"] if rows else None,
                     "recall_at_3": st(
                         [r["routing"].get("task_recall_at_3") for r in rows]
@@ -276,10 +324,17 @@ def aggregate(cells: list[dict], ranks, prototypes, topks) -> dict:
         for top_k in topks:
             point = dict(rank=OPERATING_RANK, protos=1, top_k=top_k)
             rows = pick(construct, level="L3_per_task", **point)
+            l3 = st([r["accuracy"] for r in rows]) if rows else None
             active.append(
                 {
                     "top_k": top_k,
-                    "L3": st([r["accuracy"] for r in rows]) if rows else None,
+                    "L3": l3,
+                    "forgetting": st([_forgetting(r) for r in rows]),
+                    "routing_tax": (
+                        l4_at_operating["mean"] - l3["mean"]
+                        if l3 and l4_at_operating
+                        else None
+                    ),
                     "resources": rows[0]["resources"] if rows else None,
                 }
             )
@@ -449,7 +504,7 @@ def _contract(cell: dict) -> dict:
         metrics={
             "learning": {
                 "accuracy": cell["accuracy"],
-                "forgetting": 0.0,
+                "forgetting": _forgetting(cell),
                 "acc_matrix": cell["acc_matrix"],
             },
             "cost": {
@@ -465,6 +520,7 @@ def _contract(cell: dict) -> dict:
             "top_k_experts": cell["top_k"],
             "resources": resources,
             "retention": cell["retention"],
+            "forgetting": _forgetting(cell),
             "routing": cell["routing"],
         },
     )
@@ -496,10 +552,12 @@ def _print(agg: dict) -> None:
         print("\n  parameter axis (adapter rank -> expert capacity)")
         print(
             f"  {'rank':>5} {'L2b':>7} {'L3':>7} {'L4':>7} {'tax':>7} "
-            f"{'real':>7} {'avail':>7} {'R_iso':>7} {'active':>10} {'mem KiB':>9}"
+            f"{'real':>7} {'avail':>7} {'R_iso':>7} {'R_ncm':>7} {'F_L3':>7} "
+            f"{'active':>10} {'mem KiB':>9}"
         )
         for row in entry["axes"]["parameter"]:
             res = row["resources"] or {}
+            f_l3 = (row.get("forgetting") or {}).get("L3_per_task")
             print(
                 f"  {row['rank']:>5} {pct(row['L2b'])} {pct(row['L3'])} "
                 f"{pct(row['L4'])} "
@@ -507,28 +565,39 @@ def _print(agg: dict) -> None:
                 f"{pct({'mean': row['isolation_realised']} if row.get('isolation_realised') is not None else None)} "
                 f"{pct({'mean': row['isolation_available']} if row.get('isolation_available') is not None else None)} "
                 f"{ratio(row.get('R_iso'))} "
+                f"{ratio(row.get('R_iso_vs_ncm'))} "
+                f"{pct(f_l3)} "
                 f"{res.get('active_params', 0):>10,} "
                 f"{res.get('memory_bytes', 0) / 1024:>9.1f}"
             )
 
         print("\n  memory axis (prototypes per class -> routing resolution)")
         print(
-            f"  {'protos':>7} {'L3':>7} {'recall@3':>9} {'mem KiB':>9} {'protos stored':>14}"
+            f"  {'protos':>7} {'L3':>7} {'tax':>7} {'recall@3':>9} {'F_L3':>7} "
+            f"{'mem KiB':>9} {'protos stored':>14}"
         )
         for row in entry["axes"]["memory"]:
             res = row["resources"] or {}
             print(
-                f"  {row['protos']:>7} {pct(row['L3'])} {ratio((row['recall_at_3'] or {}).get('mean'))} "
+                f"  {row['protos']:>7} {pct(row['L3'])} "
+                f"{pct({'mean': row['routing_tax']} if row.get('routing_tax') is not None else None)} "
+                f"{ratio((row['recall_at_3'] or {}).get('mean'))} "
+                f"{pct(row.get('forgetting'))} "
                 f"{res.get('memory_bytes', 0) / 1024:>9.1f} "
                 f"{res.get('num_prototypes', 0):>14,}"
             )
 
         print("\n  active axis (experts per sample -> inference compute)")
-        print(f"  {'top_k':>7} {'L3':>7} {'active params':>14} {'active experts':>15}")
+        print(
+            f"  {'top_k':>7} {'L3':>7} {'tax':>7} {'F_L3':>7} "
+            f"{'active params':>14} {'active experts':>15}"
+        )
         for row in entry["axes"]["active"]:
             res = row["resources"] or {}
             print(
                 f"  {row['top_k']:>7} {pct(row['L3'])} "
+                f"{pct({'mean': row['routing_tax']} if row.get('routing_tax') is not None else None)} "
+                f"{pct(row.get('forgetting'))} "
                 f"{res.get('active_params', 0):>14,} "
                 f"{res.get('active_experts', 0):>15}"
             )

@@ -400,6 +400,14 @@ def build_stages(args) -> list[Stage]:
             needs=["s6b"],
             minutes=150,
         ),
+        Stage(
+            "s8r",
+            "S8 report: capability curves, mechanism metrics, resource axes, S6b guard",
+            [[PY, "-u", "experiments/s8_report.py"]],
+            done_when=[ROOT / "results" / "s8" / "s8_budget_report.json"],
+            needs=["s8"],
+            minutes=1,
+        ),
     ]
 
 

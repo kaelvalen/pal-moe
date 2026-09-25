@@ -523,7 +523,181 @@ over a factor of two in the quantity the budget is supposed to buy.
 
 ---
 
-## 11. Consolidated findings
+## 11. S8 - what a budget buys, and in which regime
+
+S6b showed the routing tax is a property of the task geometry rather than of the
+visit order, spanning 13.98 (`coherent`) to 26.63 (`dispersed`) over two designed
+partitions of the same data. A single accuracy-per-byte curve would average over
+a factor of two in the quantity a budget is supposed to buy, so S8 sweeps the
+budget in both regimes. Three resource axes, one variable at a time, each mapped
+to the mechanism it is supposed to buy:
+
+```text
+parameter   adapter rank            -> expert capacity
+memory      prototypes per class    -> routing resolution
+active      experts per sample      -> inference compute
+```
+
+`L4_oracle` is an oracle upper bound, not a budget method, and it is measured at
+every rank so that "does more capacity close the routing gap" is asked at a
+fixed budget. The primary mechanism metrics are kept apart on purpose:
+
+```text
+R_iso     = (L3 - L2b) / (L4 - L2b)   relative realization of modularity
+R_iso_ncm = (L3 - L0)  / (L4 - L0)    absolute incremental value
+```
+
+### 11.1 The parameter axis: the tax does not close
+
+| rank | L2b | L3 | L4 | tax | realised | available | R_iso | R_iso_ncm | active params | stored |
+| --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| **coherent** | | | | | | | | | | |
+| 2 | 65.37 | 72.16 | 84.93 | 12.77 | 6.79 | 19.56 | 0.347 | 0.125 | 79,972 | 0.82 MiB |
+| 8 | 60.50 | 73.34 | 87.32 | 13.98 | 12.84 | 26.82 | 0.479 | 0.177 | 89,188 | 1.53 MiB |
+| 32 | 64.10 | 73.96 | 88.27 | 14.31 | 9.86 | 24.17 | 0.408 | 0.202 | 126,052 | 4.34 MiB |
+| 128 | 65.13 | 73.99 | 88.32 | 14.33 | 8.86 | 23.19 | 0.382 | 0.203 | 273,508 | 15.59 MiB |
+| **dispersed** | | | | | | | | | | |
+| 2 | 59.43 | 70.33 | 95.56 | 25.23 | 10.90 | 36.13 | 0.302 | -0.000 | 79,972 | 0.82 MiB |
+| 8 | 55.46 | 70.68 | 97.31 | 26.63 | 15.22 | 41.85 | 0.364 | 0.013 | 89,188 | 1.53 MiB |
+| 32 | 59.34 | 70.71 | 97.57 | 26.86 | 11.37 | 38.23 | 0.297 | 0.014 | 126,052 | 4.34 MiB |
+| 128 | 60.74 | 70.77 | 97.63 | 26.86 | 10.03 | 36.89 | 0.272 | 0.016 | 273,508 | 15.59 MiB |
+
+**E1 - a 3.4x span in active parameters and a 19x span in stored bytes does not
+close the routing gap, in either regime.** The tax is 12.77 -> 14.33 in
+`coherent` and 25.23 -> 26.86 in `dispersed`: flat, and if anything slightly
+*widening*. `L3` gains +1.83 / +0.44 points across the whole sweep while `L4`
+gains +3.39 / +2.07. Capacity is not the binding constraint, and this now holds
+in the regime where routing is *easy* as well as the one where it is hard - which
+is the strongest form of the S5b/S6b thesis.
+
+**E2 - in the hard-routing regime the whole expert bank is worth nothing over a
+training-free nearest-class-mean.** `R_iso_ncm` is -0.000, 0.013, 0.014, 0.016
+across the sweep: `L3` (70.33 - 70.77) sits on top of `L0` (70.34) while `L4`
+reaches 97.63. This is outcome C of the S8 pre-registration: `L4 - L3` is large
+and *grows* while the realised fraction stays at the floor. Capacity is
+available; the router cannot realise it.
+
+**E3 - `R_iso` and `R_iso_ncm` disagree, and the disagreement is the result.**
+In `coherent`, `R_iso` is non-monotone (0.347 -> 0.479 -> 0.408 -> 0.382) while
+`R_iso_ncm` is monotone and saturating (0.125 -> 0.177 -> 0.202 -> 0.203). The
+`R_iso` spike at rank 8 comes from its denominator: `L2b` dips to 59.43 for seed
+42 at that rank (3-seed mean 60.50) while `L3` moves only +1.18 from rank 2 to 8.
+A rise in `R_iso` can be produced by the shared baseline degrading, so the
+baseline-free ratio is the honest one; both are reported because they answer
+different questions.
+
+**E4 - `L2b` is not monotone in rank at all** (65.37, 60.50, 64.10, 65.13 in
+`coherent`). A larger shared sequential adapter is not automatically a better
+one, which is exactly why `R_iso`'s denominator cannot be treated as fixed.
+
+### 11.2 The memory axis: the only axis that buys anything
+
+| prototypes | L3 coherent | tax | L3 dispersed | tax | recall@3 (coh / disp) | stored |
+| --: | --: | --: | --: | --: | --: | --: |
+| 1 | 73.34 | 13.98 | 70.68 | 26.63 | 0.949 / 0.891 | 1.53 MiB |
+| 4 | 75.50 | 11.82 | 72.46 | 24.85 | 0.956 / 0.902 | 2.41 MiB |
+| 16 | 76.03 | 11.29 | 73.37 | 23.94 | 0.957 / 0.912 | 5.94 MiB |
+
+**E5 - routing resolution is a real lever, in both regimes.** 16 prototypes per
+class (4x the memory) buys +2.69 in `coherent` and +2.69 in `dispersed` - more
+than the entire 64x rank sweep - and it is the only axis that moves the tax
+(13.98 -> 11.29 and 26.63 -> 23.94). `recall@3` rises with it in both regimes
+(0.949 -> 0.957, 0.891 -> 0.912), so the mechanism is the intended one: the
+router resolves the task structure better rather than the experts getting
+stronger.
+
+**E6 - but it is a partial lever, not the bottleneck's removal.** 16x the router
+memory leaves a 23.94-point tax in `dispersed` and an 11.29-point tax in
+`coherent`. The router is not merely under-resolved; there is a residual
+structural gap that no amount of stored prototypes in this parameterisation
+closes.
+
+### 11.3 The active axis: a pure cost
+
+| experts/sample | L3 coherent | tax | L3 dispersed | tax | active params |
+| --: | --: | --: | --: | --: | --: |
+| 1 | 73.34 | 13.98 | 70.68 | 26.63 | 89,188 |
+| 2 | 70.92 | 16.40 | 68.20 | 29.11 | 101,476 |
+| 4 | 70.14 | 17.18 | 67.13 | 29.80 | 126,052 |
+
+**E7 - mixing experts per sample costs 3.2 / 3.6 points and makes the tax
+*worse*.** This was pre-registered from E0 and it holds: more active compute is
+not a budget worth spending. Note that `k = 1` reproduces the S2-S6 router
+exactly, so the sweep's first point is the baseline rather than a new method.
+
+### 11.4 The baseline question: the closed-form readout dominates
+
+| method | accuracy | stored | parameter-equivalents | optimizer steps |
+| :-- | --: | --: | --: | --: |
+| `L1_ridge` | 76.77 | 2.84 MiB | 745,162 | **0** |
+| `L3` best, `coherent` (16 protos) | 76.03 | 5.94 MiB | 322,660 | 3,320 |
+| `L3` best, `dispersed` (16 protos) | 73.37 | 5.94 MiB | 322,660 | 3,300 |
+
+**E8 - at comparable memory the closed-form readout wins in both regimes.**
+`L1_ridge` stores 2.84 MiB - its sufficient statistics, `A` alone is
+`769 x 769` - and reaches 76.77 with zero gradient steps. `L3` needs 4x that
+memory to come within 0.74 points in `coherent` and never gets within 3.4 points
+in `dispersed`. Spending the same budget on expert modularity is not a good trade
+in this regime, and the honest budget question is the comparison, not the raw
+accuracy.
+
+### 11.5 Forgetting is a floor effect here, and that is a finding about the setup
+
+**E9 - forgetting measures exactly 0.00 in all 56 cells, including `L2b` and
+`L3`.** It is not structural for those levels - the adapter moves and the router
+grows - so the value was checked unclamped: the worst old-task change
+`R[T,i] - max_{t>=i} R[t,i]` is exactly 0.00 for all five levels in both
+regimes. **No old task ever declined.** The prototype anchor (`lambda_func=1.0`,
+`_l_func`) holds the representation in place strongly enough that forgetting
+cannot discriminate in this configuration, so S8's conclusions rest on accuracy,
+isolation and the tax, not on forgetting. This is a property of the ladder as
+configured, not a general claim.
+
+**E10 - the sequential constraint's damage appears as lost plasticity, not as
+forgetting.** The newest-task accuracy at the end of the run orders the levels
+`L2b` 96.33, `L4` 96.80, `L3` 82.27, `L1` 86.00, `L0` 81.00 in `coherent`
+(`L2b` 96.40, `L3` 76.53, `L4` 98.27 in `dispersed`), while the final average
+orders them `L4` > `L1` > `L3` > `L0` > `L2b`. `L2b` fits each new task *best*
+and ends *worst*: with the anchor preventing decline, the cost of the sequential
+constraint is that each task is underfit at the moment it is learned and then
+frozen there. Newest-task accuracy alone is therefore a misleading metric - it
+rewards plasticity and hides exactly what the ladder is measuring.
+
+### 11.6 The reading, per regime
+
+```text
+coherent   routing cheap      L3 - L0 = +1.82 ... +3.65   R_iso_ncm 0.125 -> 0.203
+           capacity saturates, the tax stays ~13-14, the memory axis is the
+           only lever (+2.69), active compute hurts.
+
+dispersed  routing expensive  L3 - L0 = -0.01 ... +0.43   R_iso_ncm ~0.000 -> 0.016
+           the expert bank is worth nothing over a training-free NCM while the
+           oracle reaches 97.63; the memory axis recovers +2.69 and lowers the
+           tax from 26.63 to 23.94, and nothing else moves.
+```
+
+**E11 - a consistency guard.** The operating point (rank 8, one prototype,
+`top_k = 1`, three seeds) reproduces S6b exactly: 30 matched cells,
+`max |delta| = 0.0000`. The two resource knobs are numerically no-ops at their
+default, so S8's measurement additions did not change the experiment.
+
+### 11.7 What S8 does not say
+
+- It does not say the routing tax is unbreakable. It says *capacity* does not
+  break it and *router resolution* only partly does. A different routing
+  mechanism (attention over prototypes, a learned gate, joint router training)
+  is untested here.
+- It does not say the expert bank is worthless in general: in `coherent` it
+  delivers +3.65 over the budget-free readout, which is real but smaller than the
+  closed-form baseline's own +6.43 over that readout.
+- The memory axis was swept as prototypes per class; other memory uses (stored
+  statistics, expert state, replay) are not measured.
+- The one-seed sweep points cannot support a claim about differences below ~1
+  point; they support the curve shapes, which is what they are used for.
+
+---
+
+## 12. Consolidated findings
 
 **F1. The readout was the first bottleneck, and a training-free prototype
 readout solves it.** NCM on frozen features beats v1 and iCaRL on CIFAR-100
@@ -564,9 +738,39 @@ stream's distribution and hurts outside it.
 is saturated** (94.8-95.1 for every cell with ViT/CIFAR-10). The low-data axis
 is what discriminates.
 
+**F10. The routing tax is a property of the task geometry, not of the visit
+order.** Random permutations leave it unchanged (S6: 25.19-25.92, order std
+0.43-1.55, correlations ~0); a designed partition moves it by nearly 2x (S6b:
++13.98 `coherent` against +26.63 `dispersed`). Within-task similarity drives the
+oracle, cross-task similarity drives the tax.
+
+**F11. Capacity does not close the routing gap; router resolution only partly
+does.** A 3.4x span in active parameters and a 19x span in stored bytes leaves
+the tax flat in both regimes (S8: 12.77 -> 14.33 and 25.23 -> 26.86). 16
+prototypes per class - the only axis that buys accuracy in both regimes (+2.69)
+- lowers it to 11.29 and 23.94 but does not remove it. More experts per sample
+*raises* it.
+
+**F12. In the hard-routing regime the whole expert bank is worth nothing over a
+training-free nearest-class-mean.** `R_iso_ncm` is ~0.000-0.016 across the S8
+sweep: `L3` 70.33-70.77 against `L0` 70.34, while the oracle reaches 97.63.
+Available isolation is large; realised isolation is at the floor.
+
+**F13. The closed-form readout dominates the expert bank in the
+memory-accuracy plane, in both regimes.** `L1_ridge` stores 2.84 MiB and reaches
+76.77 with zero gradient steps; `L3` needs 4x that memory to come within 0.74
+(`coherent`) or 3.4 (`dispersed`) points.
+
+**F14. Forgetting is a floor effect in this ladder.** Measured exactly 0.00 in
+all 56 S8 cells, including `L2b`/`L3`, and unclamped the worst old-task change is
+also exactly 0.00: no old task ever declined, because the prototype anchor holds
+the representation in place. The sequential constraint's damage appears as lost
+*plasticity* instead - `L2b` fits each newest task best (96.33) and ends worst
+(60.50).
+
 ---
 
-## 12. Pre-registered hypotheses and their verdicts
+## 13. Pre-registered hypotheses and their verdicts
 
 | hypothesis | statement | verdict |
 | :-- | :-- | :-- |
@@ -584,10 +788,15 @@ is what discriminates.
 | G4 (S4) | transfer correlates with `L3 - ridge` | not testable: the full-split probe is saturated |
 | G5 (S4) | the few-shot penalty is systematically worse for the per-task bank | **confirmed** cross-dataset, **reverses in-domain** |
 | G6 (S4) | memory/params/latency scale with T | recorded per cell; the dedicated sweep is S4b |
+| E1 (S8) | extra capacity is realizable in `coherent`, `R_iso` rises | **partly confirmed**: the baseline-free `R_iso_ncm` rises 0.125 -> 0.203, but the tax stays flat and `L3` gains only +1.83 |
+| E2 (S8) | in `dispersed` more experts create isolation the router cannot cash | **confirmed**, at the floor: `R_iso_ncm` ~0.000-0.016 while `L4 - L3` grows |
+| E3 (S8) | if `L3 -> L4` does not close, the bottleneck is realization, not capacity | **confirmed in both regimes** (tax 12.77 -> 14.33 and 25.23 -> 26.86) |
+| E4 (S8) | the memory axis raises `recall@3` before accuracy | **confirmed**: `recall@3` rises 0.949 -> 0.957 and 0.891 -> 0.912, accuracy +2.69 in both |
+| E5 (S8) | the active axis is a cost without a matching gain | **confirmed**: -3.2 / -3.6 points at `top_k = 4`, and the tax worsens |
 
 ---
 
-## 13. Measurement bugs this programme found
+## 14. Measurement bugs this programme found
 
 Five, each of which would have produced a confident wrong number:
 
@@ -626,7 +835,7 @@ requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 14. What this evidence does NOT say
+## 15. What this evidence does NOT say
 
 - It does **not** say "mixture of experts is unnecessary". It says that under
   this benchmark, protocol, budget and backbone, the incremental expert
@@ -635,9 +844,11 @@ requires calling the existing entry point instead of re-deriving a loop.
   (task-free/online), or a plastic encoder could change that, and those are the
   unmeasured axes.
 - The `L1_ridge` comparison is on accuracy, not on bytes at equal budget: ridge
-  keeps `(d+1)^2 + (d+1)C` sufficient statistics (about 2.7 MB at d=768,
+  keeps `(d+1)^2 + (d+1)C` sufficient statistics (about 2.9 MB at d=768,
   C=100) against NCM's 307 KB and the expert bank's 347 KB. The Pareto claim
-  must be made on `stored_bytes`, which the contract records for every cell.
+  must be made on `stored_bytes`, which the contract records for every cell -
+  and S8 (section 11.4) does it: at comparable memory ridge still wins in both
+  regimes.
 - S7's transfer numbers are one seed over three backbones; S4's are three seeds
   over four datasets but only one backbone. The backbone and dataset axes were
   deliberately not crossed (that is S3 x S4, not measured).
@@ -648,7 +859,7 @@ requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 15. Open items and the stage order
+## 16. Open items and the stage order
 
 | stage | content | blocker |
 | :-- | :-- | :-- |
@@ -658,17 +869,20 @@ requires calling the existing entry point instead of re-deriving a loop.
 | S5b | Domain-IL rotated MNIST, unseen domain | **done** (section 8) |
 | S6 | order sensitivity (class and task order) | **done** (section 9) |
 | S6b | designed difficulty: coherent vs dispersed partitions | **done** (section 10) |
-| S6 | task order, class order, unseen task, expert transfer | splitters have no order parameters |
-| S8 | memory / data-regime / compute budgets | no `--data_fraction`, no generic budget flag |
+| S8 | resource budget: parameter / memory / active, both regimes | **done** (section 11) |
 | S9-S11 | robustness, scalability, statistics | unstarted |
 
-The recommended next step is **S5**: it needs no new extraction, runs on the
-existing caches, and closes the protocol-labelling gap (rule 4) that every
-number above depends on being explicit about.
+The recommended next step is **S9/S11**, in that order of cheapness: S8 leaves two
+specific gaps that a next stage should close rather than a new architecture.
+First, the residual tax (11.29 `coherent`, 23.94 `dispersed`) is now known *not*
+to be a capacity or resolution problem, so the untested lever is the routing
+*mechanism* itself - and S8's memory axis is the only measured one that moves it.
+Second, S8's budget points are one seed each; the two regimes' curves are clear
+enough to size a confirmatory run, which is what S11 is for.
 
 ---
 
-## 16. Artefacts
+## 17. Artefacts
 
 | path | contents |
 | :-- | :-- |
@@ -677,6 +891,9 @@ number above depends on being explicit about.
 | `results/s3/` | six backbones, 3 seeds, per-condition studies, deltas, transfer, ViT consistency gate |
 | `results/s7/` | per-checkpoint transfer curves, few-shot suite, evaluator validation |
 | `results/s4/` | four datasets x six levels x three seeds, transfer per cell, S0 contracts |
+| `results/s6/` | order sensitivity: 9 order configurations, unseen-task routing |
+| `results/s6b/` | designed difficulty: `coherent` vs `dispersed`, three seeds |
+| `results/s8/` | 56-cell budget study (rank x prototypes x top-k, both regimes) + report |
 | `results/logs/` | per-stage logs from `experiments/run_all.py` |
 | feature caches | gitignored (`*.pt`); `experiments/s3_run.py` and `s4_datasets.py` rebuild them |
 
