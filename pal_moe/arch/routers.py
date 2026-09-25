@@ -23,6 +23,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from pal_moe.legacy.models.router import AttentionRouter, DistanceRouter, DynamicRouter
+
 from .registry import register_router
 
 __all__ = ["PrototypeRouter", "LegacyRouter"]

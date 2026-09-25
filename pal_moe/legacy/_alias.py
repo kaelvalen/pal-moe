@@ -23,6 +23,8 @@ def alias_module(old: str, new: str):
 def alias_package(old: str, new: str):
     package = importlib.import_module(new)
     for info in pkgutil.iter_modules(package.__path__):
-        sys.modules[f"{old}.{info.name}"] = importlib.import_module(f"{new}.{info.name}")
+        sys.modules[f"{old}.{info.name}"] = importlib.import_module(
+            f"{new}.{info.name}"
+        )
     sys.modules[old] = package
     return package

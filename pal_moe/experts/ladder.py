@@ -22,7 +22,6 @@ from pal_moe.arch import (
 )
 from pal_moe.core.features import iter_batches, set_seed
 
-
 # Readouts with no trainable parameters are fitted in closed form / by
 # registration; the rest are trained by the same outer loop as the expert.
 CLOSED_FORM_READOUTS = ("ncm", "ridge")

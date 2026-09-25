@@ -8,7 +8,6 @@ from `experiments/s11_confirmatory.py`.
 from .diagnostics import print_router_diagnostics, router_diagnostics
 from .geometry import geometry_report, nearest_other_margin, silhouette_score
 from .metrics import BenchmarkResult, ContinualEvaluator
-
 from .stats import holm, paired_stats, signed_rank_statistic, tost, westfall_young
 
 __all__ = [

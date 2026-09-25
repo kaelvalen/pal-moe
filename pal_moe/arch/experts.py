@@ -22,6 +22,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from pal_moe.legacy.models.expert import MLPExpert
+
 from .registry import (
     register_classification_expert,
     register_expert,

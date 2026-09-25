@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 
 from pal_moe.data.feature_cache import CachedFeatureEncoder
+
 from .memory.prototype_memory import PrototypeMemory
 from .models.encoder import SharedEncoder
 from .models.expert import MLPExpert
