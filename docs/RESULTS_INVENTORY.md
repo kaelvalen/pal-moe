@@ -42,33 +42,6 @@ Feature caches (`results/s3/cache_*`, `results/s4/cache_*`, `results/feature_cac
 are gitignored (`*.pt`); `experiments/s3_run.py` and `experiments/s4_datasets.py`
 rebuild them from scratch.
 
-## Follow-up chain (2026-09-25, Stage 1 -> owner-side)
-
-The Stage-1 diagnosis and the separately pre-registered follow-ups. Each study has
-its own pre-registration and results document; none is retro-fitted.
-Status legend adds: CHAIN (evidence for the follow-up chain documents).
-
-| Directory / file | Contents | Status | Referenced by |
-| :-- | :-- | :-- | :-- |
-| `rr/rr_ranking_study.json` | router ranking, 12 cells; the R2 gate refuted | CHAIN | ROUTER_RANKING_RESULTS.md |
-| `rrf/rr_factorial_study.json` | representation x routing, 48 cells | CHAIN | REPRESENTATION_ROUTING_RESULTS.md |
-| `dr/decision_routing_study.json` | decision routing, 36 cells | CHAIN | DECISION_ROUTING_RESULTS.md |
-| `agg/aggregation_study.json` | aggregation, 24 cells | CHAIN | AGGREGATION_RESULTS.md |
-| `ef/expert_formulation_study.json` | expert formulation E1, 24 cells | CHAIN | EXPERT_FORMULATION_RESULTS.md |
-| - | E2 evidence, non-executed at 20 experts; postmortem only | CHAIN | E2_EVIDENCE_RESULTS.md |
-| `coupling/coupling_study.json` | C1 vs C0, 12 cells | CHAIN | COUPLING_RESULTS.md |
-| `interference/interference_study.json` | expert-count ladder, 30 cells (+ `*.void.json`, the vetoed first ladder) | CHAIN | INTERFERENCE_RESULTS.md |
-| `intervention/intervention_study.json` | owner-only cut, 18 cells | CHAIN | INTERVENTION_RESULTS.md |
-| `owner_side/owner_side_study.json` | two-component decomposition, 18 cells | CHAIN | OWNER_SIDE_RESULTS.md |
-| `refit/refit_study.json` | readout refit / replay, 18 cells x 3 readout treatments | CHAIN | REFIT_RESULTS.md |
-
-Chain state: non-owner path intervention produces the dominant causal component of
-routing damage; owner-side updating produces the dominant causal component of
-accuracy damage. Most of the owner-side accuracy loss is recoverable by post-hoc
-readout refitting with replayed old-task evidence, consistent with a decode/readout
-mismatch, while a small residual accuracy gap remains unexplained
-(`OWNER_SIDE_RESULTS.md`, section 6; `REFIT_RESULTS.md`, section 6).
-
 ## Protocol / correction evidence
 
 | Directory | Contents | Status | Referenced by |
