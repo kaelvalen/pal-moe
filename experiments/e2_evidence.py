@@ -88,9 +88,16 @@ class E2Model:
             self.seen = sorted(set(self.seen) | set(task["classes"]))
             trainable = list(self.P.parameters()) + list(self.readout.parameters())
             for w in self.W:
-                trainable += list(w.parameters())
+                trainable += [p for p in w.parameters() if p.requires_grad]
             for param in self.experts[-1].parameters():
                 param.requires_grad_(True)
+            # C0: only the current evidence projection is trained; the older ones
+            # are frozen exactly like the older adapters. C1 (the pinned E2
+            # contract) leaves them trainable.
+            freeze_old = getattr(self.args, "w_alignment", "all") == "current"
+            for w in self.W[:-1]:
+                for param in w.parameters():
+                    param.requires_grad_(not freeze_old)
             trainable += list(self.experts[-1].parameters())
             optimizer = torch.optim.Adam(trainable, lr=self.args.lr)
             handle = s11.s2_ladder.trainable_hook(self.readout, task["classes"])
@@ -119,8 +126,18 @@ class E2Model:
                             if self.W[j].weight.grad is not None
                             and float(self.W[j].weight.grad.abs().sum()) > 0
                         ]
+                        old_frozen = all(
+                            not p.requires_grad
+                            for j in range(t)
+                            for p in self.W[j].parameters()
+                        )
+                        current_grad = (
+                            self.W[t].weight.grad is not None
+                            and float(self.W[t].weight.grad.abs().sum()) > 0
+                        )
                         self.guard.setdefault(f"task{t}", {})
                         self.guard[f"task{t}"] = {
+                            "arm": getattr(self.args, "w_alignment", "all"),
                             "old_W_with_gradient": len(old),
                             "old_W_total": t,
                             "previous_experts_in_optimizer": sum(
@@ -132,6 +149,8 @@ class E2Model:
                                     for q in e.parameters()
                                 )
                             ),
+                            "current_W_grad_nonzero": current_grad,
+                            "old_W_frozen": old_frozen,
                             "previous_experts_frozen": all(
                                 not p.requires_grad
                                 for e in self.experts[:-1]
@@ -164,7 +183,7 @@ class E2Model:
 
     @torch.no_grad()
     def evaluate(self, tasks):
-        correct = total = cov_hits = 0
+        correct = total = cov_hits = cov_n_total = oracle_correct = 0
         per_task_coverage = []
         for task in tasks:
             feats, labels = task["splits"]["test"]
@@ -185,11 +204,28 @@ class E2Model:
             total += int(labels.numel())
             top3 = s.topk(min(3, s.size(1)), dim=1).indices
             covered = (top3 == int(task["task_id"])).any(dim=1)
+            cov_n_total += int(covered.sum())
             cov_hits += int(hit[covered].sum())
             per_task_coverage.append(float(covered.float().mean()))
+            # oracle path: the owner expert's evidence, same readout
+            owner = int(task["task_id"])
+            h_owner = normalize(self.W[owner](self.experts[owner].transform(feats)))
+            logits_o = s11.s2_ladder.mask_unseen(
+                self.readout.predict(h_owner), self.seen
+            )
+            oracle_correct += int((logits_o.argmax(dim=1) == labels).sum())
         return {
             "accuracy": correct / max(total, 1),
             "coverage_at_3": float(np.mean(per_task_coverage)),
+            "oracle_accuracy": oracle_correct / max(total, 1),
+            "conditional_oracle_at_3": (
+                (cov_hits / max(cov_n_total, 1)) if cov_n_total else None
+            ),
+            "ceiling_at_3": (
+                float(np.mean(per_task_coverage)) * cov_hits / max(cov_n_total, 1)
+                if cov_n_total
+                else None
+            ),
         }
 
     def _gather(self, feats, pick):
@@ -251,6 +287,12 @@ def main():
     parser.add_argument("--max_experts", type=int, default=20)
     parser.add_argument(
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    parser.add_argument(
+        "--w_alignment",
+        choices=["current", "all"],
+        default="all",
+        help="coupling arm: current = freeze old W (C0); all = pinned E2 (C1)",
     )
     parser.add_argument("--out", default="results/e2")
     args = parser.parse_args()

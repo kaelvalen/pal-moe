@@ -58,11 +58,14 @@ single-expert against 13.04 % at 20 experts means there is no usable confirmator
 operating point; running 24 cells would only repeat a collapsed measurement across
 seeds.
 
-**(b) Practical: the pre-registered protocol is infeasible.** One 20-expert cell
-cost 3095 s, so the 24-cell grid is approximately **20.6 hours** under the pinned
-contract (every optimizer step, full batch over all 100 prototypes times all seen
-experts, with backward through every expert). This is a **protocol feasibility
-failure, not a scientific falsification**, and the two are kept apart here.
+**(b) Practical: withdrawn.** One 20-expert cell was first measured at 3095 s, but
+that figure came from the pre-vectorisation implementation (a per-prototype Python
+loop in the evidence loss). With the batched loss the same cell takes **18.4 s**
+(`COUPLING_RESULTS.md`), so the feasibility objection is **withdrawn**: the
+24-cell grid would be minutes, not 20.6 hours. E2's non-execution therefore stands
+on the scientific ground alone - no usable confirmatory operating point at 20
+experts - and not on cost. This paragraph is a correction to what this document
+first reported, kept visible rather than deleted.
 
 Neither reason changes the pre-registration. What failed is the execution of the
 registered plan, and the plan is not rewritten afterwards.
