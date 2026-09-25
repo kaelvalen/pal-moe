@@ -102,6 +102,7 @@ CELL_TARGETS = {
     "s9": (ROOT / "results" / "s9" / "s9_robustness_study.json", 170),
     "s10": (ROOT / "results" / "s10" / "s10_scaling_study.json", 160),
     "s11": (ROOT / "results" / "s11" / "s11_confirmatory_study.json", 228),
+    "agg": (ROOT / "results" / "agg" / "aggregation_study.json", 24),
 }
 
 
@@ -505,6 +506,26 @@ def build_stages(args) -> list[Stage]:
             done_when=[],  # handled by the cell count below
             needs=["s10"],
             minutes=60,
+        ),
+        Stage(
+            "agg",
+            "decision rule: winner-take-all vs uniform top-3 aggregation",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/aggregation.py",
+                    "--seeds",
+                    "42,1,2,3,4,5",
+                    "--device",
+                    args.device,
+                    "--out",
+                    "results/agg",
+                ]
+            ],
+            done_when=[],  # handled by the cell count below
+            needs=["s11"],
+            minutes=25,
         ),
     ]
 
