@@ -1,6 +1,8 @@
 # Router Ranking Study - pre-registration
 
-Status: **pre-registered, not started.** This is a new programme, not a Stage 1
+Status: **pre-registered, run, and refuted in the opposite direction.** The
+outcome is reported separately in `ROUTER_RANKING_RESULTS.md`; this document is
+kept as the pre-registration it was. This is a new programme, not a Stage 1
 stage. Stage 1 is frozen at `STAGE1_RESULTS.md`; nothing here is evidence for
 its conclusions, and nothing here may be reported as if it were.
 
@@ -60,6 +62,31 @@ Expert capacity does not move. This is the confound S10 could not remove (bank
 size and candidate count are collinear when one expert owns one task) and the
 one thing this study must not reintroduce.
 
+**Expert training and router training are separate, and the bank is provably
+untouched.** The ladder trains its expert and readout with the *task index* as
+the routing target (`fit_task` passes `ids = task_index`, never the router's
+output), so the bank's training trajectory does not depend on the router at all.
+R2's gate is therefore fitted *post hoc* on the cached features, after the bank
+is trained, and the bank is literally the same object in both arms. The gate also
+receives no gradient from the experts: its loss is a function of `gate(z)` alone.
+The checklist this buys:
+
+```text
+backbone           identical (the cache)
+partition          identical (S6b's construction)
+trained expert bank identical (same object; a parameter hash is recorded per cell)
+prototype memory    identical
+rank                identical
+budget              identical (declared above)
+seed                identical
+--------------------------------------------------------------
+router state/objective   R0: registered class means
+                         R2: the learned gate
+```
+
+If R2's training changed any expert parameter, `Delta C@3` would not be a ranking
+effect and the comparison would be void.
+
 ## 4. The router ladder (minimal, and one arm is already measured)
 
 ```text
@@ -78,13 +105,32 @@ S8/S11:  more router memory      -> coverage improves
 this:    a different ranking     -> coverage improves beyond that
 ```
 
-**R2 is not a new architecture.** It is the v1 `DynamicRouter` gate
-(`pal_moe/models/router.py`), a single `nn.Linear(dim, num_experts)` trained on
-the current task's features with the task id as the target, with
-`lock_historical_routing` implementing the ladder's freeze policy for old expert
-rows. It enters through the S1 router registry, so the ladder code path is
-unchanged. Training it uses the task id as a *training* label (the expert the
-sample belongs to), never at inference - the oracle protocol remains excluded.
+**R2 is not a new architecture, and its objective is pinned exactly.** It is the
+v1 `DynamicRouter` gate (`pal_moe/models/router.py`), a single
+`nn.Linear(dim, num_experts)`, and it is not a generic "compatibility" scorer: it
+is a **`z -> T` supervised task-compatibility scorer trained against the observed
+task identity**.
+
+```text
+training     input z (the task's features), target = the observed task identity
+             cross-entropy over the experts seen so far
+             `lock_historical_routing(t)` freezes the first t expert rows
+inference    input z only. No task id. Output: T routing logits -> top-m
+```
+
+So the claim a positive result would test is specific: **observed task identity
+during training can produce a better routing ranking for task inference.** R2
+does not get its power from a better similarity function; it gets it from using
+task supervision as the routing objective. It enters through the S1 router
+registry, so the ladder code path is unchanged, and the oracle protocol remains
+excluded because no task id is available at inference.
+
+**The gate's budget is declared, not tuned.** Ten epochs at batch size 128 and
+`lr = 1e-3` - the same budget the expert and the readout receive - so no budget
+asymmetry can explain an R0/R2 difference. Because "the learned gate loses" could
+still be a tuning artefact, the study *also* reports an exploratory sensitivity
+arm at 50 epochs and 200 epochs with a higher learning rate. That arm is
+secondary and cannot rescue the primary endpoint.
 
 **Resource position at `T = 20`, `dim = 768`:**
 
@@ -109,6 +155,18 @@ Coverage is the router's own quantity, so this is the direct test of the bet. A
 new router that raises accuracy without raising coverage has improved something
 else and does not count.
 
+**Coverage's ground truth is pinned:** `C@m = P(e* in Top_m(R(z)))` where `e*` is
+the **expert bank's known owner expert** - the task assignment - and *not* `L4`'s
+prediction.
+
+```text
+routing ground truth        = the owner expert / task assignment
+classification ground truth = the class label
+```
+
+Keeping those apart is what makes `Delta C@3` a measure of ranking quality rather
+than a second accuracy number.
+
 **Secondary:**
 
 ```text
@@ -116,15 +174,21 @@ Delta tax       = (L4 - L3)_R2 - (L4 - L3)_R0
 Delta R_iso_ncm = (L3 - L0)/(L4 - L0) | R2  -  the same | R0
 ```
 
-**The guard that makes the primary endpoint interpretable:**
+**The guard that makes the primary endpoint interpretable**, stated as the
+identity it is:
 
 ```text
-ceiling@3 must not move.
+Ceiling@m = Coverage@m x Acc_conditional_oracle,m
 ```
 
-`ceiling@3 = coverage@3 x conditional_oracle@3` depends on the expert bank and on
-the oracle route, both of which are fixed. If `ceiling@3` moves, the manipulation
-leaked into the bank and the comparison is void.
+With the bank and the candidate-conditioned selector fixed, the guard is
+`Delta L4 = 0` **exactly**: the oracle's overall accuracy is router-independent,
+so any movement means the manipulation leaked into the bank. `conditional_oracle@m`
+is reported rather than asserted equal, because it is conditioned on the covered
+set and the covered set changes when coverage changes. The study checks the
+invariance empirically by evaluating the oracle route before and after the router
+swap (it must be bit-identical) and records a parameter hash of the bank and
+readout in both arms.
 
 **The candidate-set decomposition is carried over from S10**, with `m = 3`
 primary and the same table shape:
@@ -151,7 +215,19 @@ are secondary and reported as such.
 
 A "meaningful share" of the headroom is deliberately *not* given a number in
 advance, because the headroom at `m = 3` is 16-17 points and any threshold would
-be arbitrary. The study reports the fraction closed and the reader judges it.
+be arbitrary. The study reports the descriptive quantity
+
+```text
+headroom fraction recovered = (C_R2 - C_R0) / (Ceiling_R0 - C_R0)
+```
+
+and the reader judges it. It is **not** a success threshold.
+
+**The budget comparison is a confound control, not a claim.** R2 is the cheapest
+router in the ladder (61.5 KB against R0's 307 KB and R1's 4.9 MB), but the
+study's claim is a *ranking* advantage, not a resource advantage. The bytes are
+reported so that a win cannot be attributed to a budget difference; they are not
+part of the success criterion.
 
 ## 7. What each outcome means
 
