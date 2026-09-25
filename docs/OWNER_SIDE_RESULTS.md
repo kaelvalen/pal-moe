@@ -101,7 +101,45 @@ significant contrast of section 2 into a mechanism.
   it remains a reference, still below E0 on coverage (0.9319 / 0.8548 against
   0.9494 / 0.8915, coupling study).
 
-## 6. Records
+## 6. The chain's epistemic state
+
+```text
+COUPLING
+    |
+    +-- which intervention paths carry the C1 -> C0 difference
+            |
+            v
+INTERFERENCE
+    |
+    +-- drift / per-task accuracy contrasts (descriptive)
+            |
+            v
+INTERVENTION
+    |
+    +-- the non-owner path -> a causal contribution to
+        routing and accuracy damage
+            |
+            v
+OWNER-SIDE
+    |
+    +-- the owner-side update -> an independent causal
+        component of the accuracy collapse
+```
+
+The last box is a causal component claim, not a mechanism claim. The defensible
+sentence is:
+
+> Owner-side updating causally contributes to the accuracy collapse, while the
+> passive drift measurements provide descriptive evidence consistent with a
+> drift-related mechanism.
+
+C0's high accuracy is not "the system is fully repaired": C0 remains below E0 on
+coverage (0.9319 / 0.8548 against 0.9494 / 0.8915, coupling study). What this study
+establishes is narrower and stronger: the owner-side intervention carries a large
+causal component on the accuracy endpoint, while the routing endpoint carries the
+effects of both pathways.
+
+## 7. Records
 
 ```text
 91a7362   the pre-registration
