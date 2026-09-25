@@ -117,4 +117,10 @@ or whether supervision should be defined on comparisons (this pair vs that pair)
 rather than on individual scores.
 
 `docs/REPRESENTATION_ROUTING_PREREG.md` names the fourth row as "the formulation
-is the limit". That is where the evidence now points.
+is the limit". That is where the evidence now points, and the chain is frozen in
+`DIAGNOSIS_SYNTHESIS.md` so the next pre-registration cannot be shaped by what
+the evidence turned out to say. The next pre-registration is
+`DECISION_ROUTING_PREREG.md`: it tests the *pointwise* half of the winner-take-all
+formulation - comparative supervision, with the decision rule held fixed - because
+the winner-take-all half changes how experts combine and is therefore a separate
+hypothesis.

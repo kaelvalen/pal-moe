@@ -36,6 +36,13 @@ systematically* is a successful Stage 1.
 
 Stage 1 is **frozen**. The next programme is the Router Ranking Study, pre-registered in `ROUTER_RANKING_PREREG.md` and reported in `ROUTER_RANKING_RESULTS.md`: a new hypothesis aimed at the failure mode Stage 1 measured, not evidence for Stage 1. It has run and the hypothesis was refuted in the opposite direction (R2 is significantly worse than prototype ranking). The next pre-registration was `REPRESENTATION_ROUTING_PREREG.md` (a 2x2 factorial separating the routing objective from representation plasticity) and it has run: neither factor succeeds alone, the interaction is real but insufficient, and the dissociation it found locates the constraint in cross-expert separability (`REPRESENTATION_ROUTING_RESULTS.md`).
 
+The diagnosis of the whole chain (Stage 1 -> Router Ranking -> Representation x
+Routing) is frozen in `DIAGNOSIS_SYNTHESIS.md`. The next pre-registration is
+`DECISION_ROUTING_PREREG.md`, which moves the variable to the **decision
+structure**: comparative supervision of the routing scores, with the decision
+rule held fixed, to test whether the pointwise winner-take-all formulation is
+the constraint rather than the quality of the individual scores.
+
 Two rules apply to every stage, and they are the reason the ladder is
 trustworthy:
 
