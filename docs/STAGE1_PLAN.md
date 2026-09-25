@@ -34,6 +34,8 @@ systematically* is a successful Stage 1.
 | S10 | scalability: task count, two datasets, candidate-set control | **done** (`experiments/s10_scaling.py`, `STAGE1_RESULTS.md` section 13) |
 | S11 | confirmatory protocol: six hypotheses, paired over six seeds | **done** (`experiments/s11_confirmatory.py`, `STAGE1_RESULTS.md` section 14) |
 
+Stage 1 is **frozen**. The next programme is the Router Ranking Study, pre-registered separately in `ROUTER_RANKING_PREREG.md`: a new hypothesis aimed at the failure mode Stage 1 measured, not evidence for Stage 1.
+
 Two rules apply to every stage, and they are the reason the ladder is
 trustworthy:
 

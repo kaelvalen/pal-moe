@@ -330,6 +330,72 @@ def westfall_young(tests: dict[str, list[float]], n_seeds: int) -> dict:
     return out
 
 
+def tost(values: list[float], sesoi: float) -> dict:
+    """Two one-sided tests for equivalence against `+-sesoi`.
+
+    Equivalence is a different question from difference: a directional test can
+    only fail to reject, which is not evidence of equivalence. TOST rejects both
+    one-sided nulls (`mean <= -sesoi` and `mean >= +sesoi`), which is the same
+    as a 90% interval inside the window. It is parametric (t-based) while the
+    directional tests above are exact, and the report says so.
+    """
+    clean = [v for v in values if v is not None]
+    n = len(clean)
+    if n < 2:
+        return {"n": n, "note": "TOST needs at least two seeds"}
+    mean = statistics.mean(clean)
+    sd = statistics.stdev(clean)
+    se = sd / math.sqrt(n)
+    t_crit = {
+        1: 6.314,
+        2: 2.920,
+        3: 2.353,
+        4: 2.132,
+        5: 2.015,
+        6: 1.943,
+        7: 1.895,
+        8: 1.860,
+        9: 1.833,
+        10: 1.812,
+    }.get(n - 1, 1.645)
+
+    # one-sided p-values from the t distribution, via the regularized incomplete
+    # beta through a small numeric integration (no scipy dependency).
+    def t_sf(t, df):
+        # P(T > t) for Student-t, computed by numerical integration of the pdf.
+        def pdf(x):
+            return (
+                math.gamma((df + 1) / 2)
+                / (math.sqrt(df * math.pi) * math.gamma(df / 2))
+                * (1 + x * x / df) ** (-(df + 1) / 2)
+            )
+
+        if t <= 0:
+            return 1.0
+        steps = 20000
+        upper = max(t + 50.0, 60.0)
+        width = (upper - t) / steps
+        total = 0.0
+        for i in range(steps):
+            x = t + (i + 0.5) * width
+            total += pdf(x) * width
+        return min(1.0, total)
+
+    t_lower = (mean + sesoi) / se if se > 0 else math.inf
+    t_upper = (sesoi - mean) / se if se > 0 else math.inf
+    p_lower = t_sf(t_lower, n - 1)
+    p_upper = t_sf(t_upper, n - 1)
+    return {
+        "n": n,
+        "mean": mean,
+        "sesoi": sesoi,
+        "ci90": [mean - t_crit * se, mean + t_crit * se],
+        "p_lower": p_lower,
+        "p_upper": p_upper,
+        "equivalent": bool(p_lower < 0.05 and p_upper < 0.05),
+    }
+
+
 def holm(pvalues: dict[str, float], alpha: float = 0.05) -> dict:
     """Holm-Bonferroni over the primary family, monotone-adjusted."""
     items = sorted(pvalues.items(), key=lambda kv: kv[1])
@@ -540,11 +606,13 @@ def build_hypotheses(cells: list[dict], seeds: list[int]) -> dict:
             high4 = _acc(index, construct, "L4_oracle", seed, rank=RANKS[-1])
             if None not in (low3, low4, high3, high4):
                 values.append((high4 - high3) - (low4 - low3))
-        out["secondary"][f"H4_equivalence_{construct}"] = paired_stats(
+        stats = paired_stats(
             values,
-            f"H4 equivalence: |tax change| within {SESOI_TAX_POINTS} points ({construct})",
+            f"H4: rank-induced tax change within the {SESOI_TAX_POINTS}-point SESOI ({construct})",
             sesoi=SESOI_TAX_POINTS / 100.0,
         )
+        stats["tost"] = tost(values, SESOI_TAX_POINTS / 100.0)
+        out["secondary"][f"H4_equivalence_{construct}"] = stats
 
     # The scale chain (S10, on more seeds at its endpoints)
     for level in ("L2b_shared_seq", "L3_per_task", "L4_oracle"):
@@ -735,10 +803,20 @@ def _print(report: dict) -> None:
         )
         if "within_sesoi" in stats:
             line += (
-                f"  |mean|+CI <= {stats['sesoi'] * 100:.1f} points: "
+                f"  |mean|+95%CI <= {stats['sesoi'] * 100:.1f} points: "
                 f"{stats['within_sesoi']}"
             )
         print(line)
+        tost_row = stats.get("tost")
+        if tost_row and "ci90" in tost_row:
+            print(
+                f"    TOST: 90% CI "
+                f"[{tost_row['ci90'][0] * 100:+.2f}, {tost_row['ci90'][1] * 100:+.2f}] "
+                f"inside +-{tost_row['sesoi'] * 100:.1f}  "
+                f"p_lower={tost_row['p_lower']:.4f} p_upper={tost_row['p_upper']:.4f}  "
+                f"equivalent={tost_row['equivalent']} (parametric; the directional "
+                f"tests above are exact)"
+            )
 
 
 def _print_order(payload: dict) -> None:

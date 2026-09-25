@@ -1055,7 +1055,12 @@ failure is arithmetic, not evidence.
 
 **A pre-registered smallest effect of interest** for the capacity claim: 2.0
 points of tax. H4 is an equivalence question ("capacity does not move the tax"),
-and an equivalence question needs a threshold before the data.
+and an equivalence question needs a threshold before the data - and a *different*
+test: a directional test can only fail to reject, which is not evidence of
+equivalence. H4 is therefore assessed by TOST (two one-sided t-tests), with the
+90% interval reported, while H1/H2/H3/H5/H6 are assessed by the exact
+directional tests. The TOST is parametric and the directional tests are exact;
+the report says which is which.
 
 **Reuse instead of re-running.** The order-variance arm is S6's nine order
 configurations at the same operating point, and the scale arm's endpoints are
@@ -1079,11 +1084,18 @@ max-statistic-adjusted p:
 | H6 `R_iso - R_iso_ncm` (`coherent`) | +0.326 +0.293 +0.286 +0.304 +0.327 +0.313 | **+0.308** | 0.017 | **0.0312** |
 | H6 `R_iso - R_iso_ncm` (`dispersed`) | +0.349 +0.338 +0.366 +0.363 +0.373 +0.338 | **+0.354** | 0.015 | **0.0312** |
 
-**All nine primary tests reject at 0.0312, which is the smallest p-value six
-seeds can produce.** That is the honest ceiling of this design: the evidence is
-as strong as the sample allows, and the effect sizes are large relative to their
-spread - the tax is 14.00 +- 0.05 and 26.64 +- 0.02 across seeds, so it is a
-deterministic property of the regime rather than a seed-dependent quantity.
+**All nine directional tests reject at 0.0312.** That value is the *design-imposed
+floor*, not a coincidence: with six seeds there are only `2^6 = 64` sign
+assignments, so the smallest achievable exact two-sided p-value is
+`2/64 = 0.03125`. The evidence is as strong as this design can produce, and the
+effect sizes are large relative to their spread: the tax is 14.00 +- 0.05 and
+26.64 +- 0.02 across seeds, so it is **highly stable across seeds within a fixed
+task-geometry regime** - not a seed-dependent quantity, and not a claim that the
+tax is regime-independent (S6b and S9 show the geometry moves it by 13-27
+points).
+
+**H4 is not in that count.** It is an equivalence hypothesis, assessed
+separately by TOST (section 14.3), not a directional null to reject.
 
 **H6 in its own units.** `R_iso - R_iso_ncm` is +0.31 (`coherent`) and +0.35
 (`dispersed`): the two ratios differ substantially and systematically, so any
@@ -1103,12 +1115,15 @@ realization precisely where the S8/S10 conclusion says nothing is realized.
 | residual tax at 16 prototypes (`coherent`) | +11.16 +11.20 +11.29 +11.28 +11.33 +11.19 | **+11.24** | 0.07 | not eliminated |
 | residual tax at 16 prototypes (`dispersed`) | +23.92 +23.91 +23.94 +23.95 +23.97 +23.90 | **+23.93** | 0.03 | not eliminated |
 
-**H4 confirmed as an equivalence, not as a null.** The rank axis leaves the tax
-inside the pre-registered 2.0-point window in both regimes - and the point
-estimate is *positive* (+1.63 / +1.62), so a 64x increase in adapter rank does
-not reduce the tax at all. The contrast with the memory axis (+2.76 / +2.71 the
-other way) is what makes this a measurement rather than an absence: on the same
-seeds, resolution moves the tax and capacity does not.
+**H4: across six seeds, the rank 2 -> 128 tax change remained within the
+pre-registered +-2-point SESOI, and TOST supports equivalence.** The 90%
+intervals are `[+1.55, +1.71]` (`coherent`) and `[+1.51, +1.74]` (`dispersed`),
+both inside the window, with both one-sided p-values below 0.001 - so the
+equivalence claim is tested rather than inferred from a failure to reject. The
+point estimate is *positive* (+1.63 / +1.62): a 64x increase in adapter rank
+does not reduce the tax at all. The contrast with the memory axis (+2.76 / +2.71
+the other way) is what makes this a measurement rather than an absence: on the
+same seeds, resolution moves the tax and capacity does not.
 
 **H5 confirmed in both directions.** Resolution reduces the tax by ~2.7 points
 and leaves 11.24 / 23.93 behind. "Helps but does not eliminate" is the literal
@@ -1159,7 +1174,7 @@ version of S6's original statement.
 | H1 `L1` competitive/superior to the learned variants, no gradient optimization | **confirmed** | +3.48 / +6.11 over `L3`, all six seeds, WY p = 0.0312 |
 | H2 `L4 - L3` is a systematic tax | **confirmed** | 14.00 +- 0.05 / 26.64 +- 0.02 |
 | H3 the tax grows with cross-task overlap | **confirmed** | +12.64 +- 0.03, paired by seed |
-| H4 capacity does not reduce the tax | **confirmed by equivalence** | +1.63 / +1.62, inside the 2.0-point window |
+| H4 capacity does not reduce the tax | **confirmed by TOST equivalence** | 90% CI [+1.55,+1.71] / [+1.51,+1.74] inside +-2.0 |
 | H5 resolution helps but does not eliminate | **confirmed** | -2.76 / -2.71, residual 11.24 / 23.93 |
 | H6 available and realised isolation are distinct | **confirmed** | `R_iso - R_iso_ncm` = +0.31 / +0.35 |
 
@@ -1298,16 +1313,18 @@ and 0.014 -> 0.007 on Tiny-ImageNet). At `T = 25` a 20-expert bank is worth
 +0.11 points over a training-free nearest-class-mean.
 
 **F21. All six pre-registered hypotheses survive a confirmatory test at six
-seeds.** Nine primary tests, every one rejecting at the Westfall-Young-adjusted
-p = 0.0312 - the smallest value six seeds can produce. The tax is 14.00 +- 0.05
-(`coherent`) and 26.64 +- 0.02 (`dispersed`) across seeds: a deterministic
-property of the regime, not a seed-dependent quantity.
+seeds.** Five are directional and their nine tests all reject at the
+Westfall-Young-adjusted p = 0.0312, which is the design-imposed floor at six
+seeds (`2/64`). The tax is 14.00 +- 0.05 (`coherent`) and 26.64 +- 0.02
+(`dispersed`): highly stable across seeds within a fixed task-geometry regime.
+The sixth (H4) is an equivalence claim, tested by TOST.
 
 **F22. Capacity and resolution are separated by measurement, not by argument.**
 On the same seeds, a 64x increase in adapter rank moves the tax by +1.63 / +1.62
-points (inside a pre-registered 2.0-point equivalence window, and *upward*),
-while 16 prototypes per class move it by -2.76 / -2.71. Resolution helps and
-leaves 11.24 / 23.93 points behind.
+points - *upward*, and equivalent to zero within a pre-registered 2.0-point
+window by TOST (90% CI [+1.55,+1.71] / [+1.51,+1.74]) - while 16 prototypes per
+class move it by -2.76 / -2.71. Resolution helps and leaves 11.24 / 23.93 points
+behind.
 
 **F23. `R_iso` and `R_iso_ncm` differ by +0.31 / +0.35, and the difference is
 the whole ratio in the hard-routing regime.** Any statement about "realized
@@ -1351,7 +1368,7 @@ realization exactly where nothing is realized.
 | H1 (S11) | `L1` competitive/superior to the learned variants, no gradient optimization | **confirmed**: +3.48 / +6.11 over `L3`, six seeds, WY p = 0.0312 |
 | H2 (S11) | `L4 - L3` is a systematic tax | **confirmed**: 14.00 +- 0.05 / 26.64 +- 0.02 |
 | H3 (S11) | the tax grows with cross-task overlap | **confirmed**: +12.64 +- 0.03, paired by seed |
-| H4 (S11) | capacity does not reduce the tax | **confirmed by equivalence**: +1.63 / +1.62 inside the pre-registered 2.0-point window |
+| H4 (S11) | capacity does not reduce the tax | **confirmed by TOST equivalence**: 90% CI [+1.55,+1.71] / [+1.51,+1.74] inside the pre-registered 2.0-point window |
 | H5 (S11) | resolution helps but does not eliminate | **confirmed**: -2.76 / -2.71, residual 11.24 / 23.93 |
 | H6 (S11) | available and realised isolation are distinct | **confirmed**: `R_iso - R_iso_ncm` = +0.31 / +0.35 |
 
@@ -1470,11 +1487,12 @@ experiment said.
   microsecond-scale measurements on a shared GPU and are indicative only, and
   its sweep points are two seeds.
 - S11's six seeds are the *floor* of what can reject, not a large sample: every
-  primary p-value is 0.0312 because that is the minimum achievable, so the stage
-  shows the effects are consistent and large, not that they are precisely
+  directional p-value is 0.0312 because that is the minimum achievable, so the
+  stage shows the effects are consistent and large, not that they are precisely
   estimated. Its 2.0-point equivalence window is an analyst choice (a 1.0-point
-  window would have failed H4's check at +1.63 / +1.62, though the direction -
-  capacity does not *reduce* the tax - is unaffected), and H4 remains
+  window would have failed TOST at +1.63 / +1.62, though the direction - capacity
+  does not *reduce* the tax - is unaffected), H4's equivalence conclusion rests
+  on a parametric TOST while its directional neighbours are exact, and H4 remains
   non-causal for the reason S10 gives.
 - Every result is on frozen features. The plastic-encoder branch - the one
   thing that could plausibly change F3 - is untouched.
@@ -1537,7 +1555,12 @@ at fixed `m` (S10), the two realization ratios kept apart (S8), and the tax
 measured at a fixed budget rather than across budgets.
 
 A new router is a new hypothesis, so it belongs to a new pre-registration, not
-to Stage 1.
+to Stage 1. That pre-registration now exists: `docs/ROUTER_RANKING_PREREG.md`
+(the Router Ranking Study), with the primary endpoint `Delta C@3` - coverage,
+not accuracy - and the control matrix that holds the expert bank, rank,
+prototypes and seeds fixed while only the ranking mechanism changes. Its R1 arm
+is S8/S11's memory axis, already measured, so the new hypothesis is specifically
+"a different ranking improves coverage *beyond* more router memory".
 
 ---
 
