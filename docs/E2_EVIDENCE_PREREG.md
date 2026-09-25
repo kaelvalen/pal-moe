@@ -178,6 +178,12 @@ prototype z_p                   test input z
                                   -> shared readout g
 ```
 
+**`L_evidence` is never computed through `g`.** The evidence space's
+comparability is determined by `W_j` and the shared query `P` alone; `g` appears
+only in `L_task`. Otherwise "common evidence space" and "common classifier" would
+be conflated, and a gain could come from the classifier rather than from the
+comparability of the evidence.
+
 Both paths score **expert-generated evidence**, so the router reads what the
 experts produced in training and at test time alike. The test path then applies
 `g` to the *selected* expert's evidence for classification; the training path
@@ -224,8 +230,11 @@ reported, and the row is named.
 
 ```text
 evidence paths       the two paths of section 2.4c stay separate: the training
-                     path never applies g to the evidence, the test path never
-                     uses prototypes, and neither path caches evidence
+                     path never uses g at all, the test path never uses
+                     prototypes, and neither path caches evidence
+no g in L_evidence   the term is a function of W_j and P only; g enters L_task
+                     alone, so evidence comparability and the classifier cannot
+                     be conflated
 execution guards     the runtime checks of section 2.4b: old W_e trainable with
                      non-empty gradients, previous adapters absent from the
                      optimizer, L_evidence averaged and not summed
