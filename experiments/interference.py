@@ -4,11 +4,12 @@ Interference mechanism: new prototypes against old projections.
     docs/INTERFERENCE_PREREG.md
 
 Passive instrumentation on the pinned C1 (all-W) trajectory: no manipulation of
-the training, only probes taken with torch.autograd.grad - which never touches
-.grad or the optimizer state - plus W snapshots and an expert-count ladder.
+the training, only a loss-based probe that runs in torch.no_grad() on a deepcopy
+(no autograd, no .grad, no optimizer access - Amendment 1), plus W snapshots and
+an expert-count ladder.
 
 Measurements per task q and old projection W_j (j < q): ||delta_W_j||, and the
-owner/non-owner split of grad_{W_j} L_q by prototype ownership.
+owner/non-owner loss split of L_q by prototype ownership.
 
 Usage: python experiments/interference.py --device cuda
 """
@@ -34,37 +35,32 @@ REGIMES = ["coherent", "dispersed"]
 
 
 def probe(model, task_index):
-    """Owner vs non-owner gradient mass on each old W_j, at one task boundary."""
+    """Loss-based owner/non-owner asymmetry (Amendment 1).
+
+    No autograd, no retain_graph, no .grad access: the whole probe runs in
+    `torch.no_grad()` on a deepcopy, so it cannot touch the training trajectory.
+    """
     if task_index == 0 or not model.prototypes:
         return {}
     terms = []
-    for z_p, owner in model.prototypes:
-        q = model.P(z_p)
-        scores = []
-        for j in range(len(model.experts)):
-            h = e2.normalize(
-                model.W[j](model.experts[j].transform(z_p.unsqueeze(0))[0])
+    with torch.no_grad():
+        for z_p, owner in model.prototypes:
+            q = e2.normalize(model.P(z_p))
+            scores = []
+            for j in range(len(model.experts)):
+                h = e2.normalize(
+                    model.W[j](model.experts[j].transform(z_p.unsqueeze(0))[0])
+                )
+                scores.append(torch.dot(q, h))
+            loss_p = F.cross_entropy(
+                torch.stack(scores).unsqueeze(0),
+                torch.tensor([owner], device=model.device),
             )
-            scores.append(torch.dot(e2.normalize(q), h))
-        terms.append(
-            (
-                owner,
-                F.cross_entropy(
-                    torch.stack(scores).unsqueeze(0),
-                    torch.tensor([owner], device=model.device),
-                ),
-            )
-        )
+            terms.append((owner, float(loss_p)))
     out = {}
     for j in range(task_index):
-        owner_mass = nonowner_mass = 0.0
-        for owner, loss_p in terms:
-            grad = torch.autograd.grad(loss_p, model.W[j].weight, retain_graph=True)[0]
-            norm = float(grad.norm())
-            if owner == j:
-                owner_mass += norm
-            else:
-                nonowner_mass += norm
+        owner_mass = sum(loss for own, loss in terms if own == j)
+        nonowner_mass = sum(loss for own, loss in terms if own != j)
         out[f"W{j}"] = {
             "owner": owner_mass,
             "nonowner": nonowner_mass,
@@ -73,7 +69,22 @@ def probe(model, task_index):
     return out
 
 
-def run(regime, T, seed, args, device):
+def run(
+    regime,
+    T,
+    seed,
+    args,
+    device,
+    probe_enabled=True,
+    norm_enabled=True,
+    hooks_enabled=True,
+):
+    """Run one cell of the ladder.
+
+    The three `*_enabled` flags exist only for the implementation-invariance
+    bisect (probe body / ||delta_W_j|| / the hook mechanism itself). The study's
+    ladder always runs with all three at their defaults.
+    """
     _, source = s11.s2_ladder.load_tasks(e2.SOURCE_CACHE)
     tasks = s11.s6b_difficulty.build_construction(source, regime)[:T]
     cell_args = argparse.Namespace(
@@ -86,58 +97,34 @@ def run(regime, T, seed, args, device):
         seed=seed,
     )
     s11.s2_ladder.set_seed(seed)
-    model = e2.E2Model(768, 100, cell_args, device)
-
+    # Exactly one construction. A second one consumes the global RNG and starts
+    # the pinned trajectory from different weights - that was the anchor bug.
     model = e2.E2Model(768, 100, cell_args, device)
     probes, rewrite = {}, {}
 
     def on_task_start(m, t):
         return {
-            "probes": probe(copy.deepcopy(m), t) if t > 0 else None,
+            "probes": probe(copy.deepcopy(m), t) if (t > 0 and probe_enabled) else None,
             "snaps": {j: m.W[j].weight.detach().clone() for j in range(t + 1)},
         }
 
     def on_task_end(m, t, st):
         if st["probes"]:
             probes[f"q{t}"] = st["probes"]
-        for j in range(t + 1):
-            rewrite.setdefault(f"after_t{t}", {})[f"W{j}"] = float(
-                (m.W[j].weight.detach() - st["snaps"][j]).norm()
-            )
+        if norm_enabled:
+            for j in range(t + 1):
+                rewrite.setdefault(f"after_t{t}", {})[f"W{j}"] = float(
+                    (m.W[j].weight.detach() - st["snaps"][j]).norm()
+                )
 
-    model.train(
-        tasks, seed, hooks={"on_task_start": on_task_start, "on_task_end": on_task_end}
+    hooks = (
+        {"on_task_start": on_task_start, "on_task_end": on_task_end}
+        if hooks_enabled
+        else None
     )
+    model.train(tasks, seed, hooks=hooks)
     metrics = model.evaluate(tasks)
     return {**metrics, "probes": probes, "rewrite": rewrite, "T": T}
-
-
-def _train_one(model, task, t, seed):
-    """One task of the pinned C1 training, identical to E2Model.train's body."""
-    args = model.args
-    trainable = list(model.P.parameters()) + list(model.readout.parameters())
-    for w in model.W:
-        trainable += [p for p in w.parameters() if p.requires_grad]
-    for param in model.experts[-1].parameters():
-        param.requires_grad_(True)
-    trainable += list(model.experts[-1].parameters())
-    optimizer = torch.optim.Adam(trainable, lr=args.lr)
-    handle = s11.s2_ladder.trainable_hook(model.readout, task["classes"])
-    feats, labels = task["splits"]["train"]
-    feats, labels = feats.to(model.device), labels.to(model.device)
-    generator = torch.Generator().manual_seed(seed + t)
-    for _ in range(args.epochs):
-        for z, y in s11.s2_ladder.iter_batches(
-            feats, labels, args.batch_size, generator
-        ):
-            z, y = z.to(model.device), y.to(model.device)
-            h = e2.normalize(model.W[t](model.experts[t].transform(z)))
-            logits = s11.s2_ladder.mask_unseen(model.readout.predict(h), model.seen)
-            loss = F.cross_entropy(logits, y) + model._evidence_loss()
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-    handle.remove()
 
 
 def main():
