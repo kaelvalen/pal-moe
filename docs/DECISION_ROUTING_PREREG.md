@@ -34,25 +34,79 @@ Supervision changes; everything else does not.
 ```text
 baseline   each expert's score is supervised pointwise: a prototype is registered
            for the sample's own class and compared against the sample
-comparative  supervision is defined on *pairs*: for a given input z, the model is
-             trained on comparisons  s(e_i, e_j | z)  or  P(e_i > e_j | z)
-             between experts (or between the sample and another expert's
-             evidence), so that the required separation between experts is an
-             explicit training target rather than a side effect
+comparative  supervision is defined on *pairs of experts*: for a given input z,
+             the model is trained on comparisons between the owner expert and
+             every other seen expert, so that the required separation between
+             experts is an explicit training target rather than a side effect
 ```
 
-The pinned form, so it cannot be chosen after seeing a result:
+The pinned form, so it cannot be chosen after seeing a result.
+
+**Pairs.** For every training example `z`, with `e* = owner(z)` and `T_t` experts
+seen so far, the pairs are exactly
 
 ```text
-targets     pairs are formed between (a) the sample's owner expert and (b) each
-            other seen expert; the comparative objective is a margin/ranking loss
-            over those pairs
-inference   unchanged: task id unavailable, one score per expert, argmax
-training    no rehearsal, no stored features beyond what the ladder already keeps
-loss        L_total = L_task + lambda * L_comparative, lambda = 1.0
-bank        untouched: the comparative term trains the routing mechanism only,
-            never the experts or the readout
+(e*, j)   for every   j in {1..T_t} \ {e*}
 ```
+
+That is `T_t - 1` comparisons per example. **No hard-negative mining, no top-k
+negatives, no random negative sampling, and no "nearest opponent" selection** -
+each of those would leave sampling variance or a selection rule available to
+explain a result after the fact. The only evidence in the comparison is the
+sample and the measured evidence of both experts.
+
+**Loss.** On the existing scalar scores `s_e(z)`:
+
+```text
+L_comp(z) = 1/(T_t - 1) * sum_{j != e*} max(0, gamma - [ s_{e*}(z) - s_j(z) ])
+L         = L_task + lambda * L_comp          lambda = 1
+gamma                                          = 0.2, fixed
+```
+
+`gamma = 0.2` is pinned because the prototype/cosine scores live on a bounded
+scale near `[-1, 1]`, where a large margin stops being a constraint; the value is
+fixed before the run and is not a free parameter.
+
+**The mean over negatives is load-bearing.** `1/(T_t - 1)` is not decoration:
+without it the comparative term's effective weight grows as tasks accumulate -
+more negatives are summed per example - which would inject an implicit
+curriculum on top of the loss shape and make any late-task difference
+uninterpretable. Fixed here, the comparative term has the same weight at task 1
+and at task 20.
+
+**Protocol, and what the comparison holds fixed.** The evidence the loss is
+computed on is the **stored class prototypes of the seen experts** - the same
+evidence the prototype router uses and the same evidence the Representation x
+Routing factorial's pointwise reference was trained on - not raw samples. A
+sample-trained gate without row locking collapses in a first attempt (C@3 0.175
+against the prototype router's 0.949): training on task `t`'s samples pushes the
+older experts' rows down, and their own tasks' samples never check them again, so
+both arms are degenerate and their difference is a difference between two broken
+scorers. Pinning the evidence removes that failure mode from both arms equally.
+
+Both arms train the *same* scorer architecture (a `z -> T` linear gate on the
+L2-normalised feature) with the same optimizer, epochs, learning rate and seed,
+on the same evidence, with the same inference (no task id, one score per expert, `argmax`). The rows are **not
+locked**: R2's failure in the Router Ranking Study was one-vs-previous training
+followed by a global argmax, and at every step the loss here is computed over
+*all* experts seen so far, so no row is ever trained against a subset. The only
+difference between the arms is the loss:
+
+```text
+pointwise     cross-entropy over the seen experts, target = the owner expert
+comparative   the hinge above, over owner-vs-all pairs, where a training example
+              is a stored prototype and e* is its owner expert
+```
+
+The expert bank, the partition, rank, prototype count, budget and seeds are
+fixed, and the bank is not trained by either loss.
+
+**A consequence of the pair rule, pinned before the run.** For the *first*
+expert there are no negatives yet, so the comparative loss is empty and that row
+receives no positive signal from its own task; the pointwise arm has no such
+gap. The primary endpoint is therefore reported over all tasks, and a
+pre-declared secondary recomputes `Delta C@3` over tasks `1..T-1`, where every
+task has negatives. Both numbers are reported, and the aggregate is primary.
 
 If a comparative objective improves coverage while the pointwise one does not,
 the formulation was the limit. If it does not, the constraint is not the
@@ -109,6 +163,8 @@ one variable       no arm may differ from the baseline except in the supervision
 | result | reading |
 | :-- | :-- |
 | comparative supervision improves `C@3` and lowers the tax | the pointwise formulation was the constraint; routing is a comparison problem |
+| `C@3` improves against the pointwise arm but not against the prototype router | the loss shape helps, but neither learned scorer beats the local rule |
+| the two arms differ on tasks `1..T-1` but not in the aggregate | the comparative signal works where it exists; the first task's structural gap masks it |
 | `C@3` improves with no tax change | coverage improved where the loss is not; the tax is not driven by the candidates missed pointwise |
 | no `C@3` change | the supervision's shape is not the constraint; the next hypothesis is the winner-take-all decision itself |
 | `C@3` falls | comparative supervision is harder to fit at this scale; the pointwise form was not the limit but the easier problem |
