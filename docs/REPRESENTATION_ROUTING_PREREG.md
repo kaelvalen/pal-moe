@@ -1,6 +1,8 @@
 # Representation x Routing Objective - pre-registration
 
-Status: **proposed, awaiting approval, not started.** Third programme document in
+Status: **approved, run, reported in `REPRESENTATION_ROUTING_RESULTS.md`.** Outcome:
+neither factor succeeds alone and the interaction is real but insufficient - the
+fourth row of section 7. This document is kept as the pre-registration it was. Third programme document in
 the sequence:
 
 ```text
@@ -35,18 +37,38 @@ does. This factorial is built to tell those apart.
 | representation | routing objective | what it isolates |
 | :-- | :-- | :-- |
 | frozen (raw `z`) | off: prototype ranking (R0) | baseline - Stage 1's ladder |
-| frozen (raw `z`) | on: globally consistent supervised task-routing | **routing-only** effect |
-| trainable (expert-adapted) | off: prototype ranking in the adapted space | **representation-only** effect |
-| trainable (expert-adapted) | on: both | **interaction** |
+| frozen (raw `z`) | on: globally consistent supervised task-routing | **routing-objective** effect |
+| trainable (candidate-specific adapted) | off: prototype ranking in the adapted space | **expert-adapted representation** effect |
+| trainable (candidate-specific adapted) | on: both | **interaction** |
 
 The three effects, all paired by seed:
 
 ```text
-routing alone        C(frozen, on)      - C(frozen, off)
-representation alone C(trainable, off)  - C(frozen, off)
-interaction          [C(trainable, on) - C(trainable, off)]
-                   - [C(frozen, on)    - C(frozen, off)]
+routing objective          C(frozen, on)      - C(frozen, off)
+expert-adapted             C(trainable, off)  - C(frozen, off)
+interaction                [C(trainable, on) - C(trainable, off)]
+                         - [C(frozen, on)    - C(frozen, off)]
 ```
+
+**Terminology, pinned.** The representation factor is *not* "representation
+plasticity alone". Operationally the ranking happens in a **candidate-specific**
+space:
+
+```text
+s_e(z) = max_c cos( E_e(z), p_{e,c} )
+```
+
+which changes two things at once: the space (trained rather than raw) and the
+graph (each candidate is scored in its own adapted representation, not in one
+shared space). So a positive result licenses
+
+> "routing succeeds better when candidate ranking is performed in the
+> expert-adapted representation"
+
+and **not** "representation plasticity alone caused the gain". The design does
+not separate those two, and the report must not claim it does. The frozen arms
+score every candidate in the *same* raw space, which is exactly what makes the
+baseline the comparison it is.
 
 ## 3. The two factors, pinned
 
@@ -74,6 +96,40 @@ trained on stored prototypes improves ranking"; if it fails, the claim is that
 this objective class is insufficient - not that the *idea* of a learned routing
 objective is.
 
+### 3.1b Prototype synchronisation, pinned
+
+Three implementations of "the routing objective uses stored prototypes" are all
+defensible and are not the same experiment:
+
+```text
+A  snapshot       prototypes fixed when the task is learned, never recomputed
+B  recomputed     p_{e,c} = mean(E_e(z_c)) recomputed every step
+C  stop-gradient  prototypes move, but no gradient flows through their construction
+```
+
+**This study pins A for the stored evidence, and C for the current expert's own
+anchor**, because the pre-registration's central contrast is *the same stored
+evidence used two ways* - and B would let the representation feed new evidence
+back into the training loop, changing that contrast.
+
+```text
+old experts        stored task-local sufficient statistics (A), never recomputed
+current expert     during task t's own training, a stop-gradient EMA of E_t(z)
+                   serves as its positive anchor (C); it is not stored evidence
+prototype timing   identical in every arm: the stored prototype for task t is
+                   created from the representation state that exists right after
+                   task t's training, which is also when the ladder registers its
+                   own prototypes
+gradients          within an arm, the routing objective never receives gradient
+                   through prototype construction; expert gradients flow only
+                   through the current encoded sample
+```
+
+Each arm records the prototype timing, a prototype hash and the representation
+checkpoint it was taken from, so the chronology can be audited rather than
+assumed. Without this, the `off` and `on` arms could silently differ in *when*
+their prototypes were taken.
+
 ### 3.2 Representation plasticity
 
 The backbone stays frozen. The trainable representation is the **existing
@@ -96,6 +152,18 @@ When the routing objective is `on` in the `trainable` arm, the routing loss ente
 the **expert's** training loop, so the expert learns features that make its own
 prototypes distinguishable from the other experts'. That is the interaction term,
 and it is the only arm where the routing objective can change the representation.
+
+The loss is pinned: for each minibatch of the current task's features,
+
+```text
+scores_e(z) = max_c cos( E_e(z), p_{e,c} )   for e < t   (stored snapshots, A)
+scores_t(z) = cos( E_t(z), anchor_t )                      (stop-gradient EMA, C)
+L_route     = cross_entropy([scores_0 ... scores_t], target = t)
+L_total     = L_task + lambda * L_route                    lambda = 1.0
+```
+
+`lambda = 1.0` matches the ladder's existing prototype-anchor weight, so the
+interaction arm adds no new hyper-parameter family.
 
 ## 4. Operating point (identical to S8/S11/S12)
 
@@ -154,8 +222,8 @@ one factor at a time no arm may differ from the baseline in more than the two
 | result | reading |
 | :-- | :-- |
 | routing objective + frozen representation succeeds | the ranking objective was the missing ingredient; representation was not the limit |
-| representation + existing routing succeeds | representation geometry is the limiting factor; the objective was not |
-| only joint training succeeds | the routing objective requires representation plasticity - the interaction is the mechanism |
+| expert-adapted representation + existing routing succeeds | the space the ranking happens in is the limiting factor; the objective was not |
+| only joint training succeeds | the routing objective requires the candidate-specific adapted space to be trained with it - the interaction is the mechanism |
 | neither succeeds | task-identity supervision over this expert formulation is insufficient; the next question is about the *formulation* (what an expert should be, or what supervision should say), not about routers or plasticity |
 
 The fourth row matters most and is the one the Router Ranking Study could not

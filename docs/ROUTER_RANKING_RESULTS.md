@@ -135,6 +135,13 @@ It also pins the fix for this study's structural failure: the routing objective 
 trained on the stored prototypes of **all** seen experts at every step, so no row
 is ever trained one-vs-previous, and no rehearsal is needed.
 
+That study has since run (`REPRESENTATION_ROUTING_RESULTS.md`) and the fix was
+**not sufficient**: the globally consistent objective still loses (-0.0090 /
+-0.0450), so this study's protocol defect was real but not the whole story. Its
+sharpest result is a dissociation - the expert-adapted space raises the
+conditional oracle while lowering coverage - which locates the constraint in
+cross-expert separability rather than in the routing objective or in plasticity.
+
 ## 7. What this does not say
 
 - It does not say learned routers cannot work. It says this protocol - frozen

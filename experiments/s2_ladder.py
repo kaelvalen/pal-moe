@@ -228,6 +228,10 @@ class LadderModel:
             device
         )
         self.router: PrototypeRouter | None = None
+        # Optional extra training term, supplied by a study (S11's factorial
+        # uses it for the joint routing objective). `None` is the ladder's
+        # unchanged behaviour.
+        self.extra_loss = None
         self.class_expert: dict[int, int] = {}
         self.proto_z: list[torch.Tensor] = []
         self.proto_p: list[torch.Tensor] = []
@@ -384,6 +388,8 @@ class LadderModel:
                 loss = F.cross_entropy(logits, y)
                 if self.args.lambda_func > 0 and self.experts and self.proto_z:
                     loss = loss + self.args.lambda_func * self._l_func()
+                if self.extra_loss is not None:
+                    loss = loss + self.extra_loss(z, y, task_index_or_none)
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
