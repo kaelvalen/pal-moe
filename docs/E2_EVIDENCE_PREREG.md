@@ -160,6 +160,31 @@ term's absolute weight grow with the task count, which is an implicit curriculum
 on top of the loss shape - the same failure the earlier studies excluded by
 averaging.
 
+### 2.4c Two evidence paths, never mixed
+
+The study has two paths through the same evidence machinery, and conflating them
+would break the mechanism claim:
+
+```text
+training evidence path          test path
+----------------------          ---------
+prototype z_p                   test input z
+  -> every seen E_j               -> every seen E_j
+  -> every W_j                    -> every W_j
+  -> h_j                          -> h_j
+  -> shared query P z_p           -> shared query P z
+  -> L_evidence (owner-vs-all)    -> argmax_t s_t
+                                  -> selected h_j
+                                  -> shared readout g
+```
+
+Both paths score **expert-generated evidence**, so the router reads what the
+experts produced in training and at test time alike. The test path then applies
+`g` to the *selected* expert's evidence for classification; the training path
+never applies `g` to the evidence (classification there uses the current task's
+examples through `E_t`). The evidence is re-computed for every expert on every
+call - there is no cached evidence tensor and no precomputed expert output.
+
 ### 2.5 What is held fixed
 
 ```text
@@ -198,6 +223,9 @@ reported, and the row is named.
 ## 5. Guards
 
 ```text
+evidence paths       the two paths of section 2.4c stay separate: the training
+                     path never applies g to the evidence, the test path never
+                     uses prototypes, and neither path caches evidence
 execution guards     the runtime checks of section 2.4b: old W_e trainable with
                      non-empty gradients, previous adapters absent from the
                      optimizer, L_evidence averaged and not summed
