@@ -209,6 +209,7 @@ class E2Model:
     def evaluate(self, tasks):
         correct = total = cov_hits = cov_n_total = oracle_correct = 0
         per_task_coverage = []
+        per_task_accuracy = []
         for task in tasks:
             feats, labels = task["splits"]["test"]
             feats, labels = feats.to(self.device), labels.to(self.device)
@@ -231,6 +232,7 @@ class E2Model:
             cov_n_total += int(covered.sum())
             cov_hits += int(hit[covered].sum())
             per_task_coverage.append(float(covered.float().mean()))
+            per_task_accuracy.append(float(hit.float().mean()))
             # oracle path: the owner expert's evidence, same readout
             owner = int(task["task_id"])
             h_owner = normalize(self.W[owner](self.experts[owner].transform(feats)))
@@ -250,6 +252,7 @@ class E2Model:
                 if cov_n_total
                 else None
             ),
+            "per_task_accuracy": per_task_accuracy,
         }
 
     def _gather(self, feats, pick):

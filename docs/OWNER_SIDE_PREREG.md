@@ -12,8 +12,10 @@ coupling mechanism. That is a hypothesis; this study pre-registers the test.
 > **Does old projections updating on their own task's prototypes carry the residual
 > accuracy damage - measured as `C0 - OWNER-ONLY` on the same arms?**
 
-The three arms form one chain, each step removing one gradient path into the old
-projections `W_j` (`j < t`):
+The three arms form one conceptual chain - a decomposition of the gradient paths,
+not a sequential composition inside one training trajectory. Each arm is a separate
+fresh run on the same seeds, and each step below names one gradient path into the
+old projections `W_j` (`j < t`) that the step removes:
 
 ```text
 C1            owner + non-owner evidence gradients   (the pinned contract)
@@ -39,9 +41,11 @@ seeds     42, 1, 2
 T         20 (the collapsed operating point)
 ```
 
-The arms and the cut are exactly as pinned in `INTERVENTION_PREREG.md` section 2
-(implementation `1b54c89`): identical values and identical gradients for `P`, `g`,
-`W_t` and `E_t`; only the gradient paths into the old `W_j` differ. The re-run is
+The three arms are independent runs of the pinned contract, never a composition of
+arms inside one trajectory. The arms and the cut are exactly as pinned in
+`INTERVENTION_PREREG.md` section 2 (implementation `1b54c89`): identical values and
+identical gradients for `P`, `g`, `W_t` and `E_t`; only the gradient paths into the
+old `W_j` differ. The re-run is
 what makes the new contrast independent: every cell used in the analysis is
 produced under this pre-registration, and the earlier records serve only as anchors
 (section 5).
