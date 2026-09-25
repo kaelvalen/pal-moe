@@ -42,6 +42,34 @@ Feature caches (`results/s3/cache_*`, `results/s4/cache_*`, `results/feature_cac
 are gitignored (`*.pt`); `experiments/s3_run.py` and `experiments/s4_datasets.py`
 rebuild them from scratch.
 
+## Follow-up chain and the v2 programme (2026-09-25)
+
+The Stage-1 diagnosis and the separately pre-registered follow-ups. Each study has
+its own pre-registration and results document; none is retro-fitted.
+Status legend adds: CHAIN (evidence for the follow-up chain documents), V2 (evidence
+for the stable-keys / plastic-reader programme).
+
+| Directory / file | Contents | Status | Referenced by |
+| :-- | :-- | :-- | :-- |
+| `rr/rr_ranking_study.json` | router ranking, 12 cells; the R2 gate refuted | CHAIN | ROUTER_RANKING_RESULTS.md |
+| `rrf/rr_factorial_study.json` | representation x routing, 48 cells | CHAIN | REPRESENTATION_ROUTING_RESULTS.md |
+| `dr/decision_routing_study.json` | decision routing, 36 cells | CHAIN | DECISION_ROUTING_RESULTS.md |
+| `agg/aggregation_study.json` | aggregation, 24 cells | CHAIN | AGGREGATION_RESULTS.md |
+| `ef/expert_formulation_study.json` | expert formulation E1, 24 cells | CHAIN | EXPERT_FORMULATION_RESULTS.md |
+| - | E2 evidence, non-executed at 20 experts; postmortem only | CHAIN | E2_EVIDENCE_RESULTS.md |
+| `coupling/coupling_study.json` | C1 vs C0, 12 cells | CHAIN | COUPLING_RESULTS.md |
+| `interference/interference_study.json` | expert-count ladder, 30 cells (+ `*.void.json`, the vetoed first ladder) | CHAIN | INTERFERENCE_RESULTS.md |
+| `intervention/intervention_study.json` | owner-only cut, 18 cells | CHAIN | INTERVENTION_RESULTS.md |
+| `owner_side/owner_side_study.json` | two-component decomposition, 18 cells | CHAIN | OWNER_SIDE_RESULTS.md |
+| `ac1/ac1_address_freeze_study.json` | address-freeze completion (the shared query), 12 cells, bitwise anchors | V2 | AC1_ADDRESS_FREEZE_RESULTS.md |
+
+Chain state: non-owner path intervention produces the dominant causal component of
+routing damage; owner-side updating produces the dominant causal component of
+accuracy damage. AC1 then shows the address is not decomposable into frozen halves:
+freezing the shared query collapses coverage (-0.1507, 6/6 pairs) while the owner
+path stays invariant, so the v2 invariant is **stable keys / plastic reader**, not
+"stable address" (`AC1_ADDRESS_FREEZE_RESULTS.md`, section 8).
+
 ## Protocol / correction evidence
 
 | Directory | Contents | Status | Referenced by |
