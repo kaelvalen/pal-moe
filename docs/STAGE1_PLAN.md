@@ -30,8 +30,8 @@ systematically* is a successful Stage 1.
 | S6b | designed difficulty: coherent vs dispersed task partitions | **done** (`experiments/s6b_difficulty.py`, `STAGE1_RESULTS.md` section 10) |
 | S7 | representation transfer: checkpoint -> frozen probe on an unseen dataset | **done** (`experiments/s7_transfer.py`, section 6) |
 | S8 | resource budget: parameter / memory / active, in both routing regimes | **done** (`experiments/s8_budget.py`, `s8_report.py`, `STAGE1_RESULTS.md` section 11) |
-| S9 | robustness: corruption, spurious correlation | planned |
-| S10 | scalability: task count 2..100 | planned |
+| S9 | robustness: corruption, spurious cue, both routing regimes | **done** (`experiments/s9_robustness.py`, `s9_corruptions.py`, `STAGE1_RESULTS.md` section 12) |
+| S10 | scalability: task count and expert count | next |
 | S11 | statistical validation: 3-5 seeds x task orders, paired tests | planned |
 
 Two rules apply to every stage, and they are the reason the ladder is

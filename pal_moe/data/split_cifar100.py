@@ -7,7 +7,7 @@ Supports Class-Incremental Learning in a 100-class global space.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 from torch.utils.data import DataLoader, Subset
@@ -37,6 +37,7 @@ def get_split_cifar100_tasks(
     max_train_samples_per_task: Optional[int] = None,
     num_workers: int = 0,
     pin_memory: bool = False,
+    dataset_cls: Any = datasets.CIFAR100,
 ) -> list[SplitCIFAR100Task]:
     """
     Creates 20 sequential tasks for the Split-CIFAR-100 benchmark (5 classes each).
@@ -44,6 +45,12 @@ def get_split_cifar100_tasks(
     ``num_workers`` / ``pin_memory`` only affect loader throughput; the CIFAR
     transforms are deterministic, so the batch order and RNG stream are
     unchanged when they are raised.
+
+    ``dataset_cls`` exists so a caller can inject a pixel-level distribution
+    shift (S9) without re-deriving the split: it must be a `datasets.CIFAR100`
+    subclass accepting the same ``transform``/``target_transform`` kwargs. The
+    task partition, the index draw and the class order are unchanged, so a
+    shifted cache is paired sample-for-sample with the clean one.
     """
     torch.manual_seed(seed)
     transform_train = transforms.Compose(
@@ -59,10 +66,10 @@ def get_split_cifar100_tasks(
         ]
     )
 
-    train_dataset = datasets.CIFAR100(
+    train_dataset = dataset_cls(
         data_dir, train=True, download=True, transform=transform_train
     )
-    test_dataset = datasets.CIFAR100(
+    test_dataset = dataset_cls(
         data_dir, train=False, download=True, transform=transform_test
     )
 

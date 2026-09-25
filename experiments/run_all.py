@@ -99,6 +99,7 @@ CELL_TARGETS = {
     "s6": (ROOT / "results" / "s6" / "s6_order_study.json", 45),
     "s6b": (ROOT / "results" / "s6b" / "s6b_difficulty_study.json", 30),
     "s8": (ROOT / "results" / "s8" / "s8_budget_study.json", 56),
+    "s9": (ROOT / "results" / "s9" / "s9_robustness_study.json", 170),
 }
 
 
@@ -407,6 +408,51 @@ def build_stages(args) -> list[Stage]:
             done_when=[ROOT / "results" / "s8" / "s8_budget_report.json"],
             needs=["s8"],
             minutes=1,
+        ),
+        Stage(
+            "s9x",
+            "S9 shift extraction: 9 corruption cells + spurious cue, clean-reproduction guard",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/s9_corruptions.py",
+                    "--extract",
+                    "--guard",
+                    "--device",
+                    args.device,
+                ]
+            ],
+            done_when=[
+                ROOT / "results" / "s9" / "cache" / f"{name}_s{severity}.pt"
+                for name in ("gaussian_noise", "defocus_blur", "brightness")
+                for severity in (1, 3, 5)
+            ]
+            + [
+                ROOT / "results" / "s9" / "cache" / "spurious_train.pt",
+                ROOT / "results" / "s9" / "cache" / "spurious_correlated.pt",
+                ROOT / "results" / "s9" / "cache" / "spurious_absent.pt",
+                ROOT / "results" / "s9" / "cache" / "spurious_flipped.pt",
+            ],
+            needs=["s8"],
+            minutes=40,
+        ),
+        Stage(
+            "s9",
+            "robustness: corruption and spurious shift in both routing regimes",
+            [
+                [
+                    PY,
+                    "-u",
+                    "experiments/s9_robustness.py",
+                    *common,
+                    "--out",
+                    "results/s9",
+                ]
+            ],
+            done_when=[],  # handled by the cell count below
+            needs=["s9x"],
+            minutes=40,
         ),
     ]
 

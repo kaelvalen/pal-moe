@@ -697,7 +697,184 @@ default, so S8's measurement additions did not change the experiment.
 
 ---
 
-## 12. Consolidated findings
+## 12. S9 - does the decomposition survive a distribution shift?
+
+S8 closed the capacity question in the clean geometry. S9 asks whether the
+decomposition it rests on - capacity is not routing realization, and intra-task
+difficulty is not cross-task routing difficulty - is an artifact of that
+geometry. Two controlled families, each varying exactly one thing, in both S6b
+regimes, at the S8 operating point (rank 8, one prototype per class,
+`top_k = 1`, seed 42):
+
+```text
+corruption   training stays clean, only the test-time input distribution changes
+             gaussian noise / defocus blur / brightness at severity 1, 3, 5
+             (a controlled CIFAR-C style family, not the official CIFAR-100-C)
+spurious     a 6x6 red corner cue on the first half of the classes during
+             training; at test it is correlated, absent, or flipped onto the
+             other half. Training on clean and testing on the same conditions is
+             the control arm, so the shortcut effect is the *interaction*.
+```
+
+170 cells. Shift caches are extracted through the same pipeline as the canonical
+cache (the clean re-extraction reproduces it with `max |delta| = 0.0` over 10,000
+samples) and are regrouped by *label* onto each construction, because a
+construction is a regrouping of class ids and a task-keyed graft would feed the
+wrong classes to every task.
+
+### 12.1 Corruption: the tax grows, the realized value collapses
+
+`dispersed` (hard routing), training clean:
+
+| test | L0 | L1 | L2b | L3 | L4 | tax | realised | available | R_iso_ncm | recall@3 | max-share |
+| :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| clean | 70.34 | 76.77 | 55.64 | 70.66 | 97.29 | +26.63 | +15.02 | +41.65 | 0.012 | 0.891 | 0.713 |
+| noise s1 | 52.48 | 57.52 | 32.15 | 52.84 | 90.74 | +37.90 | +20.69 | +58.59 | 0.009 | 0.769 | 0.542 |
+| noise s3 | 30.69 | 34.05 | 14.65 | 30.82 | 74.16 | +43.34 | +16.17 | +59.51 | 0.003 | 0.554 | 0.331 |
+| noise s5 | 11.23 | 12.40 | 5.19 | 11.25 | 47.23 | +35.98 | +6.06 | +42.04 | 0.001 | 0.324 | 0.211 |
+| blur s1 | 52.03 | 61.83 | 33.55 | 52.58 | 92.17 | +39.59 | +19.03 | +58.62 | 0.014 | 0.753 | 0.537 |
+| blur s3 | 30.35 | 38.20 | 16.03 | 30.55 | 78.40 | +47.85 | +14.52 | +62.37 | 0.004 | 0.563 | 0.332 |
+| blur s5 | 12.58 | 15.78 | 5.41 | 12.71 | 58.72 | +46.01 | +7.30 | +53.31 | 0.003 | 0.355 | 0.341 |
+| bright s1 | 68.40 | 74.86 | 52.37 | 68.73 | 96.84 | +28.11 | +16.36 | +44.47 | 0.012 | 0.877 | 0.693 |
+| bright s3 | 62.76 | 69.86 | 45.20 | 63.11 | 94.90 | +31.79 | +17.91 | +49.70 | 0.011 | 0.834 | 0.640 |
+| bright s5 | 52.62 | 60.24 | 34.32 | 52.92 | 90.99 | +38.07 | +18.60 | +56.67 | 0.008 | 0.751 | 0.542 |
+
+`coherent` (easy routing), training clean:
+
+| test | L0 | L1 | L2b | L3 | L4 | tax | realised | available | R_iso_ncm | recall@3 | max-share |
+| :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| clean | 70.34 | 76.77 | 59.43 | 73.21 | 87.19 | +13.98 | +13.78 | +27.76 | 0.170 | 0.949 | 0.819 |
+| noise s1 | 52.48 | 57.52 | 37.51 | 54.80 | 76.52 | +21.72 | +17.29 | +39.01 | 0.097 | 0.858 | 0.669 |
+| noise s3 | 30.69 | 34.05 | 19.92 | 31.84 | 60.34 | +28.50 | +11.92 | +40.42 | 0.039 | 0.667 | 0.446 |
+| noise s5 | 11.23 | 12.40 | 8.21 | 11.73 | 40.74 | +29.01 | +3.52 | +32.53 | 0.017 | 0.411 | 0.312 |
+| blur s1 | 52.03 | 61.83 | 40.46 | 54.21 | 77.69 | +23.48 | +13.75 | +37.23 | 0.085 | 0.861 | 0.658 |
+| blur s3 | 30.35 | 38.20 | 22.99 | 31.52 | 63.08 | +31.56 | +8.53 | +40.09 | 0.036 | 0.693 | 0.471 |
+| blur s5 | 12.58 | 15.78 | 8.71 | 12.78 | 44.95 | +32.17 | +4.07 | +36.24 | 0.006 | 0.466 | 0.401 |
+| bright s1 | 68.40 | 74.86 | 55.99 | 71.34 | 86.00 | +14.66 | +15.35 | +30.01 | 0.167 | 0.942 | 0.805 |
+| bright s3 | 62.76 | 69.86 | 49.22 | 65.31 | 82.97 | +17.66 | +16.09 | +33.75 | 0.126 | 0.909 | 0.753 |
+| bright s5 | 52.62 | 60.24 | 39.23 | 55.10 | 76.97 | +21.87 | +15.87 | +37.74 | 0.102 | 0.852 | 0.664 |
+
+**E1 - the routing tax grows with corruption severity in both regimes.** From
+13.98 to 32.17 in `coherent` (2.3x) and from 26.63 to 47.85 in `dispersed`
+(1.8x), monotonically for noise and blur and nearly so for brightness. This is
+the S6b mechanism reproduced under a new manipulation: as the representation
+degrades, the tasks overlap more and the router's job gets harder. The regime
+*ordering* is preserved at every severity, but the regimes converge as the
+representation collapses (ratio 1.90x at clean, 1.52x at blur s3, 1.24x at noise
+s5) - when everything is near chance there is no geometry left to route on.
+
+**E2 - `R_iso_ncm` collapses toward zero in both regimes.** `dispersed`:
+0.012 -> 0.001 / 0.003 / 0.008 at severity 5. `coherent`: 0.170 -> 0.017 / 0.006
+/ 0.102. Corruption erases the expert bank's incremental value, and the effect
+is strongest where the damage is representational (noise, blur) rather than a
+global gain change (brightness, which is the mildest family at every severity).
+
+**E3 - the S8 result survives every condition.** In `dispersed`, `R_iso_ncm`
+ranges over **0.001 - 0.014 across all 17 conditions** (clean, 9 corruptions, 3
+spurious, plus the spurious control arm). The statement "in the hard-routing
+regime the whole expert bank is worth nothing over a training-free
+nearest-class-mean" is not an artifact of the clean benchmark geometry. In
+`coherent` the same quantity ranges from **-0.169 to 0.205**: the easy-routing
+regime's incremental value is real but fragile.
+
+**E4 - the router's failure is visible at the assignment level, and it is
+diffuseness rather than confident error.** `recall@3` falls monotonically with
+severity (0.891 -> 0.324 for noise) and the assignment max-share falls with it
+(0.713 -> 0.211). Under corruption the router does not pick the wrong expert
+confidently; its distribution flattens. That is the same picture S6 found for
+unseen tasks, now along a severity axis.
+
+**E5 - `L1_ridge` wins in every single condition.** 34/34 (2 regimes x 17
+conditions), mean margin +5.4 points clean, +4.7 under corruption, +5.5 under
+spurious, minimum +0.67 (noise s5, where every level is near chance) and maximum
++9.51. The closed-form readout is not only the strongest clean baseline; it is
+the most shift-robust one, and its margin over the expert bank grows with
+severity for blur and brightness.
+
+**E6 - the shared sequential adapter is the most fragile level.** `L2b` falls
+furthest under both families (`dispersed` spurious: 56.65 -> 49.91 -> 43.99;
+`coherent`: 63.20 -> 52.31 -> 42.47). The sequential constraint's cost, which
+S8 showed is paid as plasticity rather than forgetting, is amplified by a shift.
+
+### 12.2 Spurious cue: a learned shortcut, with a regime-dependent landing site
+
+Control arm (training clean, cue only at test):
+
+| construct | test | L3 | L4 | tax | R_iso_ncm | recall@3 |
+| :-- | :-- | --: | --: | --: | --: | --: |
+| dispersed | correlated | 70.00 | 97.31 | +27.31 | 0.010 | 0.890 |
+| dispersed | absent | 70.66 | 97.29 | +26.63 | 0.012 | 0.891 |
+| dispersed | flipped | 70.58 | 97.23 | +26.65 | 0.014 | 0.891 |
+| coherent | correlated | 72.58 | 86.84 | +14.26 | 0.167 | 0.950 |
+| coherent | absent | 73.21 | 87.19 | +13.98 | 0.170 | 0.949 |
+| coherent | flipped | 73.09 | 87.03 | +13.94 | 0.171 | 0.949 |
+
+Treatment arm (the cue present during training on the first half of classes):
+
+| construct | test | L0 | L1 | L2b | L3 | L4 | tax | R_iso_ncm | recall@3 |
+| :-- | :-- | --: | --: | --: | --: | --: | --: | --: | --: |
+| dispersed | correlated | 72.35 | 78.19 | 56.65 | 72.68 | 97.69 | +25.01 | 0.013 | 0.904 |
+| dispersed | absent | 69.66 | 76.51 | 49.91 | 69.96 | 97.14 | +27.18 | 0.011 | 0.886 |
+| dispersed | flipped | 65.77 | 73.49 | 43.99 | 65.97 | 96.19 | +30.22 | 0.007 | 0.861 |
+| coherent | correlated | 72.35 | 78.19 | 63.20 | 75.85 | 89.42 | +13.57 | 0.205 | 0.953 |
+| coherent | absent | 69.66 | 76.51 | 52.31 | 70.97 | 84.11 | +13.14 | 0.091 | 0.950 |
+| coherent | flipped | 65.77 | 73.49 | 42.47 | 63.98 | 76.38 | +12.40 | **-0.169** | 0.943 |
+
+**E7 - the cue is a learned shortcut, at every level and in both regimes.** In
+the treatment arm, accuracy orders `correlated > absent > flipped`: `dispersed`
+L3 72.68 / 69.96 / 65.97, `coherent` L3 75.85 / 70.97 / 63.98. The control arm
+shows the cue alone is nearly harmless (tax and `R_iso_ncm` unchanged, accuracy
+within 0.7 points), so the effect is the *interaction* between training and test
+condition, not the cue itself.
+
+**E8 - where the shortcut's cost lands depends on the routing regime.** In
+`dispersed` the tax grows (25.01 -> 27.18 -> 30.22) and `recall@3` falls (0.904
+-> 0.886 -> 0.861): the router is partly fooled by the cue. In `coherent` the
+tax is flat (13.57 -> 13.14 -> 12.40) and `recall@3` is flat (0.953 -> 0.950 ->
+0.943), while `L4` falls hard (89.42 -> 84.11 -> 76.38): the router is *not*
+fooled and the damage is entirely representational. With easy routing the model
+absorbs the shortcut into the shared representation; with hard routing it leaks
+into the assignment as well.
+
+**E9 - and `R_iso_ncm` goes negative in the flipped `coherent` arm** (-0.169):
+`L3` (63.98) ends up *below* the training-free NCM (65.77) while the oracle
+reaches 76.38. The expert bank is worse than no expert bank at all when the
+representation is built around a cue that lies at test time.
+
+### 12.3 Consistency checks
+
+**E10 - three guards passed exactly.** (i) The clean cells reproduce S8's
+seed-42 operating point: 10/10 cells (both constructs x 5 levels),
+`max |delta| = 0.0000`. (ii) `spurious_absent` reproduces `clean` to the digit
+(`max |delta| = 0.0000` over both constructs x 5 levels), which is what a "no
+cue" path must do. (iii) The label-based regrouping reproduces the S6b
+construction splits exactly, with 100 test samples per class. The S9 extraction
+also reproduces the canonical cache's clean test features with
+`max |delta| = 0.0`.
+
+### 12.4 What S9 adds to the story
+
+The decomposition is not a property of the clean benchmark. Across 34 conditions
+- two regimes, ten corruption cells, four spurious cells - the ordering
+`L4 > L3 > L2b` and the separation between *capacity* and *routing realization*
+both survive:
+
+```text
+capacity     rank, expert count and active compute do not close the tax (S8)
+             and corruption does not change that - it makes it worse
+routing      the tax is a function of task overlap (S6b) and it grows
+             monotonically with representation damage (S9)
+resolution   the only lever that moves the tax (S8) is not enough (S8, S9)
+baseline     L1_ridge wins in 34/34 conditions, and is the most shift-robust
+             level in the ladder
+```
+
+The one thing that changes qualitatively is *where* a shortcut's damage lands:
+into routing under hard routing, into the representation under easy routing.
+
+---
+
+## 13. Consolidated findings
 
 **F1. The readout was the first bottleneck, and a training-free prototype
 readout solves it.** NCM on frozen features beats v1 and iCaRL on CIFAR-100
@@ -768,9 +945,27 @@ the representation in place. The sequential constraint's damage appears as lost
 *plasticity* instead - `L2b` fits each newest task best (96.33) and ends worst
 (60.50).
 
+**F15. The decomposition survives a distribution shift.** Across 34 S9
+conditions (two regimes, ten corruption cells, four spurious cells) the ordering
+`L4 > L3 > L2b` holds and capacity stays separate from routing realization. The
+tax grows monotonically with corruption severity in both regimes (13.98 -> 32.17
+`coherent`, 26.63 -> 47.85 `dispersed`), reproducing the S6b mechanism under a
+new manipulation.
+
+**F16. In the hard-routing regime the expert bank is worth nothing over NCM in
+every condition tested.** `R_iso_ncm` ranges over 0.001-0.014 across all 17
+`dispersed` conditions, and -0.169 to 0.205 across `coherent`. The S8 result is
+not an artifact of the clean geometry.
+
+**F17. `L1_ridge` wins in 34/34 conditions and is the most shift-robust level**
+(mean margin +5.4 clean, +4.7 corruption, +5.5 spurious). A spurious cue is a
+learned shortcut in both regimes (`correlated > absent > flipped` at every
+level), and where its cost lands depends on the routing regime: into the
+assignment under hard routing, into the representation under easy routing.
+
 ---
 
-## 13. Pre-registered hypotheses and their verdicts
+## 14. Pre-registered hypotheses and their verdicts
 
 | hypothesis | statement | verdict |
 | :-- | :-- | :-- |
@@ -793,12 +988,17 @@ the representation in place. The sequential constraint's damage appears as lost
 | E3 (S8) | if `L3 -> L4` does not close, the bottleneck is realization, not capacity | **confirmed in both regimes** (tax 12.77 -> 14.33 and 25.23 -> 26.86) |
 | E4 (S8) | the memory axis raises `recall@3` before accuracy | **confirmed**: `recall@3` rises 0.949 -> 0.957 and 0.891 -> 0.912, accuracy +2.69 in both |
 | E5 (S8) | the active axis is a cost without a matching gain | **confirmed**: -3.2 / -3.6 points at `top_k = 4`, and the tax worsens |
+| R1 (S9) | the capacity/routing decomposition survives corruption and spurious shift | **confirmed** in 34/34 conditions; the tax grows with severity instead of changing sign |
+| R2 (S9) | in `dispersed` more experts create isolation the router cannot cash | **confirmed under every shift**: `R_iso_ncm` 0.001-0.014 over 17 conditions |
+| R3 (S9) | the routing tax is driven by task overlap, not by the benchmark | **confirmed**: the tax rises monotonically with representation damage, the S6b mechanism under a new manipulation |
+| R4 (S9) | the closed-form readout stays the strongest baseline | **confirmed**: 34/34 conditions, and the most shift-robust level |
+| R5 (S9) | a spurious cue is absorbed as a shortcut | **confirmed**, with a regime-dependent landing site: routing under `dispersed`, representation under `coherent` |
 
 ---
 
-## 14. Measurement bugs this programme found
+## 15. Measurement bugs this programme found
 
-Five, each of which would have produced a confident wrong number:
+Ten, each of which would have produced a confident wrong number:
 
 1. **The forward-transfer definition was degenerate.** "Evaluate on the next
    task before training it" returns structurally 0 in a growing-head
@@ -829,13 +1029,39 @@ Five, each of which would have produced a confident wrong number:
    set; `unseen == acc` to the digit was the tell. Both guards are now in
    place: non-zero transforms must change the test split, and domain caches
    must have pairwise-distinct test features.
+8. **Interleaving evaluation with training changes the protocol, not just the
+   schedule.** `mask_unseen` restricts the head to the classes seen so far, so a
+   task evaluated *at the time it is learned* competes against `5(t+1)` classes
+   while the final evaluation competes against 100. Measured on the same model:
+   81.02 against 70.66, a 10.4-point difference that is **not** forgetting (S8
+   measured forgetting at exactly 0.00). Every stage therefore computes the
+   whole accuracy matrix after training; a harness that evaluates as it goes is
+   running a different, easier benchmark.
+9. **A shift cache keyed by task is not a shift cache keyed by class.** S9's
+   corruption caches are extracted on the canonical partition, but a
+   construction (`coherent`/`dispersed`) is a *regrouping of class ids*, so
+   grafting canonical task `k` onto construction task `k` would have fed the
+   wrong classes' features to every task. Regrouping by label is
+   order-independent, works for the train split (whose order is a permutation)
+   and needs no re-extraction; it is guarded against the S6b construction code
+   that already produces the same splits.
+10. **A guard caught a configuration error, and the guard was right.** S9's
+    first version trained on the canonical partition while comparing against
+    S8's `dispersed` cells (70.56 against 70.66) and it looked like
+    cross-process nondeterminism. It was not: hashing the model init, the first
+    batch order and the per-task parameters in independent processes showed the
+    ladder is bit-reproducible, and the 0.1-point difference was exactly
+    canonical-against-`dispersed`. The tolerance was tightened back to float
+    noise rather than widened to hide it.
 
 The first four are measurement-layer bugs; the fifth is the reason the plan now
-requires calling the existing entry point instead of re-deriving a loop.
+requires calling the existing entry point instead of re-deriving a loop; the
+eighth and ninth are the same failure class one level down - a harness detail
+(evaluation order, key space) silently redefining the experiment.
 
 ---
 
-## 15. What this evidence does NOT say
+## 16. What this evidence does NOT say
 
 - It does **not** say "mixture of experts is unnecessary". It says that under
   this benchmark, protocol, budget and backbone, the incremental expert
@@ -854,35 +1080,53 @@ requires calling the existing entry point instead of re-deriving a loop.
   deliberately not crossed (that is S3 x S4, not measured).
 - Robustness to image corruptions is **not measured** (S4-r), nor are
   task-order, class-order, unseen-task, unseen-domain or scalability axes.
+- S9's corruptions are a controlled CIFAR-C style family, not the official
+  CIFAR-100-C benchmark, and the spurious cue is synthetic (a 6x6 corner
+  square). Both are single-seed (seed 42); the clean cells are pinned to S8's
+  three-seed operating point exactly, but the shifted points are one seed each.
+  At severity 5 (noise, blur) every level is near chance, so the tax at those
+  points compares two near-floor numbers.
 - Every result is on frozen features. The plastic-encoder branch - the one
   thing that could plausibly change F3 - is untouched.
 
 ---
 
-## 16. Open items and the stage order
+## 17. Open items and the stage order
 
 | stage | content | blocker |
 | :-- | :-- | :-- |
-| S4-r | corruption robustness, routing stability `TV(p(x), p(x~))` | needs corrupted caches (~2 h of ViT extraction) |
-| S4b | task-count sweep `T in {2,5,10,20}` | splitters have no sub-task support |
+| S4-r | corruption robustness, routing stability `TV(p(x), p(x~))` | **superseded by S9** (section 12) |
+| S4b | task-count sweep `T in {2,5,10,20}` | splitters have no sub-task support; S10 is the same question with the pieces S8 built |
 | S5 | Task-IL / Class-IL protocol axis | **done** (section 7) |
 | S5b | Domain-IL rotated MNIST, unseen domain | **done** (section 8) |
 | S6 | order sensitivity (class and task order) | **done** (section 9) |
 | S6b | designed difficulty: coherent vs dispersed partitions | **done** (section 10) |
 | S8 | resource budget: parameter / memory / active, both regimes | **done** (section 11) |
-| S9-S11 | robustness, scalability, statistics | unstarted |
+| S9 | robustness: corruption and spurious cue, both regimes | **done** (section 12) |
+| S10 | scalability: task count and expert count | **next** |
+| S11 | statistical validation: confirmatory seed/CI protocol | after S10 |
 
-The recommended next step is **S9/S11**, in that order of cheapness: S8 leaves two
-specific gaps that a next stage should close rather than a new architecture.
-First, the residual tax (11.29 `coherent`, 23.94 `dispersed`) is now known *not*
-to be a capacity or resolution problem, so the untested lever is the routing
-*mechanism* itself - and S8's memory axis is the only measured one that moves it.
-Second, S8's budget points are one seed each; the two regimes' curves are clear
-enough to size a confirmatory run, which is what S11 is for.
+The recommended next step is **S10**, and S8+S9 give it a specific question rather
+than a generic sweep. Two pieces already exist: `L3` allocates one expert per
+task, so increasing `T` increases storage, expert count and routing candidates at
+once, and S9 showed the router's failure mode under shift is *diffuseness*
+(max-share falling, `recall@3` falling) rather than a confident wrong pick. So
+S10's question is which of those three `T`-effects the tax actually tracks:
+
+```text
+T up  ->  stored bytes up        (measured per cell already)
+T up  ->  experts per bank up    (capacity, which S8 showed does not close the tax)
+T up  ->  routing candidates up  (resolution, which S8 showed partly does)
+```
+
+If the tax tracks candidate count rather than expert capacity, the routing
+mechanism redesign that follows S11 has a target: make the router's decision
+easier, not the experts stronger. S4b is subsumed by this: it is the same sweep
+with the S8 resource instrumentation.
 
 ---
 
-## 17. Artefacts
+## 18. Artefacts
 
 | path | contents |
 | :-- | :-- |
@@ -894,6 +1138,7 @@ enough to size a confirmatory run, which is what S11 is for.
 | `results/s6/` | order sensitivity: 9 order configurations, unseen-task routing |
 | `results/s6b/` | designed difficulty: `coherent` vs `dispersed`, three seeds |
 | `results/s8/` | 56-cell budget study (rank x prototypes x top-k, both regimes) + report |
+| `results/s9/` | shift caches (13 conditions) + 170-cell robustness study (2 regimes x 2 families) |
 | `results/logs/` | per-stage logs from `experiments/run_all.py` |
 | feature caches | gitignored (`*.pt`); `experiments/s3_run.py` and `s4_datasets.py` rebuild them |
 

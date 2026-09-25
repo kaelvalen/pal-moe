@@ -163,6 +163,12 @@ def load_tasks(cache_path: str):
     return meta, tasks
 
 
+def _entropy(probs: torch.Tensor) -> torch.Tensor:
+    """Shannon entropy in nats over a distribution (same definition as S6)."""
+    p = probs[probs > 0]
+    return -(p * p.log()).sum()
+
+
 def iter_batches(feats, labels, batch_size, generator=None):
     perm = torch.randperm(feats.size(0), generator=generator)
     for start in range(0, feats.size(0) - batch_size + 1, batch_size):
@@ -528,6 +534,7 @@ class LadderModel:
         if self.router is None or not self.experts or self.spec.router == "oracle":
             return {}
         hits = covered_n = covered_correct = total = 0
+        shares = []
         for task in tasks:
             feats, labels = task["splits"]["test"]
             feats, labels = feats.to(self.device), labels.to(self.device)
@@ -538,9 +545,26 @@ class LadderModel:
             covered_n += int(covered.sum())
             covered_correct += int(correct[covered].sum())
             total += feats.size(0)
+            # Assignment concentration for this task: the fraction of its
+            # samples each expert receives. Same definition as S6's unseen-task
+            # spread, so the two stages are comparable.
+            top1 = ids[:, 0]
+            shares.append(
+                torch.bincount(top1, minlength=len(self.experts)).float()
+                / max(top1.numel(), 1)
+            )
+        if not shares:
+            return {}
+        max_share = torch.stack([s.max() for s in shares]).mean()
+        entropy = torch.stack([_entropy(s) for s in shares]).mean()
         return {
             f"task_recall_at_{k}": hits / max(total, 1),
             "acc_covered": covered_correct / max(covered_n, 1),
+            "expert_max_share": float(max_share),
+            "expert_entropy": float(entropy),
+            "expert_entropy_normalized": float(
+                entropy / float(np.log(max(len(self.experts), 2)))
+            ),
         }
 
     def cost(self) -> dict:
