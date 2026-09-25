@@ -108,9 +108,28 @@ address identity      bitwise coverage@1/@3 equality with the in-study E0 cells,
 evaluator equivalence bitwise on all returned fields, 6/6 cells
 prototype fidelity    bitwise, per registered class
 param-free address    router parameter count 0, asserted at runtime
+E0 reference          |delta| <= 1e-6 against the aggregation study's WTA cells on
+                      accuracy, coverage@1 and coverage@3 (the same rule computed by
+                      a different runner: see the smoke)
 one construction      set_seed then exactly one E2Model and one reference model per
                       (regime, seed) cell
 feasibility           measured cell cost projects the grid under the 1 h ceiling
+```
+
+**Development smoke (2026-09-25, seed 42 only, before execution).** It fixes the
+bands in the block above and measures the cost; the outcome table of section 4 was
+written before it and is not revised, and the smoke's seed-42 accuracies are not
+quoted here.
+
+```text
+bilinear anchor       |delta| = 0.0 against coupling / intervention / owner_side
+evaluator equivalence |delta| = 0.0 on all six fields, both regimes
+address identity      |delta| = 0.0 on coverage@1 and coverage@3, both regimes
+prototype fidelity    exact, 100 registered classes
+param-free address    router parameters 0
+E0 reference          |delta| <= 1.1e-07 on accuracy, 0.0 on coverage@1,
+                      <= 4.7e-08 on coverage@3 against the aggregation WTA cells
+cell cost             19-20 s per (E2 cell + E0 reference) pair
 ```
 
 ## 6. Statistics
@@ -124,8 +143,8 @@ max-statistic Westfall-Young correction within the primary family
 
 ```text
 declared grid       6 C0 training cells + 6 E0 reference cells = 12 trainings
-measured cell cost  ~50 s (GPU, CUDA, epochs=10, from AC1)
-grid projection     ~10 min
+measured cell cost  ~20 s per (E2 cell + E0 reference) pair (GPU, epochs=10, smoke)
+grid projection     ~2 min
 hard ceiling        1 h
 ```
 
