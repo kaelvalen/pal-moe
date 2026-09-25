@@ -100,7 +100,15 @@ class E2Model:
     def train_task(self, task, t, seed):
         """One task of the pinned contract; identical for E2 and the ablation."""
         self.seen = sorted(set(self.seen) | set(task["classes"]))
-        trainable = list(self.P.parameters()) + list(self.readout.parameters())
+        # AC1 (`p_alignment="consolidated"`): the shared query trains on task 0
+        # and is frozen from the first task boundary on - the exact analogue of
+        # C0's treatment of W. "plastic" is the pinned contract, unchanged.
+        p_mode = getattr(self.args, "p_alignment", "plastic")
+        if p_mode == "consolidated" and t > 0:
+            for param in self.P.parameters():
+                param.requires_grad_(False)
+        trainable = [p for p in self.P.parameters() if p.requires_grad]
+        trainable += list(self.readout.parameters())
         for w in self.W:
             trainable += [p for p in w.parameters() if p.requires_grad]
         for param in self.experts[-1].parameters():
@@ -112,7 +120,8 @@ class E2Model:
         for w in self.W[:-1]:
             for param in w.parameters():
                 param.requires_grad_(not freeze_old)
-        trainable = list(self.P.parameters()) + list(self.readout.parameters())
+        trainable = [p for p in self.P.parameters() if p.requires_grad]
+        trainable += list(self.readout.parameters())
         for w in self.W:
             trainable += [p for p in w.parameters() if p.requires_grad]
         trainable += list(self.experts[-1].parameters())
@@ -147,6 +156,7 @@ class E2Model:
                     )
                     self.guard[f"task{t}"] = {
                         "arm": getattr(self.args, "w_alignment", "all"),
+                        "p_alignment": p_mode,
                         "old_W_with_gradient": len(old),
                         "old_W_total": t,
                         "current_W_grad_nonzero": current_grad,
@@ -154,6 +164,18 @@ class E2Model:
                             not p.requires_grad
                             for j in range(t)
                             for p in self.W[j].parameters()
+                        ),
+                        "P_frozen": all(
+                            not p.requires_grad for p in self.P.parameters()
+                        ),
+                        "P_in_optimizer": sum(
+                            1
+                            for p in trainable
+                            if any(p is q for q in self.P.parameters())
+                        ),
+                        "P_grad_nonzero": any(
+                            p.grad is not None and float(p.grad.abs().sum()) > 0
+                            for p in self.P.parameters()
                         ),
                         "previous_experts_in_optimizer": sum(
                             1
@@ -322,6 +344,16 @@ def main():
         help=(
             "coupling arm: current = freeze old W (C0); all = pinned E2 (C1); "
             "owner_only = old W see only their own task's evidence gradient"
+        ),
+    )
+    parser.add_argument(
+        "--p_alignment",
+        choices=["plastic", "consolidated"],
+        default="plastic",
+        help=(
+            "AC1 arm: plastic = the shared query P trains on every task (the "
+            "pinned contract); consolidated = P trains on task 0 only, then "
+            "frozen and absent from the optimizer for every t >= 1"
         ),
     )
     parser.add_argument("--out", default="results/e2")
