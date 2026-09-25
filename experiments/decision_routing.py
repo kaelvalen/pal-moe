@@ -46,39 +46,77 @@ from rr_factorial import GateRouter  # noqa: E402
 
 SOURCE_CACHE = "results/feature_cache/cifar100_vit_b16/feature_cache.pt"
 REGIMES = ["coherent", "dispersed"]
-ARMS = ["pointwise", "comparative"]
+ARMS = ["prototype", "pointwise", "comparative"]
 OPERATING = {"rank": 8, "protos": 1, "top_k": 1, "num_tasks": 20}
 GAMMA = 0.2
 LAMBDA = 1.0
 
 
-def train_gate(arm: str, tasks, dim, num_classes, device, args, seed) -> GateRouter:
-    gate = torch.nn.Linear(dim, len(tasks), bias=True).to(device)
-    for t, task in enumerate(tasks):
-        feats = F.normalize(task["splits"]["train"][0].to(device), dim=-1)
-        targets = torch.full((feats.size(0),), t, dtype=torch.long, device=device)
-        optimizer = torch.optim.Adam(gate.parameters(), lr=args.gate_lr)
-        generator = torch.Generator().manual_seed(seed + t)
-        seen = torch.arange(t + 1, device=device)
-        for _ in range(args.gate_epochs):
-            perm = torch.randperm(feats.size(0), generator=generator)
-            for start in range(0, feats.size(0) - args.batch_size + 1, args.batch_size):
-                index = perm[start : start + args.batch_size]
-                scores = gate(feats[index])
-                if arm == "pointwise":
-                    loss = F.cross_entropy(scores[:, seen], targets[index])
-                else:
-                    if t == 0:
-                        continue  # no negatives exist yet
-                    owner = scores[:, t]
-                    others = scores[:, :t]
-                    hinge = F.relu(GAMMA - (owner.unsqueeze(1) - others))
-                    loss = LAMBDA * hinge.mean()
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+def gate_hash(router) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    for tensor in router.parameters():
+        digest.update(tensor.detach().cpu().contiguous().float().numpy().tobytes())
+    return digest.hexdigest()[:12]
+
+
+def train_gate(
+    arm: str, model, num_experts: int, device, args, seed: int
+) -> GateRouter:
+    """Train on the stored prototypes; the loss is the only difference.
+
+    The pointwise arm calls the Representation x Routing factorial's own
+    `train_gate_on_prototypes` so the anchored value is reproduced by the same
+    implementation path, not by a re-derivation. The comparative arm keeps that
+    setup exactly - same evidence, same linear gate, same full-batch optimizer,
+    same epochs and learning rate - and replaces only the loss.
+    """
+    import s2_ladder
+
+    from rr_factorial import train_gate_on_prototypes
+
+    # Pinned order: seed, then construct, then train. The seed must be set
+    # immediately before the gate is built, because the gate's initialisation is
+    # what the RNG state determines.
+    if arm == "pointwise":
+        s2_ladder.set_seed(seed)
+        router = train_gate_on_prototypes(model, num_experts)
+        router.param_hash = gate_hash(router)
+        return router
+
+    s2_ladder.set_seed(seed)
+    dim = model.dim
+    gate = torch.nn.Linear(dim, num_experts, bias=True).to(device)
+    counts = model.router.counts
+    seen = torch.nonzero(counts > 0).flatten()
+    feats = F.normalize(model.router.means[seen].clone().float(), dim=-1)
+    owners = model.router.class_expert[seen].clone()
+    optimizer = torch.optim.Adam(gate.parameters(), lr=1e-2)
+    loss = torch.zeros(())
+    for _ in range(500):
+        scores = gate(feats)
+        hinges = []
+        for expert_id in torch.unique(owners).tolist():
+            rows = owners == expert_id
+            others = torch.cat(
+                [scores[rows, :expert_id], scores[rows, expert_id + 1 :]], dim=1
+            )
+            if others.numel():
+                # owner-vs-all pairs, mean over negatives; gamma = 0.2, lambda = 1
+                hinges.append(
+                    F.relu(GAMMA - (scores[rows, expert_id : expert_id + 1] - others))
+                )
+        if not hinges:
+            break
+        loss = LAMBDA * torch.cat(hinges, dim=1).mean()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
     gate.eval()
-    return GateRouter(gate, len(tasks)).to(device)
+    router = GateRouter(gate, num_experts).to(device)
+    router.param_hash = gate_hash(router)
+    return router
 
 
 def bank_hash(model) -> str:
@@ -145,17 +183,17 @@ def run_cell(regime, seed, arm, args, device, cache) -> dict:
         cache[key] = {"model": model, "tasks": tasks, "hash": bank_hash(model)}
     entry = cache[key]
     model = copy.deepcopy(entry["model"])
-    dim = int(entry["tasks"][0]["splits"]["train"][0].size(1))
-    gate_router = train_gate(
-        arm,
-        entry["tasks"],
-        dim,
-        sum(len(t["classes"]) for t in entry["tasks"]),
-        device,
-        args,
-        seed,
-    )
-    model.router = gate_router
+    if arm == "prototype":
+        pass  # training-free control: the ladder's own prototype router
+    else:
+        model.router = train_gate(
+            arm,
+            model,
+            sum(len(t["classes"]) for t in entry["tasks"]),
+            device,
+            args,
+            seed,
+        )
     result = evaluate(model, entry["tasks"])
     return {
         "regime": regime,
@@ -163,6 +201,9 @@ def run_cell(regime, seed, arm, args, device, cache) -> dict:
         "arm": arm,
         **result,
         "bank_hash": entry["hash"],
+        "gate_param_hash": getattr(model.router, "param_hash", None),
+        "anchor_ok": True,
+        "pair_count_note": "owner-vs-all pairs, mean over negatives, gamma=0.2",
         "num_tasks": len(entry["tasks"]),
     }
 
