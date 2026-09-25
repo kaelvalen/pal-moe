@@ -30,13 +30,21 @@ makes the second an explicit target.
 ### 2.1 Evidence
 
 ```text
-h_t = normalize( W_e E_t(z) )        W_e : dim -> 128,  one per expert
+h_t = normalize( W_t E_t(z) )        W_t : dim -> 128, bias = False, one per expert
 ```
 
-`d_e = 128` fixed, L2-normalised, so every expert's evidence is a point on the
-unit sphere of **one shared comparison space**. That is the whole point: two
-experts' outputs are comparable because they are two directions in the same
-space, not because a downstream rule rescales them.
+**`d_e = 128` is a fixed, preregistered common evidence dimension; it is not a
+tuned optimum.** There is no sweep over it, and no "64 would have been better"
+reading afterwards.
+
+**`W_t` carries no bias** (`bias=False`): the study measures the *direction* of
+the evidence, and an affine translation followed by L2 normalisation would add a
+degree of freedom that is not part of the formulation.
+
+L2-normalised, so every expert's evidence is a point on the unit sphere of **one
+shared comparison space**. That is the whole point: two experts' outputs are
+comparable because they are two directions in the same space, not because a
+downstream rule rescales them.
 
 ### 2.2 The router's access point
 
@@ -65,7 +73,69 @@ shape - but it is now computed **through the experts' evidence**, so the experts
 own outputs are shaped to be comparable. Without it the study would repeat E1
 with an extra projection. `L_task` alone is exactly what produced E1's trade-off.
 
-### 2.4 What is held fixed
+### 2.3b `L_task`: what the expert is trained to do
+
+The expert no longer carries a task-local classifier. Classification reads the
+**selected expert's evidence through the ladder's shared readout**, and `L_task`
+is defined on that:
+
+```text
+l_t     = g( h_t )          g : 128 -> num_classes, ONE shared instance
+L_task  = CE( l_t , y )     on the owner expert's evidence
+```
+
+So the structure is exactly:
+
+```text
+expert          z -> adapted feature -> common evidence
+routing         common evidence -> expert score
+classification  selected evidence -> shared global readout
+```
+
+`g`'s input dimension is 128 because it now reads evidence; it remains a single
+shared instance (object identity recorded), and the evidence-format hook replaces
+the ladder's 768-dim readout for this study only.
+
+### 2.4 The training contract
+
+```text
+At task t:
+
+1. Append one raw-z class prototype for every new class.
+2. Freeze the accumulated prototype set for the whole task.
+3. Every optimizer step:
+   a. L_task on the current task's examples through the owner expert
+   b. L_evidence on ALL stored prototypes of ALL seen experts (full batch)
+   c. L = L_task + lambda * L_evidence,  lambda = 1.0
+4. L_evidence:
+   owner     = the stored prototype's expert
+   negatives = every other seen expert
+   full batch, no sampling, no balancing, no rehearsal beyond the prototypes
+5. Trained: the current adapter E_t, ALL seen evidence projections W_e, the
+   shared query P, and the shared readout g.
+6. Previous adapters E_1..E_{t-1} stay frozen.
+7. No prototype regeneration during the task.
+```
+
+**The prototypes are raw-z class means** (`z_p = class_mean(z_raw)`) and every
+expert re-evaluates them as `E_j(z_p)`. **Adapted-space prototypes are not
+stored**: the owner expert's adapted prototype would feed another expert a
+semantically wrong input (`E_j(E_owner(z))`), and the quantity E2 compares must be
+"the same input seen by different experts".
+
+**Why every `W`, not just `W_t`.** Training only `W_t` against frozen `W_1..W_{t-1}`
+would reproduce the one-vs-previous geometry under a new name: the new expert
+learns against the old ones and the old ones never learn against the new one. The
+evidence projections are therefore re-aligned globally at every step, while the
+adapters of past tasks stay frozen - so no capacity factor is reopened.
+
+**Why full batch and every step.** One hundred prototypes make a full-batch
+`L_evidence` cheap, and running it at every optimizer step keeps it inside the
+training objective rather than turning it into a post-hoc alignment. It is also
+the only form that is globally consistent in the sense the earlier studies
+established.
+
+### 2.5 What is held fixed
 
 ```text
 partition, rank, prototypes, seeds, epochs, lr, budget   unchanged
