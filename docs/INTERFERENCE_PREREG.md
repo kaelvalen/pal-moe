@@ -30,6 +30,8 @@ and per old projection `W_j` (`j < q`):
 ```text
 delta_W_j            the change in W_j over task q          (rewrite magnitude)
 grad_norm(q -> j)    || grad_{W_j} L_q ||                   (which task damages which)
+                     - see Amendment 1: restated in loss form because the
+                       gradient probe was not passive
 ```
 
 **2.2 The owner / non-owner decomposition** - the critical measurement. `L_q` is a
@@ -52,6 +54,42 @@ experts.
 T up  ->  non-owner gradient mass up  ->  interference up
       ->  C@3, Acc, Oracle@3 down
 ```
+
+**What a positive pattern would and would not be.** Non-owner gradient mass
+rising while the metrics fall, measured on the same trajectory, is **mechanistic
+support** - not a causal claim. Without an intervention that varies the non-owner
+mass independently of everything else, "the non-owner gradient caused the
+collapse" is stronger than the design can license. The report is worded at the
+support level, and the ladder's correlation is explicitly the weaker of the two
+forms of evidence it collects.
+
+**No metrics beyond this document.** In particular `Delta W_j` is reported as the
+raw norm, as written above; a normalised variant would be a different contract and
+is not added here, even if it would ease cross-projection comparison.
+
+**Amendment 1 (pre-run, before any measurement exists under this wording).** The
+gradient form of section 2.2 was built and found **not passive**: with no hooks,
+no-op hooks, snapshot-only hooks and deepcopy-only hooks the anchored cell returns
+`13.04 / 0.9041`, but the full probe returns `12.23 / 0.9032`. The study's own
+invariance veto therefore fired, and no result has been produced under the original
+wording. Rather than report a perturbing measurement, the decomposition is
+restated in its loss form:
+
+```text
+owner mass_j    = sum over prototypes p with owner(p) = j     of CE_p
+nonowner mass_j = sum over prototypes p with owner(p) != j    of CE_p
+asymmetry       = mean nonowner mass / mean owner mass
+```
+
+measured on a deepcopy of the model with **no `torch.autograd.grad`, no
+`retain_graph` and no `.grad` access at all**. The partition is unchanged (by
+prototype ownership, never by an argmax), the question is unchanged, and only the
+quantity's form changes - from a gradient norm to the loss the gradient would have
+been taken of. `||delta_W_j||` is unchanged, since the snapshot-only probe was
+verified passive.
+
+This amendment is recorded before the re-run: the first ladder's cells remain
+void, and no interference mechanism claim is made from them.
 
 ## 3. Endpoints
 

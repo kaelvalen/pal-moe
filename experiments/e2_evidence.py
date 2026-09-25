@@ -82,10 +82,20 @@ class E2Model:
                 if bool(mask.any()):
                     self.prototypes.append((feats[mask].mean(dim=0), task_index))
 
-    def train(self, tasks, seed):
+    def train(self, tasks, seed, hooks=None):
+        """The single training path. `hooks` observes; it never trains.
+
+        `on_task_start(model, t) -> state` runs after the task's prototypes are
+        appended and before training, `on_task_end(model, t, state)` after it.
+        With `hooks=None` this is byte-identical to the un-instrumented path.
+        """
+        hooks = hooks or {}
         for t, task in enumerate(tasks):
             self.add_task(task, t)
+            state = hooks.get("on_task_start")(self, t) if hooks else None
             self.train_task(task, t, seed)
+            if hooks.get("on_task_end"):
+                hooks["on_task_end"](self, t, state)
 
     def train_task(self, task, t, seed):
         """One task of the pinned contract; identical for E2 and the ablation."""
