@@ -73,7 +73,6 @@ def train_gate(
     same epochs and learning rate - and replaces only the loss.
     """
     import s2_ladder
-
     from rr_factorial import train_gate_on_prototypes
 
     # Pinned order: seed, then construct, then train. The seed must be set
