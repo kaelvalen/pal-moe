@@ -127,6 +127,14 @@ its question is now specific:
 > jointly with the experts - and if jointly, does that change what the experts
 > learn?
 
+That pre-registration is now written: `REPRESENTATION_ROUTING_PREREG.md`. It is a
+2x2 factorial (representation frozen/trainable x routing objective off/on) rather
+than a single joint-training arm, precisely because "train the routing loss with
+the experts" would move both factors at once and could not attribute the outcome.
+It also pins the fix for this study's structural failure: the routing objective is
+trained on the stored prototypes of **all** seen experts at every step, so no row
+is ever trained one-vs-previous, and no rehearsal is needed.
+
 ## 7. What this does not say
 
 - It does not say learned routers cannot work. It says this protocol - frozen

@@ -34,7 +34,7 @@ systematically* is a successful Stage 1.
 | S10 | scalability: task count, two datasets, candidate-set control | **done** (`experiments/s10_scaling.py`, `STAGE1_RESULTS.md` section 13) |
 | S11 | confirmatory protocol: six hypotheses, paired over six seeds | **done** (`experiments/s11_confirmatory.py`, `STAGE1_RESULTS.md` section 14) |
 
-Stage 1 is **frozen**. The next programme is the Router Ranking Study, pre-registered in `ROUTER_RANKING_PREREG.md` and reported in `ROUTER_RANKING_RESULTS.md`: a new hypothesis aimed at the failure mode Stage 1 measured, not evidence for Stage 1. It has run and the hypothesis was refuted in the opposite direction (R2 is significantly worse than prototype ranking); the next pre-registration is the representation-vs-routing study.
+Stage 1 is **frozen**. The next programme is the Router Ranking Study, pre-registered in `ROUTER_RANKING_PREREG.md` and reported in `ROUTER_RANKING_RESULTS.md`: a new hypothesis aimed at the failure mode Stage 1 measured, not evidence for Stage 1. It has run and the hypothesis was refuted in the opposite direction (R2 is significantly worse than prototype ranking). The next pre-registration is `REPRESENTATION_ROUTING_PREREG.md`: a 2x2 factorial separating the routing objective from representation plasticity, since a single joint-training arm would move both at once.
 
 Two rules apply to every stage, and they are the reason the ladder is
 trustworthy:
