@@ -91,6 +91,14 @@ verified passive.
 This amendment is recorded before the re-run: the first ladder's cells remain
 void, and no interference mechanism claim is made from them.
 
+**Clarification (post-run, rationale only - no contract change).** Amendment 1's
+statement that the gradient probe was "not passive" is withdrawn as unsupported:
+the `12.23 / 0.9032` divergence it rested on is fully explained by the runner's
+duplicate model construction (a second `E2Model` built after `set_seed`, consuming
+the global RNG), and the gradient form was never run on a corrected path. The loss
+form stays the executed measurement - it is the conservative choice, not a verdict
+on the gradient form.
+
 ## 3. Endpoints
 
 **Primary:** `Delta C@3` between consecutive ladder points (the routing damage
@@ -99,9 +107,12 @@ curve), with `Acc` and `conditional_oracle@3` reported alongside.
 **Mechanistic secondaries**, related to the primary **on the same trajectory**:
 
 ```text
-mean ||nonowner|| / mean ||owner||      the interference asymmetry
+mean nonowner mass / mean owner mass   the interference asymmetry
+                                       (loss form, per Amendment 1 - not a
+                                       gradient norm)
 mean ||delta_W_j|| as T grows           the rewrite mass
-correlation across ladder points between non-owner mass and each metric
+correlation across ladder points between the loss-based non-owner asymmetry and
+each metric
 ```
 
 ## 4. Outcome reading, fixed in advance
@@ -119,6 +130,10 @@ correlation across ladder points between non-owner mass and each metric
 instrumentation is passive     probes use torch.autograd.grad on the loss graph
                                BEFORE optimizer.step(), never touching .grad, so
                                the training trajectory is unchanged
+                               - superseded by Amendment 1: the executed probe is
+                                 the loss form, and after the runner fix (one
+                                 construction) full, probe-off, norm-off and
+                                 no-hook runs all reproduce the anchor exactly
 exact anchor                   the `C1` run at T = 20 must reproduce
                                COUPLING_RESULTS' C1 numbers exactly
                                (13.04 / 0.9041 at seed 42, coherent)
