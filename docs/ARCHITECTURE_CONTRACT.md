@@ -1,5 +1,7 @@
 # PAL-MoE Architecture Contract (S1)
 
+> **Note (2026-09-26):** still in force; `V3_ARCHITECTURE.md` builds on these interfaces. The v1 modules named in section 3 now live in `pal_moe/legacy/` (old import paths are alias shims), and `pal_moe/evaluation` is `pal_moe/eval`.
+
 Status: implemented, 2026-09-23. Companion to `MEASUREMENT_CONTRACT.md` (S0,
 what a run must report) and `PALMOE_V2_SPEC.md` (the v2 design freeze, which
 this supersedes on the abstraction question).

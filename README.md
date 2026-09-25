@@ -17,8 +17,25 @@ Instead of overwriting past knowledge, PAL-MoE spawns a new expert network for e
 > still the published record for the v1 design; read them together with
 > `STAGE1_RESULTS.md` sections 7 and 10.
 
+> **v3 architecture (2026-09-26, branch `v3-restructure`).** The code is now
+> organised around one fixed address space and three time scales:
+> a FAST append-only key-value memory (one item, O(1) write, exact delete), a
+> MEDIUM closed-form edit from float64 sufficient statistics (one batch,
+> order-invariant, exactly subtractable) and a SLOW consolidation into frozen
+> representation experts. Learning is an API call - `PalMoE.write / forget /
+> consolidate / predict / state` - and four guards (locality, bitwise
+> reversibility, order invariance, zero-parameter router) run on every call. The
+> restructure changed no number: the S11 E0, AC3 and E-TID2 anchors reproduce
+> with |delta| = 0.0 and the v1 smoke is identical. The HuggingFace 7B (4-bit)
+> backend and the knowledge-editing harness are built as infrastructure only;
+> **no LLM result exists yet** (`docs/V3_LLM_PREREG.md` is proposed, not run).
+> See [`docs/V3_ARCHITECTURE.md`](docs/V3_ARCHITECTURE.md).
+
 Documentation entry points:
 
+- [`docs/V3_ARCHITECTURE.md`](docs/V3_ARCHITECTURE.md): the v3 architecture, API and guards, the package layout and its import shims, and a table mapping every design decision to the result that motivates it.
+- [`docs/E_TID_RESULTS.md`](docs/E_TID_RESULTS.md) and [`docs/E_TID2_RESULTS.md`](docs/E_TID2_RESULTS.md): the offline task-ID ceiling and the continual ridge router (exploratory: no committed pre-registration).
+- [`docs/P2_BOUND_PREREG.md`](docs/P2_BOUND_PREREG.md) and [`docs/V3_LLM_PREREG.md`](docs/V3_LLM_PREREG.md): the next two pre-registrations (proposed, not run).
 - [`docs/STAGE1_RESULTS.md`](docs/STAGE1_RESULTS.md): **all Stage 1 results in one place** (E0, S2, S3, S7, S4), the consolidated findings, the pre-registered hypothesis verdicts, and what the evidence does *not* say.
 - [`docs/STAGE1_PLAN.md`](docs/STAGE1_PLAN.md): the stage order, the two experiment rules, and the per-stage write-ups.
 - [`docs/MEASUREMENT_CONTRACT.md`](docs/MEASUREMENT_CONTRACT.md) and [`docs/ARCHITECTURE_CONTRACT.md`](docs/ARCHITECTURE_CONTRACT.md): what a run must report (S0) and the four interfaces plus registries (S1).
@@ -27,7 +44,7 @@ Documentation entry points:
 - [`docs/RESEARCH_MAP.md`](docs/RESEARCH_MAP.md): which literature line each code component comes from.
 - [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md): structure and comment review, plus the refactor backlog.
 - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) and [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md): protocol, design facts and the paper experiment plan.
-- [`docs/PALMOE_V2_SPEC.md`](docs/PALMOE_V2_SPEC.md): the pre-measurement v2 design freeze, kept for the record. S1 supersedes it on the abstraction question and the measurements supersede it on the mechanism question.
+- [`docs/PALMOE_V2_SPEC.md`](docs/PALMOE_V2_SPEC.md): the pre-measurement v2 design freeze, kept for the record. S1 supersedes it on the abstraction question, the measurements supersede it on the mechanism question, and `V3_ARCHITECTURE.md` supersedes it as the architecture.
 
 Reproduce every Stage 1 result with one command:
 
@@ -254,42 +271,30 @@ the third task on (`--freeze_shared_after 2`, `results/mnist_domainshift/`;
 ```text
 pal-moe/
 ├── pal_moe/
-│   ├── models/
-│   │   ├── encoder.py          # SharedEncoder (AE / SimCLR pretraining)
-│   │   ├── expert.py           # MLPExpert with Net2Net Expansion
-│   │   ├── router.py           # DynamicRouter / DistanceRouter / AttentionRouter (top-k)
-│   │   └── moe.py              # DynamicMoE container (latent forward, freeze/unfreeze)
-│   ├── memory/
-│   │   └── prototype_memory.py # Prototype anchors (v_p, r_p, o_p) + stability losses
-│   ├── adaptation/
-│   │   └── ttt.py              # ContinualTrainer (OOD loss, joint calibration, checkpointing)
-│   ├── baselines/
-│   │   ├── naive.py / ewc.py / replay.py
-│   │   ├── der.py              # DER++ and ER-ACE
-│   │   ├── agem.py             # A-GEM
-│   │   └── icarl.py            # iCaRL (nearest-class-mean + distillation)
-│   ├── data/                   # split_mnist / split_cifar / split_cifar100
-│   ├── config.py               # Validated JSON config (explicit CLI > config > defaults)
-│   ├── persistence.py          # checkpoint save/load (model + prototype memory)
-│   ├── evaluation/             # ContinualEvaluator (avg acc, forgetting, BWT, router KL)
-│   ├── trigger/                # QuantitativeTrigger (expert spawning)
-│   └── builder/                # ExpertBuilder (candidate training + validation gate)
-├── experiments/
-│   ├── run_benchmark.py        # Full benchmark (12 methods), single seed
-│   ├── run_benchmark_multi.py  # Multi-seed driver (mean ± std)
-│   ├── run_ablation.py         # Controlled ablation (shared encoder per seed)
-│   ├── run_pure_explore.py     # Fast pure/hybrid mechanism sweeps
-│   ├── debug_routing_asymmetry.py  # Task-to-expert routing diagnostics
-│   ├── diagnose_checkpoint.py  # Per-task checkpoint diagnostics
-│   └── plot_results.py         # Figure generation (single + multi-seed JSON)
+│   ├── api/                    # v3: PalMoE / PalMoELM facades, GuardedEditor (the four guards), records
+│   ├── core/                   # v3: frozen backbones, HF causal-LM adapter, feature cache, constructions, hashing
+│   ├── address/                # v3: parameter-free retrieval over frozen keys (ExactCosineIndex)
+│   ├── router/                 # v3: prototype, ridge_class, router-purity guard
+│   ├── memory/                 # v3 FastMemory (+ v1 prototype_memory alias)
+│   ├── edit/                   # v3: float64 closed-form edits (LinearStats, DownProjEdit)
+│   ├── experts/                # v3: Stage 1 ladder bank, consolidation policies
+│   ├── readout/                # v3: the S1 readout registry
+│   ├── eval/                   # metrics, measurement contract (schema), paired stats, editing harness
+│   ├── arch/                   # S1 contract: protocols and registries
+│   ├── data/                   # split_mnist / split_cifar / split_cifar100 / feature cache
+│   ├── legacy/                 # v1, frozen bitwise:
+│   │   ├── models/             #   SharedEncoder, MLPExpert, DynamicRouter..., DynamicMoE
+│   │   ├── memory/             #   prototype anchors + stability losses, generative replay
+│   │   ├── adaptation/         #   ContinualTrainer (OOD loss, joint calibration)
+│   │   ├── baselines/          #   naive / EWC / replay / DER++ / ER-ACE / A-GEM / iCaRL / MIR
+│   │   ├── builder/ trigger/   #   ExpertBuilder (validation gate), QuantitativeTrigger
+│   │   └── factory.py merge.py persistence.py
+│   ├── models/ adaptation/ baselines/ builder/ trigger/ evaluation/   # alias shims (old import paths)
+│   └── config.py               # Validated JSON config (explicit CLI > config > defaults)
+├── experiments/                # thin runners (run_benchmark*, s*_*, ac*, e_tid*, v3_*)
 ├── configs/                    # JSON configs (mnist_default, cifar10_default, ...)
-├── docs/
-│   ├── SUNUM.md                # Turkish presentation guide (start here for a demo)
-│   ├── RESEARCH_MAP.md         # Component -> literature lineage
-│   ├── RESULTS_INVENTORY.md    # What every results/ directory contains
-│   ├── BENCHMARK.md            # Methodology, protocol and measured design facts
-│   └── EXPERIMENT_PLAN.md      # Paper experiment plan and run-day findings
-└── tests/test_pal_moe.py       # PyTest suite (105 tests)
+├── docs/                       # results, pre-registrations, contracts (start at V3_ARCHITECTURE.md)
+└── tests/                      # PyTest suite (v1 + S0/S1 contracts + v3)
 ```
 
 ---
