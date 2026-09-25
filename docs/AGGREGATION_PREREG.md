@@ -48,11 +48,26 @@ p_WTA   = p_{e*}(y | z)
 p_mix(y | z) = (1/3) * sum_{e in C_3} p_e(y | z)
 ```
 
-Each expert's local posterior `p_e(y|z)` is the shared readout applied to that
-expert's adapted feature, placed into the global class space with that expert's
-own classes having mass and every other class having zero. There is **no learned
-selector, no temperature and no weighting mechanism**: the uniform average is
-chosen precisely so that the only difference is the decision rule.
+**Each expert's posterior is computed over the full global class space using the
+unchanged ladder readout. No expert-local class masking is applied during either
+WTA or mixture evaluation.**
+
+```text
+p_e(y | z)  = softmax(l_e(z))_y       l_e = the ladder readout on E_e(z)
+p_mix       = (1/3) * sum_{e in C_3} p_e(y | z)
+yhat_WTA    = argmax_y p_{e_top1}(y | z)      expert choice and class
+                                              prediction kept separate
+```
+
+The zero-mass variant was rejected before the run: masking an expert's posterior
+to its own classes re-introduces the task/class masking factor that S5 separated
+out, and it makes the WTA arm differ from the ladder's own evaluation path, so
+the anchor below would fail by construction. With full-class posteriors the WTA
+arm *is* the ladder's path and the anchor is exact.
+
+There is **no learned selector, no temperature and no weighting mechanism**: the
+uniform average is chosen precisely so that the only difference is the decision
+rule.
 
 **Both arms compute the same forward.** Both evaluate the same three experts on
 the same input; WTA then discards two of them and the mixture combines all three.
@@ -74,6 +89,8 @@ expert outputs           identical      if these move, it is not a decision-rule
                                         experiment
 L4 / oracle path         identical
 Ceiling@3                identical      it is built from the same candidate set
+global-class posteriors  both arms receive the same unmasked full-class
+                                        posterior tensors from the candidates
 ```
 
 **Primary:**
