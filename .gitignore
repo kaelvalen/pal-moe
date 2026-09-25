@@ -102,5 +102,7 @@ GORUSME_NOTLARI.md
 meeting_notes.md
 
 
-# Archived exploratory runs (not cited anywhere)
-results/archive/
+# Local research artifacts: study JSONs, caches, logs. The runners under
+# experiments/ regenerate them and the docs reference them by path; they are not
+# tracked, so a fresh clone must re-run the runners.
+results/
