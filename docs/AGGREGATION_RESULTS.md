@@ -59,10 +59,17 @@ competition between experts, a single winner - now has both of its components
 tested:
 
 ```text
-pointwise supervision      -> not the constraint   (RR, RRF, DR)
-comparative supervision    -> not the constraint   (DR)
-the winner-take-all rule   -> not the constraint   (this study: it is better)
+pointwise supervision          -> not the constraint   (RR, RRF, DR)
+comparative supervision        -> not the constraint   (DR)
+uniform top-3 aggregation      -> does not improve on winner-take-all under the
+                                  fixed candidate set   (this study)
 ```
+
+**The third line is deliberately narrow.** This study refutes the pre-registered
+uniform top-3 aggregation alternative; it does not show that winner-take-all is
+optimal, and it does not show that aggregation schemes in general are inferior.
+Only that specific alternative, under that fixed candidate set, at that operating
+point.
 
 And the ranking side is already covered: capacity does not help (S8, S10),
 resolution helps partially (S8, S11), the adapted space trades separability for
