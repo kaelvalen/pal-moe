@@ -55,10 +55,12 @@ at p = 0.0312.
 
 Accuracy therefore has a damage component the non-owner cut does not remove. Since
 C0 - no old-`W` gradient at all - restores accuracy and OWNER-ONLY - owner-term
-gradient kept - does not, the remaining candidate is the owner-term re-alignment
-itself: old projections still move (section 5) while the old-class readout rows are
-frozen, so their evidence drifts out of the frozen decision boundaries. That is a
-pointer for the next pre-registration, not a result of this study.
+gradient kept - does not, the remaining accuracy degradation is consistent with an
+owner-term or other residual coupling mechanism. The natural candidate is that old
+projections still move (section 5) while the old-class readout rows are frozen, so
+their evidence drifts out of the frozen decision boundaries. This is a hypothesis
+that motivates a separate pre-registered test; it is not a confirmatory result of
+this study, whose primary contrast was OWNER-ONLY - C1.
 
 ## 4. Count calibration: `asym_pp` against the `19.65x` headline
 
@@ -75,10 +77,11 @@ The C1 sum-form values reproduce the interference ladder's `19.650 / 19.645` to 
 printed precision. The count-adjusted counterpart is ~1.03 on every arm: at the trained
 state an old projection's per-prototype cross-entropy on other tasks' prototypes
 is only 2.6-3.4% above its own-prototype value. So the `19.65x` headline is
-essentially the prototype count (~19 other prototypes per own prototype), exactly
-as the interference pre-registration warned it could not be read as per-prototype
-severity. The sum form is dominated by count and is nearly unchanged by the
-intervention, while coverage moves by 2.5-4 points - it is not the endpoint.
+essentially an aggregation/count effect - about 19 other prototypes per own
+prototype - and the per-prototype interference is about 1.03x, exactly as the
+interference pre-registration warned the sum form could not be read as
+per-prototype severity. The sum form is nearly unchanged by the intervention,
+while coverage moves by 2.5-4 points - it is not the endpoint.
 
 ## 5. Rewrite mass (raw norms, secondary)
 
@@ -100,10 +103,13 @@ now only on their own task's prototypes.
   the way to the no-coupling boundary. The non-owner path is a cause of the
   routing damage.
 - **Does not license:** a complete explanation - accuracy stays collapsed, and the
-  section 3 pointer is a hypothesis, not a tested result; any per-prototype
-  severity statement - section 4 shows the sum form is counting prototypes; any
-  statement about `P` or `g`, which were unchanged in every arm; anything beyond
-  the pinned formulation and the 20-expert operating point.
+  section 3 hypothesis (owner-term or other residual coupling) is not a tested
+  result of this study, whose primary contrast was OWNER-ONLY - C1; any
+  per-prototype severity statement - section 4 shows the sum form is a count
+  effect; any statement about `P` or `g`, which were unchanged in every arm; and
+  C0 as a solution - it remains a reference, still below E0 on coverage in the
+  coupling study, and the OWNER-ONLY-to-C0 accuracy gap is exactly the next
+  question.
 - The primary test was defined a priori and does not condition on
   `INTERFERENCE_RESULTS.md`; the count calibration in section 4 is a secondary
   passive measurement, reported as calibration.
