@@ -315,12 +315,25 @@ measured is therefore a property of the *problem*, not a bias of the router:
 when classes are shared there is nothing to gain from class geometry and the
 prototypes organize by domain instead.
 
-**D3 - isolation's raw value is the same in both protocols; Domain-IL just
-cannot cash it.** Oracle-routed `L3 - L2b` is **+13.74** here against **+14.58**
-in Class-IL: the bank's capacity to isolate is protocol-independent. With the
-learned router the advantage collapses to **+2.05**, because the router's
-11.69-point tax eats it. Isolation is worth having, and its value is realised or
-lost entirely in the routing.
+**D3 - isolation's available value is larger in Class-IL, and in both protocols
+the learned router realises only a minority of it.** The correct comparison uses
+the same routing on both sides, and it splits into *available* (oracle-routed)
+and *realised* (learned):
+
+| protocol | isolation, realised (`L3 - L2b`) | isolation, available (`L4 - L2b`) | realised / available |
+| :-- | --: | --: | --: |
+| Class-IL (CIFAR-100) | +14.58 | **+41.46** | 35% |
+| Domain-IL (rotated MNIST) | **+2.05** | **+13.74** | 15% |
+
+An earlier draft of this section compared Domain-IL's *available* +13.74 with
+Class-IL's *realised* +14.58 - a category error. The corrected numbers say
+something stronger: the bank's available benefit is three times larger under
+Class-IL (+41.46) because there each expert owns a disjoint label set and is a
+5-way classifier against the shared adapter's 100-way, while under Domain-IL
+every expert covers all ten classes and only the domain specialisation can help.
+And the learned router captures only a **minority of the available benefit in
+both protocols**, 35% and 15% respectively - worst where the label space gives
+it no help. Isolation is real; realising it is the bottleneck.
 
 **D4 - readout dominance holds, and the oracle now beats it.** `L1_ridge`
 (0 parameters) is 91.58 against L3's 84.20 and L2b's 82.15, exactly the S2-S4
@@ -361,7 +374,88 @@ Two, both of which made the whole stage meaningless rather than merely noisy:
 
 ---
 
-## 9. Consolidated findings
+## 9. S6 - order sensitivity
+
+Both order axes are free: a class order is a re-partition of an existing
+feature cache (which classes share a task, features untouched) and a task order
+is a permutation of the resulting groups. So the stream's *geometry* can be
+varied without any new extraction, which makes order the single variable.
+
+Nine configurations (3 class partitions x 3 visit orders), canonical frozen
+ViT-B/16, CIFAR-100, 10 epochs.
+
+| level | accuracy | std across orders | unseen transfer | expert share (unseen) | reading |
+| :-- | --: | --: | --: | --: | :-- |
+| `L0_ncm` | 70.76 | 0.64 | 95.47 | - | - |
+| `L1_ridge` | 77.30 | 0.43 | 95.47 | - | - |
+| `L2b_shared_seq` | 57.02 | 1.55 | 95.51 | - | - |
+| `L3_per_task` | 71.17 | 0.65 | 95.00 | **0.205** | **spread** |
+| `L4_oracle` | 96.58 | 0.43 | 95.47 | - | - |
+
+Per-configuration decomposition (nine rows, abbreviated to the range):
+
+| quantity | range over the nine orders | easy vs hard groups |
+| :-- | --: | --: |
+| routing tax (`L4 - L3`) | 25.19 - 25.92 | 25.22 vs 25.80 |
+| isolation realised (`L3 - L2b`) | 12.36 - 16.88 | 14.14 vs 14.17 |
+| isolation available (`L4 - L2b`) | 37.56 - 42.01 | 39.36 vs 39.97 |
+
+### 9.1 Findings
+
+**O1 - the routing tax is order-robust.** It spans 25.19-25.92 over nine
+configurations, and the median split into easy and hard orders separates
+25.22 from 25.80 - a 0.58-point spread on a 25.5-point effect. Correlations:
+`tax` vs `order_confusion` **-0.053**, `isolation_realised` vs difficulty
+-0.095, `isolation_available` vs difficulty +0.076. Every earlier stage measured
+on one canonical order, and S6 says that was safe: the tax is a property of the
+representation and the protocol, not of the stream's arrangement.
+
+**O2 - order is not a meaningful variance source at this scale.** The standard
+deviation across the nine configurations is 0.43-1.55 points per level, well
+below every effect the earlier stages report. The largest is `L2b` at 1.55,
+which is the one level whose accuracy is genuinely order-dependent (it has no
+per-task isolation, so it absorbs the class ordering directly).
+
+**O3 - the difficulty axis was not actually sampled, so the difficulty
+hypothesis is untested.** The easy/hard split separates difficulty 0.289 from
+0.299 - a one-point range - and `order_confusion` only spans 0.653-0.722. A
+random permutation of CIFAR-100 classes produces tasks of nearly equal
+difficulty, so there was nothing to correlate against. The honest conclusion is
+therefore narrow: **the tax does not depend on the order permutations sampled
+here**, not "the tax is independent of difficulty". Testing the difficulty
+hypothesis needs a *designed* partition with a real contrast - for instance
+grouping classes by CIFAR-100 superclass (coherent tasks, high cross-task
+similarity) versus spreading one class per superclass across tasks
+(incoherent tasks, low similarity) - which the cached features support at no
+extraction cost (S6b).
+
+**O4 - for an unseen task the router does not decide; it spreads.** The top
+expert takes only **20.5%** of an unseen task's samples and the expert
+distribution has entropy 2.556 against a maximum of ln(20) = 2.996, i.e. 85% of
+uniform. Meanwhile the representation transfers to that task at **95.00%**. Of
+the two failure modes this stage was built to separate - "decides, but wrongly"
+(high concentration, low entropy, low transfer) versus "cannot decide" (low
+concentration, high entropy) - the measurement is unambiguously the second:
+**the prototypes are all from seen classes, and a new class has no clear winner
+among them.** This is the specialisation-extrapolation failure, and it is the
+same root as E0's reranking result (F5): the router has no basis on which to
+decide, so nothing downstream of it can recover the decision.
+
+**O5 - consistency with the canonical order.** S4's CIFAR-100 numbers (L2b
+56.00, L3 70.58, L4 97.46, tax 26.88) sit inside this order distribution
+(57.02 / 71.17 / 96.58 / 25.5), so the canonical order the other stages used is
+not an outlier.
+
+### 9.2 What this does not settle
+
+Whether the routing tax grows with *task difficulty* remains open, because the
+sampled orders had no difficulty spread (O3). The designed-partition experiment
+(S6b) is the version that can answer it, and it is cheap: the class ids in the
+cache can be re-grouped by superclass without touching the features.
+
+---
+
+## 10. Consolidated findings
 
 **F1. The readout was the first bottleneck, and a training-free prototype
 readout solves it.** NCM on frozen features beats v1 and iCaRL on CIFAR-100
@@ -404,7 +498,7 @@ is what discriminates.
 
 ---
 
-## 10. Pre-registered hypotheses and their verdicts
+## 11. Pre-registered hypotheses and their verdicts
 
 | hypothesis | statement | verdict |
 | :-- | :-- | :-- |
@@ -425,7 +519,7 @@ is what discriminates.
 
 ---
 
-## 11. Measurement bugs this programme found
+## 12. Measurement bugs this programme found
 
 Five, each of which would have produced a confident wrong number:
 
@@ -464,7 +558,7 @@ requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 12. What this evidence does NOT say
+## 13. What this evidence does NOT say
 
 - It does **not** say "mixture of experts is unnecessary". It says that under
   this benchmark, protocol, budget and backbone, the incremental expert
@@ -486,7 +580,7 @@ requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 13. Open items and the stage order
+## 14. Open items and the stage order
 
 | stage | content | blocker |
 | :-- | :-- | :-- |
@@ -494,6 +588,7 @@ requires calling the existing entry point instead of re-deriving a loop.
 | S4b | task-count sweep `T in {2,5,10,20}` | splitters have no sub-task support |
 | S5 | Task-IL / Class-IL protocol axis | **done** (section 7) |
 | S5b | Domain-IL rotated MNIST, unseen domain | **done** (section 8) |
+| S6 | order sensitivity (class and task order) | **done** (section 9); the difficulty hypothesis needs S6b |
 | S6 | task order, class order, unseen task, expert transfer | splitters have no order parameters |
 | S8 | memory / data-regime / compute budgets | no `--data_fraction`, no generic budget flag |
 | S9-S11 | robustness, scalability, statistics | unstarted |
@@ -504,7 +599,7 @@ number above depends on being explicit about.
 
 ---
 
-## 14. Artefacts
+## 15. Artefacts
 
 | path | contents |
 | :-- | :-- |

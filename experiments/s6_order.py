@@ -202,7 +202,10 @@ def run_configuration(
     if holdout is not None:
         # Accuracy on the unseen task is structurally zero (its classes are
         # masked), so measure the representation and the routing instead.
-        probe = build_readout("ridge", dim=dim, num_classes=num_classes).to(device)
+        # The probe runs on CPU: the representation is already moved there for
+        # the transfer suite, and a closed-form ridge has no reason to hold a
+        # device context.
+        probe = build_readout("ridge", dim=dim, num_classes=num_classes)
         probe.fit(
             model.represent(holdout["train_x"].to(device)).cpu(),
             holdout["train_y"],
@@ -393,27 +396,33 @@ def aggregate(cells: list[dict]) -> dict:
             "unseen_task_expert_max_share": st(
                 [c.get("unseen_task_expert_max_share") for c in rows]
             ),
+            "unseen_task_expert_entropy": st(
+                [c.get("unseen_task_expert_entropy") for c in rows]
+            ),
             "n_configurations": len(rows),
         }
         for level, rows in by_level.items()
     }
 
-    # Routing tax per order configuration, and its correlation with difficulty.
+    def acc(level, class_seed, task_seed):
+        rows = [
+            c
+            for c in cells
+            if c["class_order_seed"] == class_seed
+            and c["task_order_seed"] == task_seed
+            and c["level"] == level
+        ]
+        return rows[0]["accuracy"] if rows else None
+
+    # Routing tax and the isolation decomposition per order configuration.
     per_order: list[dict] = []
-    configs = {(c["class_order_seed"], c["task_order_seed"]) for c in cells}
-    for class_seed, task_seed in sorted(configs):
-
-        def acc(level, class_seed=class_seed, task_seed=task_seed):
-            rows = [
-                c
-                for c in cells
-                if c["class_order_seed"] == class_seed
-                and c["task_order_seed"] == task_seed
-                and c["level"] == level
-            ]
-            return rows[0]["accuracy"] if rows else None
-
-        l3, l4, l1 = acc("L3_per_task"), acc("L4_oracle"), acc("L1_ridge")
+    configs = sorted({(c["class_order_seed"], c["task_order_seed"]) for c in cells})
+    for class_seed, task_seed in configs:
+        l0 = acc("L0_ncm", class_seed, task_seed)
+        l1 = acc("L1_ridge", class_seed, task_seed)
+        l2b = acc("L2b_shared_seq", class_seed, task_seed)
+        l3 = acc("L3_per_task", class_seed, task_seed)
+        l4 = acc("L4_oracle", class_seed, task_seed)
         conf = [
             c["order_confusion"]
             for c in cells
@@ -423,14 +432,28 @@ def aggregate(cells: list[dict]) -> dict:
             {
                 "class_order_seed": class_seed,
                 "task_order_seed": task_seed,
+                "L0_ncm": l0,
                 "L1_ridge": l1,
+                "L2b_shared_seq": l2b,
                 "L3_per_task": l3,
                 "L4_oracle": l4,
+                # Difficulty for the training-free readout: higher = harder.
+                "ncm_difficulty": (1.0 - l0) if l0 is not None else None,
+                # The routing tax is the L4 - L3 quantity S4 measured.
                 "routing_tax": (
                     (l4 - l3) if (l3 is not None and l4 is not None) else None
                 ),
-                "isolation_benefit": (
-                    (l3 - l1) if (l3 is not None and l1 is not None) else None
+                # Isolation splits into what the learned router realises and
+                # what is available under oracle routing; S5b showed the two
+                # differ by a factor of three (class-IL 35%, domain-IL 15%).
+                "isolation_realised": (
+                    (l3 - l2b) if (l2b is not None and l3 is not None) else None
+                ),
+                "isolation_available": (
+                    (l4 - l2b) if (l2b is not None and l4 is not None) else None
+                ),
+                "isolation_vs_ridge": (
+                    (l3 - l1) if (l1 is not None and l3 is not None) else None
                 ),
                 "order_confusion": conf[0] if conf else None,
             }
@@ -453,15 +476,69 @@ def aggregate(cells: list[dict]) -> dict:
         )
         return num / den if den > 1e-12 else None
 
+    # Easy / hard split on the median difficulty, so the answer is a shape
+    # rather than a single coefficient: does the tax appear in every order
+    # geometry, or only in the hard ones?
+    groups: dict[str, dict] = {}
+    scored = [row for row in per_order if row.get("ncm_difficulty") is not None]
+    if len(scored) >= 4:
+        median = statistics.median(row["ncm_difficulty"] for row in scored)
+        for label, subset in (
+            ("easy", [r for r in scored if r["ncm_difficulty"] <= median]),
+            ("hard", [r for r in scored if r["ncm_difficulty"] > median]),
+        ):
+            if not subset:
+                continue
+            groups[label] = {
+                "n_configurations": len(subset),
+                "ncm_difficulty": statistics.mean(r["ncm_difficulty"] for r in subset),
+                "routing_tax": statistics.mean(
+                    r["routing_tax"] for r in subset if r["routing_tax"] is not None
+                ),
+                "isolation_realised": statistics.mean(
+                    r["isolation_realised"]
+                    for r in subset
+                    if r["isolation_realised"] is not None
+                ),
+                "isolation_available": statistics.mean(
+                    r["isolation_available"]
+                    for r in subset
+                    if r["isolation_available"] is not None
+                ),
+            }
+
+    # Concentration and uncertainty are kept apart from transferability: a
+    # router that always picks one expert is *confident*, and can still be
+    # confidently wrong for a task it has never seen.
+    unseen = {
+        "max_share": levels.get("L3_per_task", {}).get("unseen_task_expert_max_share"),
+        "entropy": levels.get("L3_per_task", {}).get("unseen_task_expert_entropy"),
+        "transferability": levels.get("L3_per_task", {}).get("unseen_task_transfer"),
+    }
+    for entry in levels.values():
+        share = entry.get("unseen_task_expert_max_share")
+        if share and share["mean"] >= 0.5:
+            entry["unseen_assignment_reading"] = "concentrated"
+        elif share:
+            entry["unseen_assignment_reading"] = "spread"
+        else:
+            entry["unseen_assignment_reading"] = None
+
     return {
         "levels": levels,
         "per_order": per_order,
+        "difficulty_groups": groups,
+        "unseen_assignment": unseen,
         "correlations": {
             "routing_tax_vs_order_confusion": correlate(
                 "routing_tax", "order_confusion"
             ),
-            "isolation_benefit_vs_order_confusion": correlate(
-                "isolation_benefit", "order_confusion"
+            "routing_tax_vs_ncm_difficulty": correlate("routing_tax", "ncm_difficulty"),
+            "isolation_realised_vs_ncm_difficulty": correlate(
+                "isolation_realised", "ncm_difficulty"
+            ),
+            "isolation_available_vs_ncm_difficulty": correlate(
+                "isolation_available", "ncm_difficulty"
             ),
         },
     }
@@ -517,38 +594,68 @@ def _print(agg: dict) -> None:
     print("S6 ORDER SENSITIVITY (CIFAR-100, frozen ViT-B/16)")
     print("=" * 100)
     print(
-        f"{'level':16s} {'acc':>9s} {'std':>7s} {'forget':>9s} {'confusion':>10s} {'unseen':>9s}"
+        f"{'level':16s} {'acc':>9s} {'std':>7s} {'forget':>9s} {'confusion':>10s} "
+        f"{'unseen transfer':>16s} {'share':>7s} {'reading':>12s}"
     )
     for level, entry in agg["levels"].items():
 
         def f(x, w=8):
             return f"{x['mean'] * 100:{w}.2f}%" if x else " " * (w - 1) + "-"
 
+        share = entry.get("unseen_task_expert_max_share")
         print(
             f"{level:16s} {f(entry['accuracy'], 8)} "
             f"{(entry['accuracy'] or {}).get('std', 0) * 100:6.2f}% "
             f"{f(entry['forgetting'], 8)} "
             f"{(entry['order_confusion'] or {}).get('mean', float('nan')):9.3f} "
-            f"{f(entry['unseen_task_transfer'], 8)}"
+            f"{f(entry['unseen_task_transfer'], 15)} "
+            f"{(share['mean'] if share else float('nan')):7.3f} "
+            f"{(entry.get('unseen_assignment_reading') or '-'):>12s}"
         )
-    print("\nrouting tax and isolation per order configuration:")
+    print("\nper order configuration:")
     print(
-        f"  {'cls':>3s} {'tsk':>3s} {'L1_ridge':>9s} {'L3':>8s} {'L4':>8s} {'tax':>8s} {'isolation':>10s} {'confusion':>10s}"
+        f"  {'cls':>3s} {'tsk':>3s} {'L0':>7s} {'L1':>7s} {'L2b':>7s} {'L3':>7s} {'L4':>7s} "
+        f"{'tax':>7s} {'iso(real)':>10s} {'iso(avail)':>11s} {'confus':>7s}"
     )
     for row in agg["per_order"]:
 
-        def g(x, w=8):
+        def g(x, w=7):
             return f"{x * 100:{w}.2f}%" if x is not None else " " * (w - 1) + "-"
 
         print(
             f"  {row['class_order_seed']:3d} {row['task_order_seed']:3d} "
-            f"{g(row['L1_ridge'], 8)} {g(row['L3_per_task'], 8)} {g(row['L4_oracle'], 8)} "
-            f"{g(row['routing_tax'], 8)} {g(row['isolation_benefit'], 10)} "
-            f"{(row['order_confusion'] if row['order_confusion'] is not None else float('nan')):10.3f}"
+            f"{g(row['L0_ncm'])} {g(row['L1_ridge'])} {g(row['L2b_shared_seq'])} "
+            f"{g(row['L3_per_task'])} {g(row['L4_oracle'])} {g(row['routing_tax'])} "
+            f"{g(row['isolation_realised'], 10)} {g(row['isolation_available'], 11)} "
+            f"{(row['order_confusion'] if row['order_confusion'] is not None else float('nan')):7.3f}"
         )
+    print("\ndifficulty groups (median split on the training-free readout):")
+    for label, entry in agg.get("difficulty_groups", {}).items():
+        print(
+            f"  {label:5s} n={entry['n_configurations']}  "
+            f"difficulty={entry['ncm_difficulty']:.3f}  "
+            f"tax={entry['routing_tax'] * 100:+.2f}%  "
+            f"iso realised={entry['isolation_realised'] * 100:+.2f}%  "
+            f"iso available={entry['isolation_available'] * 100:+.2f}%"
+        )
+    print("\nunseen-task assignment (L3): concentration is not correctness")
+    ua = agg.get("unseen_assignment", {})
+    share, transfer, entropy = (
+        ua.get("max_share"),
+        ua.get("transferability"),
+        ua.get("entropy"),
+    )
+    parts = []
+    if share:
+        parts.append(f"max expert share={share['mean']:.3f}")
+    if entropy:
+        parts.append(f"expert entropy={entropy['mean']:.3f}")
+    if transfer:
+        parts.append(f"transferability={transfer['mean'] * 100:.2f}%")
+    print("  " + " | ".join(parts) if parts else "  n/a")
     print("\ncorrelations:")
     for key, value in agg["correlations"].items():
-        print(f"  {key}: {value:.3f}" if value is not None else f"  {key}: n/a")
+        print(f"  {key}: {value:+.3f}" if value is not None else f"  {key}: n/a")
 
 
 if __name__ == "__main__":
