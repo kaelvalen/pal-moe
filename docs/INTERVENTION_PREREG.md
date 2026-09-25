@@ -138,7 +138,7 @@ formulation, and says nothing new about the shared query or readout.
 one construction        set_seed(seed) then exactly one E2Model(...) per cell. A
                         second construction consumes the global RNG and breaks the
                         pinned trajectory; this was the interference study's root
-                        cause, fixed in 3ddfdba, and is checked here by the anchor
+                        cause, fixed in 7264f9b, and is checked here by the anchor
 anchor invariance       with the cut disabled, every C1 and C0 cell must equal the
                         coupling study's stored cell exactly on all metrics; one
                         float difference is a veto (not executed)

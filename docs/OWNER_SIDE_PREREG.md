@@ -43,7 +43,7 @@ T         20 (the collapsed operating point)
 
 The three arms are independent runs of the pinned contract, never a composition of
 arms inside one trajectory. The arms and the cut are exactly as pinned in
-`INTERVENTION_PREREG.md` section 2 (implementation `1b54c89`): identical values and
+`INTERVENTION_PREREG.md` section 2 (implementation `70a4c16`): identical values and
 identical gradients for `P`, `g`, `W_t` and `E_t`; only the gradient paths into the
 old `W_j` differ. The re-run is
 what makes the new contrast independent: every cell used in the analysis is

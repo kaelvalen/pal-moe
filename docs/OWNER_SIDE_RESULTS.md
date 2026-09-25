@@ -1,7 +1,7 @@
 # Owner-side residual: the two-component decomposition of the E2 collapse - results
 
-Pre-registration: `docs/OWNER_SIDE_PREREG.md` (`91a7362`, with the pre-run wording
-note `25bf5c3`). Data: `results/owner_side/owner_side_study.json` - 18 cells, all
+Pre-registration: `docs/OWNER_SIDE_PREREG.md` (`67f38f9`, with the pre-run wording
+note `3c5ce6f`). Data: `results/owner_side/owner_side_study.json` - 18 cells, all
 re-run fresh; the earlier records serve only as anchors.
 
 Status: **run, all vetoes passed. Both fixed readings landed: the accuracy collapse
@@ -104,8 +104,8 @@ significant contrast of section 2 into a mechanism.
 ## 6. Records
 
 ```text
-91a7362   the pre-registration
-25bf5c3   the conceptual-chain wording; per_task_accuracy added (additive)
-b6b1d7f   the runner and the passive drift probe
+67f38f9   the pre-registration
+3c5ce6f   the conceptual-chain wording; per_task_accuracy added (additive)
+1cfbad4   the runner and the passive drift probe
 this      the 18 fresh cells and this document
 ```

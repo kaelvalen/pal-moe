@@ -17,9 +17,9 @@
 | M2 per-task instrumentation | **Done** | `--track_routing` records `experts_per_task`, expansion/gate counts and routing retention `RR_t` |
 | M3 folder streams | **Done** | `--dataset folder --data_dir ... --classes_per_task --image_size`; Tiny-ImageNet flattened via `experiments/prepare_tiny_imagenet.py` (100k images ready under `data/`) |
 | M4 latency | **Done** | `experiments/measure_latency.py` |
-| E1a CIFAR-10 ViT 3-seed | **Done** (commit `fb69e63`) | pure **91.74 ± 0.28 / 5.61**; iCaRL 84.18 / 10.38; ER 82.89 / 20.29 (`results/cifar10_vit_multiseed`) |
+| E1a CIFAR-10 ViT 3-seed | **Done** (commit `d430a6e`) | pure **91.74 ± 0.28 / 5.61**; iCaRL 84.18 / 10.38; ER 82.89 / 20.29 (`results/cifar10_vit_multiseed`) |
 | E1b CIFAR-100 ViT 3-seed | **Done, latent-replay row queued** | pure **59.34 ± 0.32 / 18.17**; iCaRL 64.94 / 12.25 (8.0 MB vs PAL 14.2 MB); DER++ 50.97 / 47.30 (`results/cifar100_vit_multiseed`) |
-| E2 CIFAR-100 ResNet-18 3-seed | **Done** (commit `82b5684`) | pure **15.65 ± 0.39 / 31.69**; iCaRL 13.97 / 10.96; DER++ 13.12 / 66.91 (`results/cifar100_resnet18_multiseed`) |
+| E2 CIFAR-100 ResNet-18 3-seed | **Done** (commit `490eb79`) | pure **15.65 ± 0.39 / 31.69**; iCaRL 13.97 / 10.96; DER++ 13.12 / 66.91 (`results/cifar100_resnet18_multiseed`) |
 | E4 equal-byte Pareto | **Feature-cache sweep done; raw sweep queued** | `results/equalbyte/` (real seeds 42 1 2 at 1/4 MiB, seed 42 at 256K/16M); `results/equalbyte_raw/` in wave 2; item sizes per design fact 19 |
 | E5 component ablation | **Queued (wave 1c, real seeds)** | `results/ablation_final/` |
 | E6 routing retention | **Running** (piggyback on the gated runs) | `routing_retention` fields |
@@ -64,7 +64,7 @@ in the raw pipeline (`configs/*_frozen_raw.json`).
 
 **Run-day corrections (2026-09-22):** the first wave wrote seed-1/seed-2
 directories without passing `--seed` (cells were seed-42 repeats); all per-seed
-helpers now pass it and the equal-byte cells were re-run (`d4e0f7a`). E7's
+helpers now pass it and the equal-byte cells were re-run (`4136b9e`). E7's
 gated protocol hit the very slow prune/merge path at `--max_experts 6`
 (296 s vs 7494 s for identical work); both protocols now run with
 `--max_experts 20`, so the only difference is the allocation policy. Wave 1c

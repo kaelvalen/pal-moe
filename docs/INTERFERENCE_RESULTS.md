@@ -1,7 +1,7 @@
 # Interference mechanism: the expert-count ladder - results
 
 Pre-registration: `INTERFERENCE_PREREG.md`, with **Amendment 1** (committed before
-the re-run as `a9da7d4`) and its post-run clarification. Data:
+the re-run as `34c1289`) and its post-run clarification. Data:
 `results/interference/interference_study.json` (30 cells, seeds 42 / 1 / 2). The
 first, vetoed ladder is preserved verbatim as `interference_study.void.json`.
 
@@ -140,10 +140,10 @@ cause, or quantify how much of the metric drop it explains.
 ## 6. Records
 
 ```text
-403e0d3   the verified E2 refactor (train / train_task split, anchor checked)
-a9da7d4   Amendment 1: loss-form decomposition (before the re-run)
-3ddfdba   the runner fix: one construction, hooks instrumentation, no copied body
-2c10289   prereg instrumentation lines aligned with Amendment 1
+cd42c54   the verified E2 refactor (train / train_task split, anchor checked)
+34c1289   Amendment 1: loss-form decomposition (before the re-run)
+7264f9b   the runner fix: one construction, hooks instrumentation, no copied body
+ecf7dc5   prereg instrumentation lines aligned with Amendment 1
 this      the 30 corrected cells and this document
 ```
 

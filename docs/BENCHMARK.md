@@ -612,7 +612,7 @@ The following fact documents the correction of the CIFAR-10 comparison table.
     on `configs/cifar10_vit.json` (frozen ImageNet ViT-B/16, feature cache
     shared across seeds because the projection is the identity, 15 epochs/task,
     `--expand_every_task --max_experts 5`), seeds 42 1 2
-    (`results/cifar10_vit_multiseed`, git `bfd71d0`):
+    (`results/cifar10_vit_multiseed`, git `6a6fb8c`):
 
     | Method | Avg Acc | Forgetting | Data bytes |
     | :-- | :--: | :--: | --: |

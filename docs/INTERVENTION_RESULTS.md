@@ -1,7 +1,7 @@
 # Intervention: cutting the non-owner evidence path to old projections - results
 
-Pre-registration: `docs/INTERVENTION_PREREG.md` (`e58d3cb`) with Amendment 1
-(definitional, pre-run; committed with the implementation, `1b54c89`). Data:
+Pre-registration: `docs/INTERVENTION_PREREG.md` (`cef6091`) with Amendment 1
+(definitional, pre-run; committed with the implementation, `70a4c16`). Data:
 `results/intervention/intervention_study.json` (18 cells; the six `owner_only`
 cells are the new data, C1 and C0 are re-runs of the coupling cells).
 
@@ -117,7 +117,7 @@ now only on their own task's prototypes.
 ## 7. Records
 
 ```text
-e58d3cb   the pre-registration
-1b54c89   the owner_only arm, the cut audit and the runner (+ Amendment 1)
+cef6091   the pre-registration
+70a4c16   the owner_only arm, the cut audit and the runner (+ Amendment 1)
 this      the 18 cells and this document
 ```

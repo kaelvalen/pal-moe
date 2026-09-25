@@ -1,9 +1,9 @@
 # AC1: address-freeze completion - the shared query in the routing path - results
 
-Pre-registration: `docs/AC1_ADDRESS_FREEZE_PREREG.md` (`d454921`), with Amendment 1
-(`0aac426`, the anchor band) registered before execution. Data:
+Pre-registration: `docs/AC1_ADDRESS_FREEZE_PREREG.md` (`74fc783`), with Amendment 1
+(`8eb84bd`, the anchor band) registered before execution. Data:
 `results/ac1/ac1_address_freeze_study.json` - 12 fresh cells, harness revision
-`9507a67`, device `cuda`.
+`8d6e991`, device `cuda`.
 
 Status: **run, all vetoes passed. The pre-registered third reading landed: freezing
 the shared query collapses routing (-0.1507 C@3, -28.7 pp accuracy, 6/6 pairs), so
@@ -166,8 +166,8 @@ findings:
 ## 9. Records
 
 ```text
-d454921    the pre-registration
-0aac426    Amendment 1: the anchor band, from the CPU substrate pilot
-9507a67    the run (harness revision recorded in the study JSON)
+74fc783    the pre-registration
+8eb84bd    Amendment 1: the anchor band, from the CPU substrate pilot
+8d6e991    the run (harness revision recorded in the study JSON)
 this       the 12 cells and this document
 ```

@@ -168,7 +168,7 @@ dispersed   accuracy                0.7025                  0.7025              
             oracle_accuracy         0.977                   0.977                  0
 ```
 
-The pristine pre-AC1 implementation (`git show 4628b47:experiments/e2_evidence.py`)
+The pristine pre-AC1 implementation (`git show b2cb13e:experiments/e2_evidence.py`)
 returns exactly the pilot values on this substrate, so the `p_alignment` change is
 behaviour-preserving on the plastic path. Measured cell cost: 41-42 s per cell
 (probe active, CPU).
@@ -265,7 +265,7 @@ dispersed/2     accuracy              0.7017              0.7021              4.
 Three pieces of evidence, and then the band:
 
 1. **Implementation equivalence, 6/6.** The pristine pre-AC1 implementation
-   (`4628b47:experiments/e2_evidence.py`) returns the pilot cells **bitwise**, on all
+   (`b2cb13e:experiments/e2_evidence.py`) returns the pilot cells **bitwise**, on all
    five metrics, for all six anchors, on this substrate. The `p_alignment` change is
    therefore behaviour-preserving on the plastic path; the deltas are between this
    substrate and the substrate that produced the stored cells (which the records do

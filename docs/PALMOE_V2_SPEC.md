@@ -1,7 +1,7 @@
 # PAL-MoE v2 - Technical Specification
 
 Status: design freeze for implementation. Written 2026-09-23 against commit
-`9cf8c7a`. Companion to `BENCHMARK.md` (v1 protocol and design facts),
+`0fe6614`. Companion to `BENCHMARK.md` (v1 protocol and design facts),
 `RESEARCH_MAP.md` (literature lineage) and `CODE_REVIEW.md` (refactor
 backlog).
 
@@ -883,7 +883,7 @@ developed in parallel: if the headroom is small, the rank and adapter
 decisions change.
 
 - **E0a - provenance.** The v1 CIFAR-100/ViT row was produced at commit
-  `82b5684`; `git diff 82b5684..HEAD` on `pal_moe/` and `experiments/` is
+  `490eb79`; `git diff 490eb79..HEAD` on `pal_moe/` and `experiments/` is
   cosmetic for this recipe (black formatting, one print, one result key, one
   method-name string, ResNet identity head). Confirm with a 1-seed re-run at
   HEAD rather than a 3-seed repeat: PAL-MoE + iCaRL only, same config.
