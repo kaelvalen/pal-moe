@@ -63,8 +63,9 @@ that figure came from the pre-vectorisation implementation (a per-prototype Pyth
 loop in the evidence loss). With the batched loss the same cell takes **18.4 s**
 (`COUPLING_RESULTS.md`), so the feasibility objection is **withdrawn**: the
 24-cell grid would be minutes, not 20.6 hours. E2's non-execution therefore stands
-on the scientific ground alone - no usable confirmatory operating point at 20
-experts - and not on cost. This paragraph is a correction to what this document
+on the scientific ground alone: **the formulation produced no usable operating
+point in the 20-expert continual setting, while the single-expert sanity showed the
+same formulation can work** - and not on cost. This paragraph is a correction to what this document
 first reported, kept visible rather than deleted.
 
 Neither reason changes the pre-registration. What failed is the execution of the

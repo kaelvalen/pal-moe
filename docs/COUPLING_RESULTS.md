@@ -27,11 +27,12 @@ Means and paired differences (C1 - C0, all three seeds negative):
 | `Delta Oracle@3` | **-0.646** | **-0.613** |
 
 **This is the third row: `C1 < C0`.** Freezing the accumulated experts' evidence
-projections turns a collapsed system (13.6 % / 16.9 %) into one within a few
-points of the untouched baseline (74.2 % / 70.1 %, against E0's 73.2 / 70.7 and
-its coverage 0.9494 / 0.8915). Re-aligning **all** projections at every step
-destroys both routing and usability, and the damage is an order of magnitude larger
-than anything the earlier studies measured.
+projections restores the collapsed system's *accuracy* to the untouched baseline's
+level (74.2 % / 70.1 %, against E0's 73.2 / 70.7) **but it stays behind E0 on
+routing coverage** (0.9319 against 0.9494 `coherent`, 0.8548 against 0.8915
+`dispersed`). So C0 is not a solution and not a baseline equivalent: re-aligning
+**all** projections at every step destroys both routing and usability, and the
+damage is an order of magnitude larger than anything the earlier studies measured.
 
 ## 2. Vetoes, all passing
 
