@@ -450,12 +450,80 @@ not an outlier.
 
 Whether the routing tax grows with *task difficulty* remains open, because the
 sampled orders had no difficulty spread (O3). The designed-partition experiment
-(S6b) is the version that can answer it, and it is cheap: the class ids in the
-cache can be re-grouped by superclass without touching the features.
+(S6b, section 10) answered it: with a real difficulty contrast the tax moves from
++13.98 to +26.63, so S6's order-robustness is about the visit order, not about
+the partition.
 
 ---
 
-## 10. Consolidated findings
+## 10. S6b - designed difficulty: the routing tax *is* geometry-dependent
+
+S6 varied the order by random permutation and found the tax unchanged, while
+admitting (O3) that a random permutation of CIFAR-100 produces tasks of nearly
+equal difficulty, so the difficulty hypothesis was never tested. S6b designs the
+contrast instead of sampling it, from the same cached features:
+
+| construct | task structure | intra-task similarity | cross-task similarity | separability |
+| :-- | :-- | --: | --: | --: |
+| `coherent` | one task per CIFAR-100 superclass (5 similar classes) | **0.821** | 0.522 | **+0.298** |
+| `dispersed` | round-robin: one class from each of five well-separated superclasses | 0.638 | **0.684** | **-0.046** |
+
+The two axes are orthogonal by construction: `coherent` makes *within-task*
+discrimination hard (five confusable classes) and routing easy; `dispersed`
+does the opposite (five dissimilar classes per task, but tasks that overlap in
+the representation - cross-task similarity exceeds intra-task similarity).
+
+| construct | L0 | L1 | L2b | L3 | L4 | routing tax | iso realised | iso available | realised/available |
+| :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| `coherent` | 70.34 | 76.77 | 60.50 | 73.34 | 87.32 | **+13.98** | +12.84 | +26.82 | 47.9% |
+| `dispersed` | 70.34 | 76.77 | 55.46 | 70.68 | 97.31 | **+26.63** | +15.22 | +41.85 | 36.4% |
+
+### 10.1 Findings
+
+**E1 - the routing tax nearly doubles with cross-task overlap: +13.98 against
++26.63.** This is the outcome the S6b design was built to detect. It also
+resolves S6's open question in the useful direction: the tax does not depend on
+*which order* a fixed partition is visited in (S6), it depends on *the partition
+itself* - specifically on how much the tasks overlap in the representation.
+
+**E2 - the two difficulty axes dissociate cleanly, which validates the
+decomposition.** `intra_task_similarity` drives the oracle (0.821 -> 87.32
+against 0.638 -> 97.31, a 9.99-point within-task cost) while
+`cross_task_similarity` drives the tax (0.522 -> 13.98 against 0.684 -> 26.63, a
+12.65-point routing cost). Within-task difficulty and routing difficulty are
+independent knobs with independent effects, and `L4 - L3` isolates the second.
+
+**E3 - the realisation fraction falls as routing gets harder: 47.9% -> 36.4%.**
+Outcome 3 of the design brief (available isolation moves, realised stays put)
+did not occur literally - realised isolation also rises, +12.84 -> +15.22 - but
+it rises *more slowly* than what is available (+26.82 -> +41.85). The gap
+therefore widens exactly as the thesis predicts: **more isolation is on offer
+when tasks overlap, and the router can cash proportionally less of it.**
+
+**E4 - the partition-independent quantities do not move.** `L0` and `L1` are
+identical to the digit across the two constructs (70.34, 76.77), because a
+pooled readout does not care which classes share a task. Only the
+routing-dependent quantities move. That is a design-level consistency check:
+the construct changes what it is supposed to change and nothing else.
+
+**E5 - the canonical CIFAR-100 split is a hard-routing partition.** Its tax
+(26.88 in S4) sits next to `dispersed` (26.63) and far from `coherent` (13.98).
+CIFAR-100's class list is alphabetical, so consecutive five-class tasks mix
+categories (apple, aquarium fish, baby, bear, beaver) - semantically dispersed
+rather than coherent. Every S2-S5 number was therefore measured in the harder
+routing regime, which is worth stating when those numbers are quoted.
+
+### 10.2 Consequence for S8
+
+The routing tax is not a constant of the method: it is a function of the task
+geometry, spanning 13.98 to 26.63 across two designed partitions of the same
+data with the same backbone. Budget experiments must therefore either hold the
+regime fixed or report per regime; a single accuracy-per-byte curve would average
+over a factor of two in the quantity the budget is supposed to buy.
+
+---
+
+## 11. Consolidated findings
 
 **F1. The readout was the first bottleneck, and a training-free prototype
 readout solves it.** NCM on frozen features beats v1 and iCaRL on CIFAR-100
@@ -498,7 +566,7 @@ is what discriminates.
 
 ---
 
-## 11. Pre-registered hypotheses and their verdicts
+## 12. Pre-registered hypotheses and their verdicts
 
 | hypothesis | statement | verdict |
 | :-- | :-- | :-- |
@@ -519,7 +587,7 @@ is what discriminates.
 
 ---
 
-## 12. Measurement bugs this programme found
+## 13. Measurement bugs this programme found
 
 Five, each of which would have produced a confident wrong number:
 
@@ -558,7 +626,7 @@ requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 13. What this evidence does NOT say
+## 14. What this evidence does NOT say
 
 - It does **not** say "mixture of experts is unnecessary". It says that under
   this benchmark, protocol, budget and backbone, the incremental expert
@@ -580,7 +648,7 @@ requires calling the existing entry point instead of re-deriving a loop.
 
 ---
 
-## 14. Open items and the stage order
+## 15. Open items and the stage order
 
 | stage | content | blocker |
 | :-- | :-- | :-- |
@@ -588,7 +656,8 @@ requires calling the existing entry point instead of re-deriving a loop.
 | S4b | task-count sweep `T in {2,5,10,20}` | splitters have no sub-task support |
 | S5 | Task-IL / Class-IL protocol axis | **done** (section 7) |
 | S5b | Domain-IL rotated MNIST, unseen domain | **done** (section 8) |
-| S6 | order sensitivity (class and task order) | **done** (section 9); the difficulty hypothesis needs S6b |
+| S6 | order sensitivity (class and task order) | **done** (section 9) |
+| S6b | designed difficulty: coherent vs dispersed partitions | **done** (section 10) |
 | S6 | task order, class order, unseen task, expert transfer | splitters have no order parameters |
 | S8 | memory / data-regime / compute budgets | no `--data_fraction`, no generic budget flag |
 | S9-S11 | robustness, scalability, statistics | unstarted |
@@ -599,7 +668,7 @@ number above depends on being explicit about.
 
 ---
 
-## 15. Artefacts
+## 16. Artefacts
 
 | path | contents |
 | :-- | :-- |
