@@ -10,7 +10,8 @@ the stored JSONs (which stay untracked in results/):
     ac3     AC3 cells, 2 regimes x 3 seeds: `fixed_proto` and `bilinear` scalar
             metrics and per-task accuracies. Band 1e-6.
     etid2   E-TID2 cells, 2 regimes x 6 seeds: all five arms, both coverages and
-            the three guards. Band 1e-6.
+            the three guards. Band 1e-6 (the `--api` variant runs the ridge arms
+            through the v3 float64 medium path and only *reports* those deltas).
 
 Usage:
     LD_LIBRARY_PATH=/run/opengl-driver/lib \
@@ -35,6 +36,20 @@ ETID2_JSON = "results/e_tid2/e_tid2_ridge_router.json"
 BANDS = {"s11": 0.0, "ac3": 1e-6, "etid2": 1e-6}
 ETID2_ARMS = ("proto", "ridge_routed", "ridge_masked", "ridge_alone", "oracle")
 ETID2_COV = ("proto_C@1", "proto_C@3", "ridge_C@1", "ridge_C@3")
+API_BANK_FIELDS = (
+    "delta_proto",
+    "delta_oracle",
+    "delta_proto_C@1",
+    "delta_proto_C@3",
+    "delta_guards_G1_G2",
+)
+API_RIDGE_FIELDS = (
+    "delta_ridge_routed",
+    "delta_ridge_masked",
+    "delta_ridge_alone",
+    "delta_ridge_C@1",
+    "delta_ridge_C@3",
+)
 
 
 def _max_abs(a, b) -> float:
@@ -73,19 +88,37 @@ def check_s11(seeds, args, device) -> list[dict]:
     for construct in ("coherent", "dispersed"):
         for seed in seeds:
             ref = index[(construct, seed)]
-            cell = {k: ref[k] for k in ("part", "dataset", "construct", "level",
-                                        "rank", "protos", "top_k", "num_tasks", "seed")}
+            cell = {
+                k: ref[k]
+                for k in (
+                    "part",
+                    "dataset",
+                    "construct",
+                    "level",
+                    "rank",
+                    "protos",
+                    "top_k",
+                    "num_tasks",
+                    "seed",
+                )
+            }
             got = s11.run_cell(cell, run_args, device, source_cache)
-            rows.append({
-                "construct": construct, "seed": seed,
-                "stored": ref["accuracy"], "measured": got["accuracy"],
-                "delta_accuracy": got["accuracy"] - ref["accuracy"],
-                "delta_acc_matrix": _max_abs(got["acc_matrix"], ref["acc_matrix"]),
-            })
-            print(f"[s11] {construct:9s} {seed:<3d} stored {ref['accuracy']:.10f} "
-                  f"measured {got['accuracy']:.10f} "
-                  f"d={rows[-1]['delta_accuracy']:+.2e} dR={rows[-1]['delta_acc_matrix']:.2e}",
-                  flush=True)
+            rows.append(
+                {
+                    "construct": construct,
+                    "seed": seed,
+                    "stored": ref["accuracy"],
+                    "measured": got["accuracy"],
+                    "delta_accuracy": got["accuracy"] - ref["accuracy"],
+                    "delta_acc_matrix": _max_abs(got["acc_matrix"], ref["acc_matrix"]),
+                }
+            )
+            print(
+                f"[s11] {construct:9s} {seed:<3d} stored {ref['accuracy']:.10f} "
+                f"measured {got['accuracy']:.10f} "
+                f"d={rows[-1]['delta_accuracy']:+.2e} dR={rows[-1]['delta_acc_matrix']:.2e}",
+                flush=True,
+            )
     return rows
 
 
@@ -106,15 +139,17 @@ def check_ac3(seeds, args, device) -> list[dict]:
             row["router_param_count"] = got["router_param_count"]
             row["fixed_accuracy"] = got["fixed_proto"]["accuracy"]
             rows.append(row)
-            print(f"[ac3] {regime:9s} {seed:<3d} fixed acc {row['fixed_accuracy']:.4f} "
-                  f"d_fixed={row['delta_fixed_proto']:.2e} d_bil={row['delta_bilinear']:.2e}",
-                  flush=True)
+            print(
+                f"[ac3] {regime:9s} {seed:<3d} fixed acc {row['fixed_accuracy']:.4f} "
+                f"d_fixed={row['delta_fixed_proto']:.2e} d_bil={row['delta_bilinear']:.2e}",
+                flush=True,
+            )
     return rows
 
 
-def check_etid2(seeds, args, device) -> list[dict]:
-    import s2_ladder
+def check_etid2(seeds, args, device, api: bool = False) -> list[dict]:
     import e_tid2_ridge_router as e2r
+    import s2_ladder
 
     stored = json.load(open(ETID2_JSON))
     index = {(c["regime"], c["seed"]): c for c in stored["cells"]}
@@ -127,29 +162,42 @@ def check_etid2(seeds, args, device) -> list[dict]:
         for seed in seeds:
             run_args.seed = seed
             ref = index[(regime, seed)]
-            got = e2r.run_cell(regime, seed, run_args, device, base)
+            if api:
+                import v3_etid2_api
+
+                got = v3_etid2_api.run_cell(regime, seed, run_args, device, base)
+            else:
+                got = e2r.run_cell(regime, seed, run_args, device, base)
             row = {"regime": regime, "seed": seed}
             for k in ETID2_ARMS + ETID2_COV:
                 row[k] = got[k]
                 row[f"delta_{k}"] = got[k] - ref[k]
             row["guards"] = got["guards"]
+            if "v3_guards" in got:
+                row["v3_guards"] = got["v3_guards"]
             row["delta_guards_G1_G2"] = max(
                 abs(got["guards"]["G1_max_abs"] - ref["guards"]["G1_max_abs"]),
                 abs(got["guards"]["G2_max_abs"] - ref["guards"]["G2_max_abs"]),
             )
             rows.append(row)
             worst = max(abs(row[f"delta_{k}"]) for k in ETID2_ARMS + ETID2_COV)
-            print(f"[etid2] {regime:9s} {seed:<3d} "
-                  f"max|d| {worst:.2e} G3 mismatch {got['guards']['G3_argmax_mismatch']}",
-                  flush=True)
+            print(
+                f"[etid2{'-api' if api else ''}] {regime:9s} {seed:<3d} "
+                f"max|d| {worst:.2e} G3 mismatch {got['guards']['G3_argmax_mismatch']}",
+                flush=True,
+            )
     return rows
 
 
 def verdict(name, rows, band) -> dict:
     fields = [k for k in rows[0] if k.startswith("delta_")] if rows else []
     worst = max((abs(r[k]) for r in rows for k in fields), default=0.0)
-    return {"cells": len(rows), "band": band, "max_abs_delta": worst,
-            "pass": worst <= band}
+    return {
+        "cells": len(rows),
+        "band": band,
+        "max_abs_delta": worst,
+        "pass": worst <= band,
+    }
 
 
 def main():
@@ -157,6 +205,11 @@ def main():
     p.add_argument("--only", default="s11,ac3,etid2")
     p.add_argument("--seeds6", default="42,1,2,3,4,5")
     p.add_argument("--seeds3", default="42,1,2")
+    p.add_argument(
+        "--api",
+        action="store_true",
+        help="run E-TID2 through the v3 API (float64 medium path)",
+    )
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--out", default="results/v3/anchors.json")
     args = p.parse_args()
@@ -171,11 +224,20 @@ def main():
         elif name == "ac3":
             rows = check_ac3(s3, args, device)
         elif name == "etid2":
-            rows = check_etid2(s6, args, device)
+            rows = check_etid2(s6, args, device, api=args.api)
         else:
             raise SystemExit(f"unknown anchor {name}")
-        key = name
-        report[key] = {"verdict": verdict(name, rows, BANDS[name]), "rows": rows}
+        key = f"{name}-api" if name == "etid2" and args.api else name
+        if key == "etid2-api":
+            # Same bank, same code: the non-ridge arms must hold the band. The ridge
+            # arms moved from float32 to float64 and are reported, not judged.
+            bank = [{k: r[k] for k in r if k in API_BANK_FIELDS} for r in rows]
+            ridge = {k: max(abs(r[k]) for r in rows) for k in API_RIDGE_FIELDS}
+            v = verdict(name, bank, BANDS[name])
+            v["ridge_arms_max_abs_delta_reported"] = ridge
+            report[key] = {"verdict": v, "rows": rows}
+        else:
+            report[key] = {"verdict": verdict(name, rows, BANDS[name]), "rows": rows}
         print(f"== {key}: {report[key]['verdict']}", flush=True)
 
     out = Path(args.out)
