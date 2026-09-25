@@ -232,6 +232,10 @@ class LadderModel:
         # uses it for the joint routing objective). `None` is the ladder's
         # unchanged behaviour.
         self.extra_loss = None
+        # Optional shared projection applied to every expert's output before the
+        # readout (the E1 formulation in EXPERT_FORMULATION_PREREG.md). `None` is
+        # the unchanged ladder: E0's path stays byte-for-byte identical.
+        self.projection = None
         self.class_expert: dict[int, int] = {}
         self.proto_z: list[torch.Tensor] = []
         self.proto_p: list[torch.Tensor] = []
@@ -309,6 +313,10 @@ class LadderModel:
         else:
             task_ids = self.route_tasks(z, oracle=oracle, task_id=task_id)
             adapted = self.apply_experts(z, task_ids)
+        # The E1 formulation: one shared projection for every expert's output,
+        # applied immediately before the shared readout.
+        if self.projection is not None:
+            adapted = self.projection(adapted)
         return mask_unseen(self.readout.predict(adapted), self.seen)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
@@ -357,6 +365,8 @@ class LadderModel:
 
     def _optimize(self, feats, labels, task_index_or_none, seed_offset: int) -> None:
         trainable = list(self.readout.parameters())
+        if self.projection is not None:
+            trainable += list(self.projection.parameters())
         if self.experts:
             expert = (
                 self.experts[-1] if self.spec.experts_per_task == 1 else self.experts[0]
@@ -410,9 +420,10 @@ class LadderModel:
             ids = torch.tensor(self.proto_task, device=self.device)
         else:
             ids = None
-        return F.cross_entropy(
-            mask_unseen(self.readout.predict(self.apply_experts(z, ids)), self.seen), p
-        )
+        adapted = self.apply_experts(z, ids)
+        if self.projection is not None:
+            adapted = self.projection(adapted)
+        return F.cross_entropy(mask_unseen(self.readout.predict(adapted), self.seen), p)
 
     # -- registration ----------------------------------------------------
 

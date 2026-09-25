@@ -83,6 +83,29 @@ against: the expert's task loss, the readout family and the decision rule are
 unchanged. The projection `P` is the only new parameter, it is shared by all
 experts, and its cost is recorded.
 
+**The projection's form is pinned here, so none of it can be chosen after the
+run:**
+
+```text
+P            nn.Linear(dim, dim, bias=True)      no hidden layer
+activation   none                                the projection is affine
+normalisation none
+initialisation  weight = identity, bias = 0      so E1 *is* E0 at step 0, and the
+                                                 study measures what training does
+                                                 to a shared decision space rather
+                                                 than the effect of a random map
+```
+
+**Parameter sharing is a runtime fact, not a documentation claim.** A single `P`
+module instance is used for every expert's output, and `g` is the ladder's single
+shared readout; the run records one parameter hash for `P` and one for `g`, and
+asserts per forward pass that no per-expert copy exists.
+
+Both hooks apply the same transformation: the task loss in `_optimize` and the
+function-preservation loss in `_l_func` read through `P`, so the two objectives
+are computed in the same space. Without that, E1 would stop being a one-factor
+experiment.
+
 ## 4. Endpoints and guards
 
 **Primary:** `Delta Acc` against E0, paired by seed.
@@ -125,6 +148,21 @@ outcome rows below.
 | `Delta Acc > 0` with a lower conditional oracle | the formulation trades expert capacity for comparability; a bounded, honest trade, not a fix |
 | `Delta Acc ~ 0` | the formulation alone does not break the failure mode; the expert's *objective* (E2, deferred) is the next hypothesis |
 | `Delta Acc < 0` | a shared projection is not enough and costs capacity; the failure is deeper than the output space |
+
+**Veto order for the smoke, before any run:**
+
+```text
+1  E0 anchor      the E0 arm reproduces S11's L3 per seed exactly (its path is
+                  byte-for-byte the unchanged ladder; `projection=None`).
+                  The reference must be keyed by (construct, level, rank,
+                  protos, num_tasks, seed): S11 stores two cells per such key,
+                  part B (T = 20) and part E (the T = 5/25 endpoints), and a
+                  key that omits num_tasks silently compares against the wrong
+                  partition. The first check hit exactly that collision.
+2  shared P/g     one parameter hash for P, one for g, and a per-forward assert
+                  that no per-expert copy was created
+3  E1 smoke       only then is the E1 arm measured
+```
 
 ## 6. Statistics, cost, scope
 
