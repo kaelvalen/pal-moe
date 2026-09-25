@@ -85,81 +85,84 @@ class E2Model:
     def train(self, tasks, seed):
         for t, task in enumerate(tasks):
             self.add_task(task, t)
-            self.seen = sorted(set(self.seen) | set(task["classes"]))
-            trainable = list(self.P.parameters()) + list(self.readout.parameters())
-            for w in self.W:
-                trainable += [p for p in w.parameters() if p.requires_grad]
-            for param in self.experts[-1].parameters():
-                param.requires_grad_(True)
-            # C0: only the current evidence projection is trained; the older ones
-            # are frozen exactly like the older adapters. C1 (the pinned E2
-            # contract) leaves them trainable.
-            freeze_old = getattr(self.args, "w_alignment", "all") == "current"
-            for w in self.W[:-1]:
-                for param in w.parameters():
-                    param.requires_grad_(not freeze_old)
-            trainable += list(self.experts[-1].parameters())
-            optimizer = torch.optim.Adam(trainable, lr=self.args.lr)
-            handle = s11.s2_ladder.trainable_hook(self.readout, task["classes"])
-            feats, labels = task["splits"]["train"]
-            feats, labels = feats.to(self.device), labels.to(self.device)
-            generator = torch.Generator().manual_seed(seed + t)
-            checked = False
-            for _ in range(self.args.epochs):
-                for z, y in s11.s2_ladder.iter_batches(
-                    feats, labels, self.args.batch_size, generator
-                ):
-                    z, y = z.to(self.device), y.to(self.device)
-                    h = normalize(self.W[t](self.experts[t].transform(z)))
-                    logits = s11.s2_ladder.mask_unseen(
-                        self.readout.predict(h), self.seen
+            self.train_task(task, t, seed)
+
+    def train_task(self, task, t, seed):
+        """One task of the pinned contract; identical for E2 and the ablation."""
+        self.seen = sorted(set(self.seen) | set(task["classes"]))
+        trainable = list(self.P.parameters()) + list(self.readout.parameters())
+        for w in self.W:
+            trainable += [p for p in w.parameters() if p.requires_grad]
+        for param in self.experts[-1].parameters():
+            param.requires_grad_(True)
+        # C0: only the current evidence projection is trained; the older ones
+        # are frozen exactly like the older adapters. C1 (the pinned E2
+        # contract) leaves them trainable.
+        freeze_old = getattr(self.args, "w_alignment", "all") == "current"
+        for w in self.W[:-1]:
+            for param in w.parameters():
+                param.requires_grad_(not freeze_old)
+        trainable = list(self.P.parameters()) + list(self.readout.parameters())
+        for w in self.W:
+            trainable += [p for p in w.parameters() if p.requires_grad]
+        trainable += list(self.experts[-1].parameters())
+        optimizer = torch.optim.Adam(trainable, lr=self.args.lr)
+        handle = s11.s2_ladder.trainable_hook(self.readout, task["classes"])
+        feats, labels = task["splits"]["train"]
+        feats, labels = feats.to(self.device), labels.to(self.device)
+        generator = torch.Generator().manual_seed(seed + t)
+        checked = False
+        for _ in range(self.args.epochs):
+            for z, y in s11.s2_ladder.iter_batches(
+                feats, labels, self.args.batch_size, generator
+            ):
+                z, y = z.to(self.device), y.to(self.device)
+                h = normalize(self.W[t](self.experts[t].transform(z)))
+                logits = s11.s2_ladder.mask_unseen(self.readout.predict(h), self.seen)
+                l_task = F.cross_entropy(logits, y)
+                l_evidence = self._evidence_loss()
+                loss = l_task + self.args.evidence_lambda * l_evidence
+                optimizer.zero_grad()
+                loss.backward()
+                if not checked and t > 0:
+                    old = [
+                        j
+                        for j in range(t)
+                        if self.W[j].weight.grad is not None
+                        and float(self.W[j].weight.grad.abs().sum()) > 0
+                    ]
+                    current_grad = (
+                        self.W[t].weight.grad is not None
+                        and float(self.W[t].weight.grad.abs().sum()) > 0
                     )
-                    l_task = F.cross_entropy(logits, y)
-                    l_evidence = self._evidence_loss()
-                    loss = l_task + self.args.evidence_lambda * l_evidence
-                    optimizer.zero_grad()
-                    loss.backward()
-                    if not checked and t > 0:
-                        old = [
-                            j
-                            for j in range(t)
-                            if self.W[j].weight.grad is not None
-                            and float(self.W[j].weight.grad.abs().sum()) > 0
-                        ]
-                        old_frozen = all(
+                    self.guard[f"task{t}"] = {
+                        "arm": getattr(self.args, "w_alignment", "all"),
+                        "old_W_with_gradient": len(old),
+                        "old_W_total": t,
+                        "current_W_grad_nonzero": current_grad,
+                        "old_W_frozen": all(
                             not p.requires_grad
                             for j in range(t)
                             for p in self.W[j].parameters()
-                        )
-                        current_grad = (
-                            self.W[t].weight.grad is not None
-                            and float(self.W[t].weight.grad.abs().sum()) > 0
-                        )
-                        self.guard.setdefault(f"task{t}", {})
-                        self.guard[f"task{t}"] = {
-                            "arm": getattr(self.args, "w_alignment", "all"),
-                            "old_W_with_gradient": len(old),
-                            "old_W_total": t,
-                            "previous_experts_in_optimizer": sum(
-                                1
-                                for p in trainable
-                                if any(
-                                    p is q
-                                    for e in self.experts[:-1]
-                                    for q in e.parameters()
-                                )
-                            ),
-                            "current_W_grad_nonzero": current_grad,
-                            "old_W_frozen": old_frozen,
-                            "previous_experts_frozen": all(
-                                not p.requires_grad
+                        ),
+                        "previous_experts_in_optimizer": sum(
+                            1
+                            for p in trainable
+                            if any(
+                                p is q
                                 for e in self.experts[:-1]
-                                for p in e.parameters()
-                            ),
-                        }
-                        checked = True
-                    optimizer.step()
-            handle.remove()
+                                for q in e.parameters()
+                            )
+                        ),
+                        "previous_experts_frozen": all(
+                            not p.requires_grad
+                            for e in self.experts[:-1]
+                            for p in e.parameters()
+                        ),
+                    }
+                    checked = True
+                optimizer.step()
+        handle.remove()
 
     def _evidence_loss(self):
         """Mean over stored prototypes of a CE over all seen experts. No g.
