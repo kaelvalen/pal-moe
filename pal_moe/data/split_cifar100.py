@@ -37,7 +37,7 @@ def get_split_cifar100_tasks(
     max_train_samples_per_task: Optional[int] = None,
     num_workers: int = 0,
     pin_memory: bool = False,
-    dataset_cls: Any = datasets.CIFAR100,
+    dataset_cls: Any = None,
 ) -> list[SplitCIFAR100Task]:
     """
     Creates 20 sequential tasks for the Split-CIFAR-100 benchmark (5 classes each).
@@ -50,8 +50,11 @@ def get_split_cifar100_tasks(
     shift (S9) without re-deriving the split: it must be a `datasets.CIFAR100`
     subclass accepting the same ``transform``/``target_transform`` kwargs. The
     task partition, the index draw and the class order are unchanged, so a
-    shifted cache is paired sample-for-sample with the clean one.
+    shifted cache is paired sample-for-sample with the clean one. It is resolved
+    here rather than as a default argument, so monkeypatching
+    `torchvision.datasets.CIFAR100` still works (the offline loader test does).
     """
+    dataset_cls = dataset_cls or datasets.CIFAR100
     torch.manual_seed(seed)
     transform_train = transforms.Compose(
         [
