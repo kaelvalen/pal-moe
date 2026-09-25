@@ -71,8 +71,8 @@ over seeds; coherent / dispersed:
 | OWNER-ONLY | 1.0264 / 1.0263 | 19.501 / 19.500 |
 | C0 | 1.0289 / 1.0272 | 19.549 / 19.517 |
 
-The C1 sum-form values reproduce the interference ladder's `19.650 / 19.645`
-exactly. The count-adjusted counterpart is ~1.03 on every arm: at the trained
+The C1 sum-form values reproduce the interference ladder's `19.650 / 19.645` to the
+printed precision. The count-adjusted counterpart is ~1.03 on every arm: at the trained
 state an old projection's per-prototype cross-entropy on other tasks' prototypes
 is only 2.6-3.4% above its own-prototype value. So the `19.65x` headline is
 essentially the prototype count (~19 other prototypes per own prototype), exactly
