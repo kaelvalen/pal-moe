@@ -1,5 +1,7 @@
 # PAL-MoE v2 - Technical Specification
 
+> **Superseded (2026-09-26)** as the architecture by `V3_ARCHITECTURE.md`. Kept unchanged as the v2 design record; module paths below predate the v3 move of v1 code into `pal_moe/legacy/`.
+
 Status: design freeze for implementation. Written 2026-09-23 against commit
 `0fe6614`. Companion to `BENCHMARK.md` (v1 protocol and design facts),
 `RESEARCH_MAP.md` (literature lineage) and `CODE_REVIEW.md` (refactor

@@ -1,3 +1,5 @@
-from .ttt import ContinualTrainer, TestTimeAdapter
+"""Moved to `pal_moe.legacy.adaptation` (v3 restructure). Alias shim: same module objects."""
 
-__all__ = ["ContinualTrainer", "TestTimeAdapter"]
+from pal_moe.legacy._alias import alias_package
+
+alias_package(__name__, "pal_moe.legacy.adaptation")

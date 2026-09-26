@@ -1,13 +1,5 @@
-from .diagnostics import print_router_diagnostics, router_diagnostics
-from .geometry import geometry_report, nearest_other_margin, silhouette_score
-from .metrics import BenchmarkResult, ContinualEvaluator
+"""Moved to `pal_moe.eval` (v3 restructure). Alias shim: same module objects."""
 
-__all__ = [
-    "BenchmarkResult",
-    "ContinualEvaluator",
-    "geometry_report",
-    "nearest_other_margin",
-    "silhouette_score",
-    "router_diagnostics",
-    "print_router_diagnostics",
-]
+from pal_moe.legacy._alias import alias_package
+
+alias_package(__name__, "pal_moe.eval")

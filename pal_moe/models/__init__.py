@@ -1,14 +1,5 @@
-from .encoder import EMAEncoder, SharedEncoder
-from .expert import MLPExpert
-from .moe import DynamicMoE
-from .router import AttentionRouter, DistanceRouter, DynamicRouter
+"""Moved to `pal_moe.legacy.models` (v3 restructure). Alias shim: same module objects."""
 
-__all__ = [
-    "SharedEncoder",
-    "EMAEncoder",
-    "MLPExpert",
-    "DynamicRouter",
-    "DistanceRouter",
-    "AttentionRouter",
-    "DynamicMoE",
-]
+from pal_moe.legacy._alias import alias_package
+
+alias_package(__name__, "pal_moe.legacy.models")
