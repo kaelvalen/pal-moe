@@ -170,3 +170,20 @@ the LM path                 docs/V3_LLM_PREREG.md
 - **Does not license:** adopting `by_confusion` as the default without a replication; any
   claim about the LM path; any claim beyond `T = 20`, CIFAR-100 on the ViT-B/16 cache,
   and six seeds.
+
+## Amendment 1 (2026-09-26, before any run)
+
+The v3 medium path changed after review: one float64 accumulator pair, `forget` is a
+subtraction, and the API guards measure order invariance and reversibility against a
+tolerance instead of forcing them by a canonical summation order. Two vetoes in
+section 5 are restated accordingly; nothing else changes.
+
+```text
+identical router   within a (regime, seed) cell all three arms write the same batches
+                   in the same arrival order, so the medium-path statistics digest is
+                   still bitwise equal across A0 / A1 / A2 (it is a same-order
+                   determinism check, not an order-invariance claim)
+reversibility      every write and consolidation passes the API guard: undo max|dW|
+                   <= 1e-10 and canary argmax identical; consolidations additionally
+                   bitwise (the bank object is swapped back)
+```

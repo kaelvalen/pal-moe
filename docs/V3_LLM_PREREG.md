@@ -135,3 +135,49 @@ other models / sizes      one model per study
   observed efficacy / specificity / locality of each path at N in {1, 100, 1000}.
 - **Does not license:** a state-of-the-art editing claim, any claim about other models
   or larger N, or any claim about the SLOW path.
+
+## Amendment 1 (2026-09-26, before any run; nothing has been evaluated)
+
+Written after a code review of the v3 branch. The question, arms, endpoints and the
+outcome table (sections 1-4) are unchanged. Two guard definitions and two facts about
+the harness change:
+
+1. **Reversibility and order are measurements with a tolerance, not bitwise by
+   construction.** The medium path now holds one float64 accumulator pair and `forget`
+   subtracts the edit (a downdate); the earlier canonical re-sum made order invariance
+   true by design and grew with the number of edits. Section 3's guard block is replaced
+   by:
+
+   ```text
+   reversibility   every write: trial undo/redo, max|dDelta| vs the pre-write delta
+                   <= 1e-8 and canary argmax identical; every forget: downdate vs a
+                   from-scratch re-solve max|dDelta| <= 1e-8, canary argmax identical
+                   to the last visit of that state. Bitwise only when the last edit is
+                   forgotten (hook removed -> base model bitwise), checked at the end
+                   of every N-regime
+   order           every write: the delta re-solved with the live edits in a seeded
+                   random permutation, max|dDelta| <= 1e-8 and canary argmax identical
+   ```
+
+   The 1e-8 tolerance (not the vision path's 1e-10) is fixed here, before any run,
+   because the LM delta is solved in a `d_ff`-dimensional system; the measured values
+   are reported in every case.
+2. **The prior is a corpus prior by construction.** `C0` is estimated with
+   `HFCausalLM.collect_keys` over every non-pad token of the WikiText-103 sample in
+   section 2; `DownProjEdit` refuses a prior that is not a `KeyPrior`, or one estimated
+   from fewer tokens than `d_ff`.
+3. **The loaders were run on the real releases** (downloaded 2026-09-26 into
+   `data/editing/`, untracked). Record counts and sha256:
+
+   ```text
+   counterfact.json      21919   d017056125178a13728594e66a801357a8db9ed7973a7425554bb4271de9fc6f
+                                 (https://rome.baulab.info/data/dsets/counterfact.json)
+   zsre_mend_eval.json   19086   8a371d512f8a6ab175db4ef672181d5c0e52da23298cb51e5a2eeea2f89aa9cd
+                                 (https://rome.baulab.info/data/dsets/zsre_mend_eval.json)
+   MQuAKE-CF-3k.json      3000   ce27a39c39f2983512b9b5578fadea5fbe352e5368f49d64f38d37ce304edc80
+                                 (github.com/princeton-nlp/MQuAKE, datasets/)
+   ```
+
+   Only parsing was checked (every case has a prompt with the subject filled and a
+   space-prefixed target; >= 99 % have paraphrases and neighbourhood prompts; every zsRE
+   case has a `loc` answer). No model was run on them.
