@@ -28,7 +28,7 @@ from pal_moe.experts.policies import (
     by_arrival,
     by_confusion,
     check_gate,
-    confusion_matrix,
+    cross_fitted_confusion,
 )
 from pal_moe.memory.kv_store import FastMemory
 from pal_moe.router.prototype import PrototypeTaskRouter
@@ -231,12 +231,18 @@ class PalMoE(GuardedEditor):
         policy: str = "by_arrival",
         prereg: str | None = None,
         n_groups: int | None = None,
+        groups: list[list[int]] | None = None,
+        folds: int = 5,
     ) -> ConsolidationReport:
         """Train frozen experts on the pending medium batches, grouped by `policy`.
 
         `by_arrival` groups by the batches' `task` (the Stage 1 L3 recipe, run through
         the moved ladder code, so a fresh consolidation of the E-TID2 tasks reproduces
-        its bank bitwise). `by_confusion` is gated behind `docs/P2_BOUND_PREREG.md`.
+        its bank bitwise). `by_confusion` (gated behind `docs/P2_BOUND_PREREG.md`)
+        clusters a `folds`-fold cross-fitted ridge confusion matrix of the pending
+        training data. `by_partition` takes explicit `groups` (e.g. superclasses).
+        Both regrouping policies need every pending batch's features at once and, for
+        `by_confusion`, all classes seen: a hindsight, offline consolidation.
         """
         check_gate(policy, prereg)
         pending = [
@@ -255,11 +261,25 @@ class PalMoE(GuardedEditor):
                 per_task.setdefault(t, set()).update(self._raw[r.id][1].tolist())
             groups = by_arrival([sorted(per_task[t]) for t in order])
         elif policy == "by_confusion":
-            logits = self.stats.predict(z)
-            conf = confusion_matrix(logits.argmax(-1).cpu(), y.cpu(), self.num_classes)
+            conf = cross_fitted_confusion(
+                z,
+                y,
+                self.num_classes,
+                folds=folds,
+                seed=self.recipe["seed"],
+                ridge=self.stats.ridge,
+            )
             classes = sorted(set(y.tolist()))
             k = n_groups or len({self._raw[r.id][2] for r in pending})
             groups = by_confusion(conf, k, classes=classes, seed=self.recipe["seed"])
+        elif policy == "by_partition":
+            present = set(y.tolist())
+            flat = [c for g in groups or [] for c in g]
+            if not groups or len(flat) != len(set(flat)) or set(flat) != present:
+                raise ValueError(
+                    "by_partition needs disjoint groups covering the pending classes"
+                )
+            groups = [list(g) for g in groups]
         else:
             raise KeyError(f"unknown policy {policy!r}")
 
