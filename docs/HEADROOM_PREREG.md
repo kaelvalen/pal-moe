@@ -170,3 +170,55 @@ other backbones             one backbone per screen
 - **Does not license:** any claim about a continual or MoE system, any claim that the
   gap is reachable under the continual constraint, or any claim beyond this backbone,
   these splits and this adapter recipe.
+
+## Amendment 1 (2026-09-26, after review, before the smoke and before any screen number)
+
+**1. The `C_ridge < F1` row of section 5 is replaced.** Its justification was too
+strong. "An identity-initialised adapter plus ridge cannot be worse than frozen ridge
+at the optimum" holds for a train objective, not for test accuracy:
+
+- the adapters are trained through a linear head with cross-entropy, so
+  ridge-on-adapted-features is not what is optimised;
+- adapted features can overfit the train split, and then a lower test `C_ridge` is a
+  real finding (the adaptation does not generalise), not a recipe error.
+
+`C_ridge` and `F1` (and, for Domain-IL, `Co_ridge` and `F1o`) are therefore reported
+**on the train split as well** (in-sample ridge fits on both sides). The row becomes:
+
+| train `C_ridge` vs `F1` | test `C_ridge` vs `F1` | reading |
+| :-- | :-- | :-- |
+| < | < | recipe failure: the dataset's reading is withheld; a recipe change needs an amendment |
+| < | >= | the adapter did not fit the train split. Treated as a recipe failure too (withheld); the test ordering is not interpreted |
+| >= | < | the adaptation overfits: **no headroom** for that dataset - a valid result, not a failure |
+| >= | >= | normal reading (the gap thresholds of section 5) |
+
+The same table applies to `Co_ridge` vs `F1o` for `G_DIL`.
+
+**2. Split hashes** (the ImageNet-R / -A split of section 2; DomainNet's official lists):
+
+```text
+data/splits/imagenet-r_train.txt   24002  ab209e9534c44f5c74182e7081d39658ba5fd756663a28698f4547ef199973ef
+data/splits/imagenet-r_test.txt     5998  eba499f87e6246aa62ad0fdc1b70bf72ee23a45fe3b41f9e36b577c717e2ae75
+data/splits/imagenet-a_train.txt    6000  9a1ed24a6ba2d20c86235510d2121b5d4bf476f8f0f724a7a6d92f261e475b1e
+data/splits/imagenet-a_test.txt     1500  f581353c379def4f96151ffffe42042228976d1316265f92ef5c0dd10b1c6e78
+domainnet/clipart_train.txt               affdadf5f95a7583e6b98030a3d35007e2613ee4dd942393c5a705ec2b429312
+domainnet/clipart_test.txt                62c8e36aaba1c41ad9e249099739707220a44c08f167b37ef420f34a31628a6b
+domainnet/infograph_train.txt             36b44cbd41a2915e0dc73b4f4be8862a6f3c220f93c8d63fb2439beeae3aefda
+domainnet/infograph_test.txt              413cfa54ac92e7e6b242f4f09fbd9c8ace85c4deaf3cb6c81ff6b68264460136
+domainnet/painting_train.txt              f1da38d50a702fddf1329f85bc607d7a2abcae7e6aec75e1fd49cc1bd340d47b
+domainnet/painting_test.txt               11472b13b5188e09f06918b12eebb660588c97a20e43e268d9b02e3e37eb8f97
+domainnet/quickdraw_train.txt             3a5edd3bc215772010eebc87f158707703dd7e48091d13b816af81326a9d1c0f
+domainnet/quickdraw_test.txt              2a00a60650a453c65c356da748fec54084a197272137c440e7d52d08947357bf
+domainnet/real_train.txt                  19d483256d24aef19e581b65eda8333fd918aef3eb733fe499ff384120e3a289
+domainnet/real_test.txt                   2b3f75bcde309aeb5931292084b2162e936b5f189e3bb1ad716f0f74c460864c
+domainnet/sketch_train.txt                72f4bc6afa5702a1ccba800d0053c1427de87439dfaf246dbc9a2e71abfec54f
+domainnet/sketch_test.txt                 3fb48fca18c507c4321f007c3f62b308ec232ff6928cbfe2af64e76ec366e840
+```
+
+**3. Split comparability.** The ImageNet-R / -A numbers use our own stratified
+80/20 split, so they are **not directly comparable with published PILOT / EASE
+numbers**. Every arm in this programme is run by us on the same split. Any paper
+using them states this in one sentence.
+
+**4. Feasibility moves to amendment 2.** Section 7 said it would be filled in as
+amendment 1. It will be amendment 2, written from the smoke before any screen number.
