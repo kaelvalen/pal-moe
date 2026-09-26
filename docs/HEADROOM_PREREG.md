@@ -262,3 +262,63 @@ section 2 matters only for the next (continual) study.
 
 **Trainable parameters of the ceiling:** adapters 304,320 (12 blocks x 2 x (768 x 16 +
 biases)) + linear head (768 x C + C).
+
+## Amendment 3 (2026-09-26, after a veto check stopped the first run; approved in review)
+
+**What happened.** The first screen run was started at `5dda3a4`. While checking the
+vetoes of the first finished ceiling cell (ImageNet-A, seed 42), the fixed lambda grid
+of section 3 (`{1e-2 .. 1e4}`) turned out not to be scale-free, and the run was stopped
+before any other dataset produced a number.
+
+- **F2** (10,000-d ReLU random projection): the Gram diagonal is ~1e6-1e7, so every
+  lambda on the grid was negligible. The held-out accuracy was flat across the whole
+  grid in all six seeds, the train accuracy was 100 % (interpolation), and the tie
+  rule then picked the **smallest** lambda (`0.01` in seeds 2 and 4).
+- **F1**: the chosen lambda sat on the grid's upper edge (`1e4`) in 4 of 6 seeds.
+- Both effects weaken `max(F1, F2)` and so **inflate G**: the defect worked in favour
+  of the "headroom" hypothesis. The correction strengthens the frozen baselines and
+  works against it.
+
+**What was seen.** Intermediate ImageNet-A numbers were seen before this amendment:
+seed 42, old grid - F1 50.8, F2 44.7, `C_ridge` 63.0, `C_head` 64.7 (a gap of ~12 on the
+old grid, near the threshold). The six frozen ImageNet-A seeds' lambda / held-out curves
+were also inspected. **No number of DomainNet or ImageNet-R was computed or seen.** The
+decision-carrying dataset (DomainNet) is clean. ImageNet-A is decided by the same rule
+as everything else, and this paragraph goes with its reading.
+
+**The rule, replacing section 3's lambda grid for every ridge arm (`F1`, `F2`, `F1o`,
+`F2o`, `D`, `C_ridge`, `Co_ridge`, symmetrically)** - `pal_moe/eval/ridge_select.py`:
+
+```text
+scale        the readout input h (after any feature map) is divided by
+             s = sqrt(mean ||h||^2) over the fitting (train) rows; bias appended after
+lambda       lambda = c * trace(A_feat) / d on the normalised features,
+             c in {1e-6, 1e-5, ..., 1e1}
+tie rule     among the c whose held-out accuracy is within 0.1 pp of the best, the
+             LARGEST (a simple 1-SE rule)
+edge         if the chosen c is at an edge, the grid is extended once by 3 decades in
+             that direction; if it is still at an edge the arm is flagged
+             converged = False and that dataset's reading is WITHHELD (never read at
+             the edge value)
+held-out     unchanged: a seeded 10 % slice of the train split; refit on all train rows
+```
+
+**Scale-freeness is tested** (`tests/test_ridge_select.py`):
+
+- Multiplying the features by a power of two (1024) leaves `c` and the logits
+  **bitwise** identical. Such a scaling is exact in floating point.
+- Multiplying them by 100 leaves `c`, the whole held-out curve and every predicted
+  label identical, both without and with the random projection. Bitwise logits are
+  not attainable for a non-power-of-two factor: the rescaled floats round differently.
+- A flat curve takes the largest `c`, extends upward and is flagged non-converged.
+
+**Saved for re-audit (no retraining needed if a readout rule changes again).**
+
+- Frozen features were already cached per dataset (`results/headroom/features/`).
+- Every ceiling cell now also saves its adapted train/test features (float16), the
+  adapter weights and the linear head (`results/headroom/ceiling/`).
+
+**Restart.** The screen restarts from scratch for all three datasets under this rule.
+ImageNet-A is recomputed. The cached frozen features are reused (they do not depend on
+lambda). The GPU is used by nothing else during the run: the feasibility figures of
+amendment 2 assume that.

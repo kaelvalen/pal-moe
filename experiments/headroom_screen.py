@@ -13,7 +13,7 @@ Stages (each cached under results/headroom/, so a stage is never recomputed):
                Co (DomainNet): one adapter set per domain, per-expert ridge over all
                classes, oracle domain; 2 seeds (+1 on a threshold split)
 
-Ridge: float64, bias column, lambda from {1e-2..1e4} chosen on a seeded 10 % held-out
+Ridge: float64, scale-free (pal_moe.eval.ridge_select, amendment 3), chosen on a seeded 10 % held-out
 slice of the TRAIN split, refitted on the full train split. Train-split accuracies are
 reported for every ridge (amendment 1). The test split is never used for a choice.
 
@@ -36,10 +36,10 @@ import torch.nn.functional as F  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from pal_moe.core.vit_adapter import AdaptedViT  # noqa: E402
+from pal_moe.eval.ridge_select import fit_select  # noqa: E402
 
 ROOT = Path("data")
 OUT = Path("results/headroom")
-LAMBDAS = [1e-2, 1e-1, 1.0, 1e1, 1e2, 1e3, 1e4]
 DOMAINS = ["clipart", "infograph", "painting", "quickdraw", "real", "sketch"]
 FROZEN_SEEDS = [42, 1, 2, 3, 4, 5]
 RP_DIM = 10000
@@ -151,56 +151,11 @@ def extract(model, paths, labels, expert, device, head=None, expert_of=None):
     return feats, pred
 
 
-# -- ridge ---------------------------------------------------------------------------------
-
-
-def _aug(z):
-    z = z.double()
-    return torch.cat([z, torch.ones(z.size(0), 1, dtype=z.dtype)], 1)
-
-
-def _stats(Z, Y, C, rp=None, chunk=8192):
-    d = (rp.size(1) if rp is not None else Z.size(1)) + 1
-    A = torch.zeros(d, d, dtype=torch.float64)
-    B = torch.zeros(d, C, dtype=torch.float64)
-    for s in range(0, Z.size(0), chunk):
-        h = _aug(phi(Z[s : s + chunk], rp))
-        A += h.t() @ h
-        oh = torch.zeros(h.size(0), C, dtype=torch.float64)
-        oh[torch.arange(h.size(0)), Y[s : s + chunk]] = 1.0
-        B += h.t() @ oh
-    return A, B
-
-
-def phi(z, rp):
-    return z if rp is None else torch.relu(z.double() @ rp)
-
-
-def _acc(W, Z, Y, rp=None, chunk=8192):
-    hit = 0
-    for s in range(0, Z.size(0), chunk):
-        hit += int(
-            ((_aug(phi(Z[s : s + chunk], rp)) @ W).argmax(-1) == Y[s : s + chunk]).sum()
-        )
-    return hit / max(1, Z.size(0))
+# -- ridge (amendment 3: scale-free lambda, tie tolerance, edge extension) ----------------
 
 
 def ridge_select(Ztr, Ytr, C, seed, rp=None):
-    """Lambda on a seeded 10 % train held-out slice, refit on all train. -> (W, lam, info)."""
-    n = Ztr.size(0)
-    perm = torch.randperm(n, generator=torch.Generator().manual_seed(seed))
-    ho, rest = perm[: n // 10], perm[n // 10 :]
-    A_r, B_r = _stats(Ztr[rest], Ytr[rest], C, rp)
-    A_h, B_h = _stats(Ztr[ho], Ytr[ho], C, rp)
-    eye = torch.eye(A_r.size(0), dtype=torch.float64)
-    scores = {}
-    for lam in LAMBDAS:
-        scores[lam] = _acc(
-            torch.linalg.solve(A_r + lam * eye, B_r), Ztr[ho], Ytr[ho], rp
-        )
-    lam = max(LAMBDAS, key=lambda v: (scores[v], -v))
-    W = torch.linalg.solve(A_r + A_h + lam * eye, B_r + B_h)
-    return W, lam, {"heldout_acc": scores, "train_acc": _acc(W, Ztr, Ytr, rp)}
+    return fit_select(Ztr, Ytr, C, seed, rp=rp)
 
 
 def rp_matrix(seed, dim=768):
@@ -245,45 +200,64 @@ def load_feats(dataset, split, tag="frozen"):
     return torch.load(feature_path(dataset, split, tag), weights_only=False)
 
 
+def _per_domain(model, z, y, dom):
+    return {d: model.accuracy(z[dom == i], y[dom == i]) for i, d in enumerate(DOMAINS)}
+
+
+def _oracle_readout(ztr, ytr, dtr, zte, yte, dte, C, seed, rp=None, domains=None):
+    """One ridge per domain, the true domain given at test. Sample-weighted totals."""
+    per, hits, n, tr_hits, tr_n, conv = {}, 0.0, 0, 0.0, 0, True
+    for i, d in enumerate(DOMAINS):
+        mtr, mte = dtr == i, dte == i
+        m, info = ridge_select(ztr[mtr], ytr[mtr], C, seed, rp)
+        a = m.accuracy(zte[mte], yte[mte])
+        per[d] = {"test_acc": a, **info}
+        hits += a * int(mte.sum())
+        n += int(mte.sum())
+        tr_hits += info["train_acc"] * int(mtr.sum())
+        tr_n += int(mtr.sum())
+        conv = conv and info["converged"]
+    return {
+        "test_acc": hits / n,
+        "train_acc": tr_hits / tr_n,
+        "converged": conv,
+        "per_domain": per,
+    }
+
+
 def frozen_arms(dataset, seed):
     tr, te = load_feats(dataset, "train"), load_feats(dataset, "test")
     C = int(tr["y"].max()) + 1
     out = {}
     for name, rp in (("F1", None), ("F2", rp_matrix(seed))):
-        W, lam, info = ridge_select(tr["z"], tr["y"], C, seed, rp)
-        out[name] = {"test_acc": _acc(W, te["z"], te["y"], rp), "lambda": lam, **info}
+        m, info = ridge_select(tr["z"], tr["y"], C, seed, rp)
+        out[name] = {"test_acc": m.accuracy(te["z"], te["y"]), **info}
         if dataset == "domainnet":
-            out[name]["per_domain_test"] = {
-                d: _acc(W, te["z"][te["domain"] == i], te["y"][te["domain"] == i], rp)
-                for i, d in enumerate(DOMAINS)
-            }
+            out[name]["per_domain_test"] = _per_domain(
+                m, te["z"], te["y"], te["domain"]
+            )
     if dataset == "domainnet":
         for name, rp in (("F1o", None), ("F2o", rp_matrix(seed))):
-            per, hits, n, tr_hits, tr_n = {}, 0, 0, 0, 0
-            for i, d in enumerate(DOMAINS):
-                mtr, mte = tr["domain"] == i, te["domain"] == i
-                W, lam, info = ridge_select(tr["z"][mtr], tr["y"][mtr], C, seed, rp)
-                a = _acc(W, te["z"][mte], te["y"][mte], rp)
-                per[d] = {"test_acc": a, "lambda": lam, "train_acc": info["train_acc"]}
-                hits += a * int(mte.sum())
-                n += int(mte.sum())
-                tr_hits += info["train_acc"] * int(mtr.sum())
-                tr_n += int(mtr.sum())
-            out[name] = {
-                "test_acc": hits / n,
-                "train_acc": tr_hits / tr_n,
-                "per_domain": per,
-            }
-        # D: domain-ID from the frozen [CLS]
+            out[name] = _oracle_readout(
+                tr["z"],
+                tr["y"],
+                tr["domain"],
+                te["z"],
+                te["y"],
+                te["domain"],
+                C,
+                seed,
+                rp,
+            )
         means = torch.stack(
             [F.normalize(tr["z"][tr["domain"] == i].mean(0), dim=0) for i in range(6)]
         )
         nn_pred = (F.normalize(te["z"], dim=-1) @ means.t()).argmax(-1)
-        Wd, lam, info = ridge_select(tr["z"], tr["domain"], 6, seed)
+        md, info = ridge_select(tr["z"], tr["domain"], 6, seed)
         out["D"] = {
             "nearest_mean_acc": float((nn_pred == te["domain"]).float().mean()),
-            "ridge_acc": _acc(Wd, te["z"], te["domain"]),
-            "ridge_lambda": lam,
+            "ridge_acc": md.accuracy(te["z"], te["domain"]),
+            "ridge": info,
             "confusion_nearest_mean": torch.bincount(
                 te["domain"] * 6 + nn_pred, minlength=36
             )
@@ -305,6 +279,8 @@ def train_adapter(model, expert, paths, labels, C, steps, seed, device):
     with torch.no_grad():  # veto: identity at init, bitwise
         identity = torch.equal(model(probe, expert), model(probe, None))
     done, t0, losses = 0, time.time(), []
+    if len(ds) < 64:
+        raise ValueError(f"{expert}: {len(ds)} training images < one batch of 64")
     while done < steps:
         for x, y, _ in loader(ds, 64, True, seed + done):
             with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -335,57 +311,83 @@ def train_adapter(model, expert, paths, labels, C, steps, seed, device):
     }
 
 
+def save_expert(model, head, expert, dataset, seed, ztr, zte, extra=None):
+    """Adapted features, adapter weights and head, so any readout can be re-audited
+    without retraining (amendment 3)."""
+    path = OUT / "ceiling" / f"{dataset}_seed{seed}_{expert}.pt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "adapters": model.adapters[expert].state_dict(),
+            "head": head.state_dict(),
+            "z_train": ztr.half(),
+            "z_test": zte.half(),
+            "base_hash": model.base_hash,
+            **(extra or {}),
+        },
+        path,
+    )
+    return str(path)
+
+
 def ceiling_arms(dataset, seed, model, device, epochs):
     trp, ytr, dtr = read_list(dataset, "train")
     tep, yte, dte = read_list(dataset, "test")
     C = int(ytr.max()) + 1
     steps = epochs * (len(trp) // 64)
     out = {}
-    head, info = train_adapter(model, f"C{seed}", trp, ytr, C, steps, seed, device)
-    ztr, ptr = extract(model, trp, ytr, f"C{seed}", device, head)
-    zte, pte = extract(model, tep, yte, f"C{seed}", device, head)
-    W, lam, rinfo = ridge_select(ztr, ytr, C, seed)
+    e = f"C{seed}"
+    head, info = train_adapter(model, e, trp, ytr, C, steps, seed, device)
+    ztr, ptr = extract(model, trp, ytr, e, device, head)
+    zte, pte = extract(model, tep, yte, e, device, head)
+    saved = save_expert(model, head, e, dataset, seed, ztr, zte)
+    m, rinfo = ridge_select(ztr, ytr, C, seed)
     out["C"] = {
-        "C_ridge_test": _acc(W, zte, yte),
+        "C_ridge_test": m.accuracy(zte, yte),
         "C_ridge_train": rinfo["train_acc"],
         "C_head_test": float((pte == yte).float().mean()),
         "C_head_train": float((ptr == ytr).float().mean()),
-        "lambda": lam,
-        "heldout": rinfo["heldout_acc"],
+        "ridge": rinfo,
+        "saved": saved,
         **info,
     }
     if dataset == "domainnet":
-        out["C"]["per_domain_ridge_test"] = {
-            d: _acc(W, zte[dte == i], yte[dte == i]) for i, d in enumerate(DOMAINS)
-        }
-        per, hits, n, tr_hits, tr_n = {}, 0, 0, 0, 0
+        out["C"]["per_domain_ridge_test"] = _per_domain(m, zte, yte, dte)
+        z1_all, z2_all = torch.empty_like(ztr), torch.empty_like(zte)
+        head_hits, trains = {}, {}
         for i, d in enumerate(DOMAINS):
-            mtr = (dtr == i).nonzero().flatten().tolist()
-            mte = (dte == i).nonzero().flatten().tolist()
+            mtr = (dtr == i).nonzero().flatten()
+            mte = (dte == i).nonzero().flatten()
             e = f"Co{seed}_{d}"
             dsteps = max(1, round(steps * len(mtr) / len(trp)))
             h, dinfo = train_adapter(
-                model, e, [trp[j] for j in mtr], ytr[mtr], C, dsteps, seed, device
+                model,
+                e,
+                [trp[j] for j in mtr.tolist()],
+                ytr[mtr],
+                C,
+                dsteps,
+                seed,
+                device,
             )
-            z1, p1 = extract(model, [trp[j] for j in mtr], ytr[mtr], e, device, h)
-            z2, p2 = extract(model, [tep[j] for j in mte], yte[mte], e, device, h)
-            Wd, lamd, di = ridge_select(z1, ytr[mtr], C, seed)
-            a = _acc(Wd, z2, yte[mte])
-            per[d] = {
-                "test_acc": a,
-                "train_acc": di["train_acc"],
-                "lambda": lamd,
-                "head_test": float((p2 == yte[mte]).float().mean()),
-                **dinfo,
-            }
-            hits += a * len(mte)
-            n += len(mte)
-            tr_hits += di["train_acc"] * len(mtr)
-            tr_n += len(mtr)
+            z1, _ = extract(
+                model, [trp[j] for j in mtr.tolist()], ytr[mtr], e, device, h
+            )
+            z2, p2 = extract(
+                model, [tep[j] for j in mte.tolist()], yte[mte], e, device, h
+            )
+            z1_all[mtr], z2_all[mte] = z1, z2
+            save_expert(model, h, e, dataset, seed, z1, z2)
+            head_hits[d] = float((p2 == yte[mte]).float().mean())
+            trains[d] = dinfo
+        o = _oracle_readout(z1_all, ytr, dtr, z2_all, yte, dte, C, seed)
         out["Co"] = {
-            "Co_ridge_test": hits / n,
-            "Co_ridge_train": tr_hits / tr_n,
-            "per_domain": per,
+            "Co_ridge_test": o["test_acc"],
+            "Co_ridge_train": o["train_acc"],
+            "converged": o["converged"],
+            "per_domain": o["per_domain"],
+            "head_test_per_domain": head_hits,
+            "training": trains,
         }
     return out
 
