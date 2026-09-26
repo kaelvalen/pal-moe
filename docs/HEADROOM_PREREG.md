@@ -222,3 +222,43 @@ using them states this in one sentence.
 
 **4. Feasibility moves to amendment 2.** Section 7 said it would be filled in as
 amendment 1. It will be amendment 2, written from the smoke before any screen number.
+
+## Amendment 2 (2026-09-26, from the development smoke, before any screen number)
+
+**Feasibility, measured** (`experiments/headroom_smoke.py`, `results/headroom/smoke.json`).
+GPU otherwise idle, sustained values = mean of the last 5 minutes (train) / 3 minutes
+(extract) / 2 minutes (decode):
+
+```text
+adapter training (batch 64, bf16, r = 16, all 12 blocks)   204 img/s   (first minute 185)
+frozen / adapted feature extraction (batch 256, bf16)       495 img/s   (first minute 491)
+JPEG decode + resize (16 workers, ImageNet-R files)          979 img/s
+peak GPU memory (training)                                  3.4 GB of 8 GB
+GPU temperature 77-87 C, SM clock 2.5-2.7 GHz: no throttling beyond warm-up visible
+```
+
+Training and extraction are GPU-bound (decode is ~2x faster), **on ImageNet-R files**.
+DomainNet's `real` / `painting` images are larger, and their decode rate was not
+measured. If decode becomes the bound, wall time grows; the decision is unaffected.
+
+**Projection:**
+
+```text
+frozen features       DomainNet 586,575 imgs / 495 = 20 min; ImageNet-R 1 min; -A 15 s
+ceiling, per seed     DomainNet C: 3 epochs x 6,403 steps x 64 / 204 = 1.7 h
+                      + adapted extraction 20 min; Co: the same steps 1.7 h + 20 min
+                      -> ~4.0 h per seed; ImageNet-R ~21 min; ImageNet-A ~6 min
+two ceiling seeds     ~8.0 h (DomainNet) + ~0.9 h (ImageNet-R/-A)
+frozen arms (CPU)     not measured (float64 ridge; RanPAC at 10,001 dims dominates)
+total                 ~10-12 h projected, under the 48 h ceiling: nothing is dropped
+```
+
+**Protocol clarification (no change of arms).** The screen is offline. DomainNet
+Class-IL and Domain-IL use the same train data and the same 345-way test, so their
+global arms `F1`, `F2` and `C` are one computation: DomainNet Class-IL's `G_joint` *is*
+DomainNet's `G_joint`. The protocols differ only in the Domain-IL oracle arms (`F1o`,
+`F2o`, `Co`, `D`), which are computed as registered. The class-task partition of
+section 2 matters only for the next (continual) study.
+
+**Trainable parameters of the ceiling:** adapters 304,320 (12 blocks x 2 x (768 x 16 +
+biases)) + linear head (768 x C + C).
