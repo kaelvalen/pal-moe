@@ -214,3 +214,54 @@ def test_anchor_etid2_cell(api):
                 r["v3_guards"]["writes_reversible"]
                 and r["v3_guards"]["consolidation_reversible"]
             )
+
+
+# -- v1 checkpoints written by the stage1-final code ------------------------------
+
+FIXTURES = ROOT / "tests" / "fixtures"
+
+
+def _build_v1():
+    from pal_moe.models.encoder import SharedEncoder
+    from pal_moe.models.expert import MLPExpert
+    from pal_moe.models.moe import DynamicMoE
+    from pal_moe.models.router import DynamicRouter
+
+    return DynamicMoE(
+        encoder=SharedEncoder(input_dim=16, hidden_dims=(8,), output_dim=4),
+        router=DynamicRouter(input_dim=4, num_experts=2, top_k=1),
+        experts=[
+            MLPExpert(input_dim=4, hidden_dim=8, num_classes=3, expert_id=i)
+            for i in range(2)
+        ],
+    ).eval()
+
+
+def _out(y):
+    return y[0] if isinstance(y, (tuple, list)) else y
+
+
+def test_v1_whole_object_pickle_loads_through_the_shims():
+    """`v1_whole_objects_stage1.pt` was written by `torch.save` at stage1-final, so its
+    pickle names `pal_moe.models.*` and `pal_moe.memory.prototype_memory`. Unpickling
+    must resolve them to the legacy classes and reproduce the stored forward bitwise."""
+    import pal_moe.legacy.memory.prototype_memory as pm
+    import pal_moe.legacy.models.moe as moe
+
+    blob = torch.load(FIXTURES / "v1_whole_objects_stage1.pt", weights_only=False)
+    assert isinstance(blob["model"], moe.DynamicMoE)
+    assert isinstance(blob["memory"], pm.PrototypeMemory)
+    with torch.no_grad():
+        assert torch.equal(_out(blob["model"](blob["x"])), blob["ref"])
+
+
+def test_v1_persistence_checkpoint_loads_through_the_shims():
+    from pal_moe.memory.prototype_memory import PrototypeMemory
+    from pal_moe.persistence import load_checkpoint
+
+    blob = torch.load(FIXTURES / "v1_whole_objects_stage1.pt", weights_only=False)
+    model, mem = _build_v1(), PrototypeMemory(feature_dim=4, store_raw=False)
+    meta = load_checkpoint(str(FIXTURES / "v1_checkpoint_stage1.pt"), model, mem)
+    assert meta["made_by"].startswith("stage1-final") and len(mem.prototypes) == 1
+    with torch.no_grad():
+        assert torch.equal(_out(model(blob["x"])), blob["ref"])

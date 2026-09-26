@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 import torch
 
 from pal_moe.eval.editing import (
@@ -101,3 +102,44 @@ def test_multihop_and_locality():
     a = torch.tensor([[0.0, 1.0], [1.0, 0.0]])
     assert locality(a, a)["flip_rate"] == 0.0
     assert locality(a, a.flip(-1))["flip_rate"] == 1.0
+
+
+# -- the real public files (opt-in: present only after download into data/editing/) ----
+
+REAL = {
+    "counterfact": ("data/editing/counterfact.json", 21919),
+    "zsre": ("data/editing/zsre_mend_eval.json", 19086),
+    "mquake": ("data/editing/MQuAKE-CF-3k.json", 3000),
+}
+
+
+@pytest.mark.parametrize("name", sorted(REAL))
+def test_loaders_on_the_real_releases(name):
+    from pathlib import Path
+
+    path, n = REAL[name]
+    if not Path(path).exists():
+        pytest.skip(f"{path} not downloaded (see docs/V3_LLM_PREREG.md, amendment 1)")
+    loader = {
+        "counterfact": load_counterfact,
+        "zsre": load_zsre,
+        "mquake": load_mquake,
+    }[name]
+    cases = loader(path)
+    assert len(cases) == n
+    if name == "mquake":
+        assert all(c.edits and c.questions and c.new_answer for c in cases)
+        assert all(
+            e.target_new.startswith(" ") and "{}" not in e.prompt
+            for c in cases
+            for e in c.edits
+        )
+    else:
+        assert all(
+            c.prompt and c.target_new.startswith(" ") and "{}" not in c.prompt
+            for c in cases
+        )
+        assert sum(bool(c.paraphrases) for c in cases) >= 0.99 * n
+        assert sum(bool(c.neighborhood) for c in cases) >= 0.99 * n
+    if name == "zsre":
+        assert sum(bool(c.neighborhood_answers) for c in cases) >= 0.99 * n
