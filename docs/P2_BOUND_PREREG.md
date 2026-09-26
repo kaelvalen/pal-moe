@@ -1,6 +1,6 @@
 # P2-BOUND: why the expert bank adds < 1 pp over a ridge router, and whether confusion-aligned experts change it - pre-registration
 
-Status: **proposed, not started.** Written during the v3 restructure (phase 5) and
+Status: **run 2026-09-26, all vetoes passing - see `P2_BOUND_RESULTS.md`.** (Originally: proposed, not started.) Written during the v3 restructure (phase 5) and
 committed before any of its runs. It follows `E_TID2_RESULTS.md`, whose P2 contrast
 (+0.62 pp `coherent`, -0.03 pp `dispersed`) is the thing to be explained, and it is
 the pre-registration that gates the experimental `by_confusion` consolidation policy

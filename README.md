@@ -35,7 +35,8 @@ Documentation entry points:
 
 - [`docs/V3_ARCHITECTURE.md`](docs/V3_ARCHITECTURE.md): the v3 architecture, API and guards, the package layout and its import shims, and a table mapping every design decision to the result that motivates it.
 - [`docs/E_TID_RESULTS.md`](docs/E_TID_RESULTS.md) and [`docs/E_TID2_RESULTS.md`](docs/E_TID2_RESULTS.md): the offline task-ID ceiling and the continual ridge router (exploratory: no committed pre-registration).
-- [`docs/P2_BOUND_PREREG.md`](docs/P2_BOUND_PREREG.md) and [`docs/V3_LLM_PREREG.md`](docs/V3_LLM_PREREG.md): the next two pre-registrations (proposed, not run).
+- [`docs/P2_BOUND_RESULTS.md`](docs/P2_BOUND_RESULTS.md): why the expert bank adds < 1 pp over a ridge router - the owner expert rescues ~30 % of the samples it could; confusion-aligned grouping creates 14x the rescuable mass but converts only +0.53 pp (hindsight-offline bound).
+- [`docs/V3_LLM_PREREG.md`](docs/V3_LLM_PREREG.md): the first LLM pre-registration (proposed, not run).
 - [`docs/STAGE1_RESULTS.md`](docs/STAGE1_RESULTS.md): **all Stage 1 results in one place** (E0, S2, S3, S7, S4), the consolidated findings, the pre-registered hypothesis verdicts, and what the evidence does *not* say.
 - [`docs/STAGE1_PLAN.md`](docs/STAGE1_PLAN.md): the stage order, the two experiment rules, and the per-stage write-ups.
 - [`docs/MEASUREMENT_CONTRACT.md`](docs/MEASUREMENT_CONTRACT.md) and [`docs/ARCHITECTURE_CONTRACT.md`](docs/ARCHITECTURE_CONTRACT.md): what a run must report (S0) and the four interfaces plus registries (S1).
