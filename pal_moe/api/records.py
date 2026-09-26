@@ -39,7 +39,7 @@ class EditRecord:
     id: str
     kind: str  # "fast" | "medium" | "consolidation"
     content_hash: str
-    order_hash: str = ""  # digest of the canonical medium-path order after this edit
+    order_hash: str = ""  # digest of the live medium-path edit order after this edit
     locality_report: dict = field(default_factory=dict)
     reversibility_report: dict = field(default_factory=dict)
     order_report: dict = field(default_factory=dict)

@@ -1,18 +1,25 @@
 """The four guards and the edit-log machinery shared by every v3 backend.
 
-Run on every `write` / `forget` / `consolidate`:
+Run on every `write` / `forget` / `consolidate`, and each one is a **measurement**:
 
-1. **Locality** - output change on a fixed canary set <= epsilon (per path, logged).
-2. **Reversibility** - `write(x); forget(id)` restores `state()`, the weights and all
-   canary outputs **bitwise**. Checked two ways: a trial undo/redo inside every
-   `write`, and on every `forget` against the digests recorded the last time the
-   system was in the resulting state.
-3. **Order invariance** - the medium path's canonical solution vs the arrival-order
-   running sum: argmax identical on the canary set, max|dW| reported.
-4. **Router purity** - router trainable parameter count == 0, asserted.
+1. **Locality** - canary argmax flip rate <= epsilon (per path, logged), plus the
+   max |delta output|.
+2. **Reversibility** - inside every write, a trial undo/redo: after the undo the
+   medium-path solution must be within `tolerance` of the pre-write solution and the
+   canary argmax identical (max |delta output| reported); on every forget, the
+   accumulator must match the live contributions re-summed from scratch (the downdate
+   drift) and, when the resulting state was visited before, the canary outputs must
+   match that visit within `output_tolerance`. `bitwise` is reported separately and is
+   only expected where it is real: the FAST path (a row is physically removed), a
+   consolidation (the bank object is swapped back), and a medium path returned to
+   zero edits (accumulators reset to the prior, the LM hook removed).
+3. **Order invariance** - the accumulator vs the live contributions re-summed in a
+   seeded random permutation: max|dW| <= `tolerance`, canary argmax identical.
+4. **Router purity** - trainable scalars reachable from the router == 0 (inspects the
+   object, not its self-report).
 
-A backend subclasses `GuardedEditor` and implements the `_apply_* / _undo / _redo`
-hooks; this class owns the log, the state hash and the guard bookkeeping.
+A backend subclasses `GuardedEditor` and implements the `_apply / _undo / _redo`
+hooks plus `_solution`, `_recompute_report`, `_order_report`.
 """
 
 from __future__ import annotations
@@ -26,14 +33,33 @@ from pal_moe.router.base import assert_pure
 
 from .records import EditRecord, GuardViolation, ReversibilityError, StateHash
 
+_FINGERPRINT_MAX = (
+    2_000_000  # canary scores kept per visited state above this: row maxima
+)
+
 
 @dataclass
 class GuardConfig:
     epsilon_fast: float | None = 0.0  # max canary argmax flip rate for a FAST write
     epsilon_medium: float | None = None  # None: measure and log only
     epsilon_consolidation: float | None = None
+    tolerance: float = (
+        1e-10  # max |dW| for order invariance and reversibility (float64)
+    )
+    output_tolerance: float = 1e-6  # max |delta canary output| for reversibility
     trial_reversibility: bool = True
+    order_check: bool = True
     on_violation: str = "raise"  # "raise" (after rolling back) | "log"
+
+
+def _max_abs(a, b) -> float:
+    if a is None and b is None:
+        return 0.0
+    if a is None or b is None:
+        return float("inf")
+    if a.shape != b.shape:
+        return float("inf")
+    return float((a.double() - b.double()).abs().max()) if a.numel() else 0.0
 
 
 class GuardedEditor:
@@ -44,9 +70,7 @@ class GuardedEditor:
         self.guards = guards or GuardConfig()
         self.log: list[EditRecord] = []
         self._seq = 0
-        self._seen: dict[
-            str, tuple[str, str]
-        ] = {}  # state digest -> (weights, outputs)
+        self._seen: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}  # state -> canary
         self.guard_log: list[dict] = []
 
     # -- hooks a backend implements ---------------------------------------
@@ -62,17 +86,24 @@ class GuardedEditor:
         raise NotImplementedError
 
     def _canary_outputs(self) -> tuple[torch.Tensor, torch.Tensor]:
-        """(logits or scores [N, ...], labels [N]) on the fixed canary set."""
+        """(scores [N, ...], labels [N]) on the fixed canary set."""
         raise NotImplementedError
 
-    def _weights_digest(self) -> str:
-        raise NotImplementedError
+    def _solution(self) -> torch.Tensor | None:
+        """The medium path's current solved weights (or None when there are none)."""
+        return None
+
+    def _recompute_report(self) -> dict:
+        return {"pass": True}
 
     def _order_report(self) -> tuple[str, dict]:
         return "", {}
 
     def _routers(self) -> list:
         return []
+
+    def _weights_digest(self) -> str:
+        return ""
 
     # -- state ------------------------------------------------------------
 
@@ -88,11 +119,16 @@ class GuardedEditor:
         scores, labels = self._canary_outputs()
         return digest(scores, labels), scores, labels
 
-    def _remember_state(self) -> None:
-        self._seen[self.state().digest] = (
-            self._weights_digest(),
-            self._outputs_digest()[0],
-        )
+    @staticmethod
+    def _fingerprint(scores: torch.Tensor, labels: torch.Tensor):
+        if scores.numel() > _FINGERPRINT_MAX:
+            scores = scores.max(-1).values
+        return scores.detach().double().cpu().clone(), labels.detach().cpu().clone()
+
+    def _remember_state(self, scores=None, labels=None) -> None:
+        if scores is None:
+            _, scores, labels = self._outputs_digest()
+        self._seen[self.state().digest] = self._fingerprint(scores, labels)
 
     # -- guards -----------------------------------------------------------
 
@@ -112,9 +148,7 @@ class GuardedEditor:
             "canary_size": int(l0.numel()),
             "argmax_flips": flips,
             "flip_rate": flips / n,
-            "max_abs_output_delta": float((s1.double() - s0.double()).abs().max())
-            if s0.numel()
-            else 0.0,
+            "max_abs_output_delta": _max_abs(s0, s1),
             "epsilon": epsilon,
         }
         rep["pass"] = epsilon is None or rep["flip_rate"] <= epsilon
@@ -141,42 +175,69 @@ class GuardedEditor:
             "consolidation": self.guards.epsilon_consolidation,
         }[kind]
 
+    def _compare_outputs(self, ref, cur) -> dict:
+        (s0, l0), (s1, l1) = ref, cur
+        d = _max_abs(s0, s1)
+        return {
+            "canary_argmax_identical": bool(torch.equal(l0, l1)),
+            "canary_max_abs_delta": d,
+            "canary_bitwise": d == 0.0 and bool(torch.equal(l0, l1)),
+        }
+
     def _trial_reversibility(
-        self, record: EditRecord, pre_w: str, pre_o: str, post_o: str
+        self, record: EditRecord, pre_sol, pre_out, post_out
     ) -> dict:
         token = self._undo(record)
         self.log.remove(record)
-        undo_w, undo_o = self._weights_digest(), self._outputs_digest()[0]
+        undo_sol = self._solution()
+        undo_out = self._canary_outputs()
+        rep = {"undo_max_abs_dW": _max_abs(pre_sol, undo_sol)}
+        rep.update(
+            {
+                f"undo_{k}": v
+                for k, v in self._compare_outputs(pre_out, undo_out).items()
+            }
+        )
         self._redo(record, token)
         self.log.append(record)
-        redo_o = self._outputs_digest()[0]
-        rep = {
-            "undo_restores_weights": undo_w == pre_w,
-            "undo_restores_canary": undo_o == pre_o,
-            "redo_restores_canary": redo_o == post_o,
-        }
-        rep["pass"] = all(rep.values())
+        rep.update(
+            {
+                f"redo_{k}": v
+                for k, v in self._compare_outputs(
+                    post_out, self._canary_outputs()
+                ).items()
+            }
+        )
+        rep["bitwise"] = rep["undo_max_abs_dW"] == 0.0 and rep["undo_canary_bitwise"]
+        rep["pass"] = (
+            rep["undo_max_abs_dW"] <= self.guards.tolerance
+            and rep["undo_canary_argmax_identical"]
+            and rep["undo_canary_max_abs_delta"] <= self.guards.output_tolerance
+            and rep["redo_canary_argmax_identical"]
+        )
         return rep
 
     # -- public operations --------------------------------------------------
 
     def _guarded_write(self, item, path: str | None = None) -> EditRecord:
         purity = self.check_purity()
+        pre_out = self._canary_outputs()
         if not self._seen:
-            self._remember_state()
-        pre_w = self._weights_digest()
-        pre_o, s0, l0 = self._outputs_digest()
+            self._remember_state(*pre_out)
+        pre_sol = self._solution()
+        pre_sol = None if pre_sol is None else pre_sol.clone()
         record, _ = self._apply(item, path)
         self.log.append(record)
         record.purity_report = purity
-        post_o, s1, l1 = self._outputs_digest()
+        post_out = self._canary_outputs()
         record.locality_report = self.locality(
-            (s0, l0), (s1, l1), self._epsilon(record.kind)
+            pre_out, post_out, self._epsilon(record.kind)
         )
-        record.order_hash, record.order_report = self._order_report()
+        if self.guards.order_check:
+            record.order_hash, record.order_report = self._order_report()
         if self.guards.trial_reversibility:
             record.reversibility_report = self._trial_reversibility(
-                record, pre_w, pre_o, post_o
+                record, pre_sol, pre_out, post_out
             )
         self.check_purity()
         if not record.locality_report["pass"]:
@@ -185,13 +246,11 @@ class GuardedEditor:
             self._violate(
                 "reversibility", record.reversibility_report, record, rollback=True
             )
-        if record.order_report and not record.order_report.get(
-            "argmax_identical", True
-        ):
+        if record.order_report and not record.order_report.get("pass", True):
             self._violate(
                 "order_invariance", record.order_report, record, rollback=True
             )
-        self._remember_state()
+        self._remember_state(*post_out)
         return record
 
     def forget(self, edit_id: str) -> dict:
@@ -204,16 +263,26 @@ class GuardedEditor:
         self.log.remove(record)
         self.check_purity()
         st = self.state()
-        w, o = self._weights_digest(), self._outputs_digest()[0]
-        rep = {"edit": edit_id, "state_seen_before": st.digest in self._seen}
+        scores, labels = self._canary_outputs()
+        rep = {
+            "edit": edit_id,
+            "kind": record.kind,
+            "downdate": self._recompute_report(),
+            "state_seen_before": st.digest in self._seen,
+        }
+        rep["pass"] = rep["downdate"].get("pass", True)
         if rep["state_seen_before"]:
-            ref_w, ref_o = self._seen[st.digest]
-            rep["weights_bitwise"] = w == ref_w
-            rep["canary_bitwise"] = o == ref_o
-            rep["pass"] = rep["weights_bitwise"] and rep["canary_bitwise"]
+            cmp = self._compare_outputs(
+                self._seen[st.digest], self._fingerprint(scores, labels)
+            )
+            rep.update(cmp)
+            rep["pass"] = (
+                rep["pass"]
+                and cmp["canary_argmax_identical"]
+                and (cmp["canary_max_abs_delta"] <= self.guards.output_tolerance)
+            )
         else:
-            rep["pass"] = True  # a state never visited has no reference to compare to
-            self._seen[st.digest] = (w, o)
+            self._remember_state(scores, labels)
         if not rep["pass"]:
             self._violate("reversibility", rep, None, rollback=False)
         return rep

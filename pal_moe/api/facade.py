@@ -308,8 +308,8 @@ class PalMoE(GuardedEditor):
             p.requires_grad_(False)
             frozen += p.numel()
 
-        before = self._outputs_digest()
-        pre_w = self._weights_digest()
+        before = self._canary_outputs()
+        pre_sol = self._solution()
         self.bank = bank
         self._class_expert = {c: i for i, g in enumerate(groups) for c in g}
         self._consolidations[rid] = {
@@ -325,14 +325,13 @@ class PalMoE(GuardedEditor):
         )
         self.log.append(record)
         record.purity_report = self.check_purity()
-        after = self._outputs_digest()
+        after = self._canary_outputs()
         record.locality_report = self.locality(
-            before[1:], after[1:], self._epsilon("consolidation")
+            before, after, self._epsilon("consolidation")
         )
-        record.order_hash, record.order_report = self._order_report()
         if self.guards.trial_reversibility:
             record.reversibility_report = self._trial_reversibility(
-                record, pre_w, before[0], after[0]
+                record, pre_sol, before, after
             )
             if not record.reversibility_report["pass"]:
                 self._violate(
@@ -340,7 +339,7 @@ class PalMoE(GuardedEditor):
                 )
         if not record.locality_report["pass"]:
             self._violate("locality", record.locality_report, record, rollback=True)
-        self._remember_state()
+        self._remember_state(*after)
         return ConsolidationReport(record, policy, groups, len(bank.experts), frozen)
 
     # -- read path -----------------------------------------------------------
@@ -425,7 +424,17 @@ class PalMoE(GuardedEditor):
             sorted(self._class_expert.items()),
         )
 
+    def _solution(self):
+        return self.stats.solve() if self.stats.edit_ids else None
+
+    def _recompute_report(self) -> dict:
+        return self.stats.recompute_report(self.canary, tol=self.guards.tolerance)
+
     def _order_report(self):
-        order = self.stats.canonical_order()
-        rep = self.stats.order_report(self.canary) if order else {}
-        return digest(order), rep
+        ids = self.stats.edit_ids
+        rep = (
+            self.stats.order_report(self.canary, tol=self.guards.tolerance)
+            if ids
+            else {}
+        )
+        return digest(ids), rep

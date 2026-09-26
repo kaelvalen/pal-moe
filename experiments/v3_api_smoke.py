@@ -1,5 +1,10 @@
 """
-v3 API smoke: write -> predict -> forget -> predict, with reversibility asserted bitwise.
+v3 API smoke: write -> predict -> forget -> predict.
+
+FAST path: reversibility asserted bitwise (a memory row is physically removed).
+MEDIUM path: forget is a downdate of the float64 accumulators, so reversibility is
+asserted as identical predictions and max|delta logit| within tolerance, with the
+downdate's drift against a from-scratch re-sum reported.
 
 Runs on the cached ViT-B/16 CIFAR-100 features (`coherent` construction) when the
 cache is present, else on synthetic blobs. No number here is a result; the script
@@ -57,7 +62,7 @@ def main():
     for tr, _, t in tasks:
         rec = model.write(Batch(*tr, task=t))
         assert rec.reversibility_report["pass"], rec.reversibility_report
-        assert rec.order_report["argmax_identical"], rec.order_report
+        assert rec.order_report["pass"], rec.order_report
 
     x_test = torch.cat([te[0] for _, te, _ in tasks])
     y_test = torch.cat([te[1] for _, te, _ in tasks])
@@ -84,15 +89,22 @@ def main():
 
     # MEDIUM: forget the last batch, then write it back.
     last = model.log[-1]
-    model.forget(last.id)
+    rep = model.forget(last.id)
+    assert rep["pass"], rep
     tr, _, t = tasks[-1]
     model.write(Batch(*tr, task=t))
     p3 = model.predict(x_test)
-    assert torch.equal(p3.logits, p0.logits), "medium forget + re-write is not bitwise"
+    drift = float((p3.logits.double() - p0.logits.double()).abs().max())
+    assert torch.equal(p3.labels, p0.labels) and drift <= 1e-8, drift
+    print(
+        f"[medium] forget+re-write: downdate drift vs re-sum "
+        f"{rep['downdate']['max_abs_dW_recompute']:.1e}, max|d logit| {drift:.1e}, "
+        "predictions identical"
+    )
 
     print(
         f"[smoke] source={source} tasks={len(tasks)} acc={acc0 * 100:.2f} "
-        f"state={model.state().digest[:16]} reversibility=bitwise OK"
+        f"state={model.state().digest[:16]} fast=bitwise medium=within tolerance OK"
     )
 
 

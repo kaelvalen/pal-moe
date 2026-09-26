@@ -136,12 +136,14 @@ def run_cell(regime, seed, args, device, base):
                 "writes_reversible": all(
                     r.reversibility_report["pass"] for r in records
                 ),
-                "writes_order_argmax_identical": all(
-                    r.order_report["argmax_identical"] for r in records
+                "writes_order_pass": all(r.order_report["pass"] for r in records),
+                "max_permutation_dW": max(
+                    r.order_report["max_abs_dW_permutation"] for r in records
                 ),
-                "max_running_vs_canonical_dW": max(
-                    r.order_report["max_abs_dW"] for r in records
+                "max_undo_dW": max(
+                    r.reversibility_report["undo_max_abs_dW"] for r in records
                 ),
+                "storage_bytes": model.stats.storage_bytes(),
                 "consolidation_reversible": report.record.reversibility_report["pass"],
                 "router_trainable_params": 0
                 if report.record.purity_report["pass"]

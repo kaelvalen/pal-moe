@@ -176,6 +176,33 @@ class HFCausalLM:
         rows = torch.arange(idx.numel(), device=idx.device)
         return store["x"][rows, idx].float(), store["y"][rows, idx].float()
 
+    @torch.no_grad()
+    def collect_keys(
+        self,
+        texts: list[str],
+        layer: int | None = None,
+        max_tokens: int = 100_000,
+        batch_size: int = 8,
+    ) -> torch.Tensor:
+        """Down-projection inputs at EVERY non-pad token of a corpus, [N, d_ff] float32 on
+        CPU: the sample `estimate_key_covariance` needs for the MEMIT prior (keys of
+        text the model already handles, never the edit keys). Deltas are disabled."""
+        layer = self.edit_layer if layer is None else layer
+        out, total = [], 0
+        with self.base_only():
+            for i in range(0, len(texts), batch_size):
+                batch = self._encode(texts[i : i + batch_size])
+                with self._capture(layer) as store:
+                    self.model(**batch, use_cache=False)
+                mask = batch.get("attention_mask")
+                x = store["x"]
+                rows = x[mask.bool()] if mask is not None else x.reshape(-1, x.size(-1))
+                out.append(rows.float().cpu())
+                total += rows.size(0)
+                if total >= max_tokens:
+                    break
+        return torch.cat(out)[:max_tokens]
+
     def set_delta(self, layer: int, delta: torch.Tensor | None) -> None:
         """Install (or remove, with None) `y += x @ delta` on a down-projection."""
         layer = layer % len(self.layers)

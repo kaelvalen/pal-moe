@@ -66,32 +66,64 @@ def test_fast_memory_delete_restores_state_digest():
 # -- medium path -------------------------------------------------------------------
 
 
-def test_linear_stats_order_invariance_is_bitwise():
+def test_linear_stats_permuted_arrival_is_close_not_forced_equal():
+    """Two accumulators fed in different orders: a real fp comparison, not a design."""
     a, b = LinearStats(D, C), LinearStats(D, C)
     batches = _batches()
     for i, (x, y) in enumerate(batches):
         a.add(a.contribution(f"e{i}", x, one_hot(y, C)))
     for i, (x, y) in reversed(list(enumerate(batches))):
         b.add(b.contribution(f"e{i}", x, one_hot(y, C)))
-    assert torch.equal(a.solve(), b.solve())
-    rep = a.order_report(batches[0][0])
-    assert rep["argmax_identical"] and rep["max_abs_dW"] < 1e-9
+    assert float((a.solve() - b.solve()).abs().max()) <= 1e-10
+    rep = a.order_report(batches[0][0], tol=1e-10)
+    assert rep["pass"] and rep["argmax_identical"]
 
 
-def test_linear_stats_forget_is_bitwise_and_matches_one_shot():
+def test_linear_stats_order_guard_detects_a_broken_accumulator():
+    s = LinearStats(D, C)
+    for i, (x, y) in enumerate(_batches()):
+        s.add(s.contribution(f"e{i}", x, one_hot(y, C)))
+    s.A += 1e-3 * torch.eye(s.d1, dtype=s.A.dtype)  # corrupt the accumulator
+    s._W = None
+    assert not s.order_report(tol=1e-10)["pass"]
+    assert not s.recompute_report(tol=1e-10)["pass"]
+
+
+def test_linear_stats_forget_is_a_downdate_close_to_recompute():
     s = LinearStats(D, C)
     batches = _batches()
     for i, (x, y) in enumerate(batches[:2]):
         s.add(s.contribution(f"e{i}", x, one_hot(y, C)))
     W2 = s.solve().clone()
-    s.add(s.contribution("e2", *batches[2][:1], one_hot(batches[2][1], C)))
-    s.remove("e2")
-    assert torch.equal(s.solve(), W2)  # canonical recompute: exact, not approximate
+    s.add(s.contribution("e2", batches[2][0], one_hot(batches[2][1], C)))
+    s.remove("e2")  # subtraction, not a re-sum
+    rep = s.recompute_report(tol=1e-10)
+    assert rep["pass"] and float((s.solve() - W2).abs().max()) <= 1e-10
     once = LinearStats(D, C)
     x = torch.cat([b[0] for b in batches[:2]])
     y = torch.cat([b[1] for b in batches[:2]])
     once.add(once.contribution("all", x, one_hot(y, C)))
     assert float((once.solve() - W2).abs().max()) < 1e-10
+    s.remove("e0")
+    s.remove("e1")  # back to zero edits: the prior, bitwise
+    assert (
+        torch.equal(s.A, s.A0)
+        and not s.B.any()
+        and s.recompute_report()["bitwise_prior"]
+    )
+
+
+def test_linear_stats_memory_does_not_grow_with_d_squared_per_small_edit():
+    s = LinearStats(D, C)
+    for i in range(50):  # 50 single-sample edits
+        s.add(
+            s.contribution(
+                f"f{i}", torch.randn(1, D), one_hot(torch.tensor([i % C]), C)
+            )
+        )
+    st = s.storage_bytes()
+    assert st["per_edit_total"] == 50 * ((D + 1) + C) * 8  # factors, not d'^2 matrices
+    assert st["accumulators"] == ((D + 1) ** 2 + (D + 1) * C) * 8
 
 
 def test_linear_stats_float64_agrees_with_float32_ridge_readout():
@@ -183,26 +215,44 @@ def test_api_write_predict_forget_predict_is_bitwise():
     assert torch.equal(p2.labels, p0.labels) and torch.equal(p2.logits, p0.logits)
 
 
-def test_api_medium_forget_restores_canary_bitwise():
+def test_api_medium_forget_is_a_measured_downdate():
     m = _model()
     b = _batches()
     m.write(Batch(*b[0], task=0))
     m.write(Batch(*b[1], task=1))
-    ref = m._outputs_digest()[0]
+    ref_scores, ref_labels = m._canary_outputs()
     rec = m.write(Batch(*b[2], task=2))
+    assert rec.reversibility_report["pass"]
+    assert rec.reversibility_report["undo_max_abs_dW"] <= 1e-10
     rep = m.forget(rec.id)
-    assert rep["state_seen_before"] and rep["weights_bitwise"] and rep["canary_bitwise"]
-    assert m._outputs_digest()[0] == ref
+    assert rep["state_seen_before"] and rep["pass"] and rep["canary_argmax_identical"]
+    assert rep["downdate"]["max_abs_dW_recompute"] <= 1e-10
+    scores, labels = m._canary_outputs()
+    assert (
+        torch.equal(labels, ref_labels)
+        and float((scores - ref_scores).abs().max()) <= 1e-8
+    )
 
 
-def test_api_permuted_batches_give_identical_weights():
+def test_api_forget_everything_is_bitwise():
+    m = _model()
+    s0, (sc0, lb0) = m.state(), m._canary_outputs()
+    recs = [m.write(Batch(x, y, task=t)) for t, (x, y) in enumerate(_batches())]
+    for r in reversed(recs):
+        m.forget(r.id)
+    sc, lb = m._canary_outputs()
+    assert m.state() == s0 and torch.equal(sc, sc0) and torch.equal(lb, lb0)
+
+
+def test_api_permuted_batches_give_close_weights():
     b = _batches()
     m1, m2 = _model(), _model()
     for t in (0, 1, 2):
         m1.write(Batch(*b[t], task=t))
     for t in (2, 0, 1):
         m2.write(Batch(*b[t], task=t))
-    assert torch.equal(m1.stats.solve(), m2.stats.solve())
+    assert float((m1.stats.solve() - m2.stats.solve()).abs().max()) <= 1e-10
+    assert all(r.order_report["pass"] for r in m1.log)
 
 
 def test_api_locality_violation_rolls_back():
@@ -221,6 +271,7 @@ def test_api_consolidate_by_arrival_and_forget_it():
         m.write(Batch(x, y, task=t))
     s0, d0 = m.state(), m._outputs_digest()[0]
     rep = m.consolidate("by_arrival")
+    assert rep.record.reversibility_report["bitwise"]  # the bank object is swapped back
     assert rep.groups == [[0, 1], [2, 3], [4, 5]] and rep.experts_added == 3
     assert rep.record.reversibility_report["pass"]
     assert all(not p.requires_grad for e in m.bank.experts for p in e.parameters())

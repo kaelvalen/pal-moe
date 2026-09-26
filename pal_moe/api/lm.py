@@ -5,7 +5,8 @@
                                          time when cosine >= `memory_threshold`.
     MEDIUM  `write(Batch(prompts, targets))`  closed-form edit of one MLP down-projection
                                          (`pal_moe.edit.DownProjEdit`), residuals against
-                                         the base model, canonical order, exact forget.
+                                         the base model, one float64 accumulator, forget =
+                                         downdate.
     SLOW    `consolidate()`              frozen LoRA experts - declared, not built yet.
 
 The four guards run exactly as on the vision path (`GuardedEditor`); canary outputs are
@@ -40,18 +41,21 @@ class PalMoELM(GuardedEditor):
     def __init__(
         self,
         lm,
-        prior_cov: torch.Tensor,
+        prior,
         canary_prompts: list[str] | None = None,
         memory_threshold: float = 0.95,
         top_k: int = 1,
         guards: GuardConfig | None = None,
         value_steps: int = 20,
         value_lr: float = 0.5,
+        edit_mode: str = "accumulate",
     ):
+        """`prior` is a `KeyPrior` from `estimate_key_covariance(lm.collect_keys(corpus))`
+        - corpus keys, never the edit keys (see `pal_moe.edit.down_proj`)."""
         super().__init__(lm.base_hash, guards)
         self.lm = lm
         self.memory = FastMemory(lm.hidden_size, device="cpu")
-        self.edit = DownProjEdit(prior_cov)
+        self.edit = DownProjEdit(prior, mode=edit_mode)
         self.canary = list(canary_prompts or [])
         self.memory_threshold, self.top_k = float(memory_threshold), int(top_k)
         self.value_steps, self.value_lr = value_steps, value_lr
@@ -161,24 +165,28 @@ class PalMoELM(GuardedEditor):
         p = self.predict(self.canary)
         return p.logits.double().cpu(), p.next_token.cpu()
 
-    def _weights_digest(self) -> str:
-        return digest(
-            self.memory.state_digest(), self.edit.state_digest(), self.lm.delta_digest()
-        )
+    def _solution(self):
+        return self.edit.solve()
+
+    def _recompute_report(self) -> dict:
+        rep = self.edit.recompute_report(tol=self.guards.tolerance)
+        rep["hook_removed"] = not self.lm._deltas if not self.edit._arrival else None
+        return rep
 
     def _order_report(self):
-        order = self.edit.canonical_order()
-        if not order:
-            return digest(order), {}
-        rep = self.edit.order_report()
+        ids = list(self.edit._arrival)
+        if not ids:
+            return digest(ids), {}
+        rep = self.edit.order_report(tol=self.guards.tolerance)
         if self.canary:
-            # Install the arrival-order solution, read the canary argmax, restore.
-            canon = self._canary_outputs()[1]
-            arrival = self.edit._solve(list(self.edit._arrival))
+            # Install the permuted-order solution, read the canary argmax, restore.
+            ref = self._canary_outputs()[1]
+            g = torch.Generator().manual_seed(len(ids))
+            perm = [ids[i] for i in torch.randperm(len(ids), generator=g).tolist()]
+            permuted = self.edit._solve_rows(perm)
             dtype = self.lm._deltas[self.lm.edit_layer % len(self.lm.layers)].dtype
-            self.lm.set_delta(self.lm.edit_layer, arrival.to(self.lm.device, dtype))
-            rep["argmax_identical"] = bool(
-                torch.equal(canon, self._canary_outputs()[1])
-            )
+            self.lm.set_delta(self.lm.edit_layer, permuted.to(self.lm.device, dtype))
+            rep["argmax_identical"] = bool(torch.equal(ref, self._canary_outputs()[1]))
+            rep["pass"] = rep["pass"] and rep["argmax_identical"]
             self._install()
-        return digest(order), rep
+        return digest(ids), rep
