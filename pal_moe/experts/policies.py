@@ -104,4 +104,36 @@ def by_confusion(
     return [g for g in groups if g]
 
 
-POLICIES = {"by_arrival": by_arrival, "by_confusion": by_confusion}
+@torch.no_grad()
+def cross_fitted_confusion(
+    z: torch.Tensor,
+    y: torch.Tensor,
+    num_classes: int,
+    folds: int = 5,
+    seed: int = 0,
+    ridge: float = 1.0,
+) -> torch.Tensor:
+    """Class confusion of a float64 ridge, each sample predicted by a model that did
+    not see it (`folds`-fold cross-fitting, folds from `torch.randperm(seed)`).
+    Rows = true class, columns = predicted class. Uses only the data it is given."""
+    from pal_moe.edit.stats import LinearStats, one_hot
+
+    n = z.size(0)
+    perm = torch.randperm(n, generator=torch.Generator().manual_seed(seed))
+    fold_of = torch.empty(n, dtype=torch.long)
+    fold_of[perm] = torch.arange(n) % folds
+    fold_of = fold_of.to(z.device)
+    pred = torch.empty(n, dtype=torch.long, device=z.device)
+    for f in range(folds):
+        tr, te = fold_of != f, fold_of == f
+        s = LinearStats(z.size(1), num_classes, ridge=ridge, device=z.device)
+        s.add(s.contribution("fold", z[tr], one_hot(y[tr], num_classes)))
+        pred[te] = s.predict(z[te]).argmax(-1)
+    return confusion_matrix(pred.cpu(), y.cpu(), num_classes)
+
+
+POLICIES = {
+    "by_arrival": by_arrival,
+    "by_confusion": by_confusion,
+    "by_partition": None,  # explicit groups passed to consolidate()
+}

@@ -298,3 +298,22 @@ def test_api_prototype_router_from_log():
     assert (
         p.expert_ids[:, 0] == torch.tensor([owner[int(c)] for c in y_test])
     ).float().mean() > 0.9
+
+
+def test_cross_fitted_confusion_uses_held_out_predictions():
+    from pal_moe.experts.policies import cross_fitted_confusion
+
+    x, y = _blobs(seed=1, spread=2.0)  # overlapping classes: some confusion
+    conf = cross_fitted_confusion(x, y, C, folds=5, seed=0)
+    assert int(conf.sum()) == y.numel() and conf.shape == (C, C)
+    assert torch.equal(conf, cross_fitted_confusion(x, y, C, folds=5, seed=0))
+
+
+def test_api_consolidate_by_partition_takes_explicit_groups():
+    m = _model(recipe={"epochs": 1, "batch_size": 32, "seed": 0})
+    for t, (x, y) in enumerate(_batches()):
+        m.write(Batch(x, y, task=t))
+    with pytest.raises(ValueError):
+        m.consolidate("by_partition", groups=[[0, 2], [1, 3]])  # misses 4, 5
+    rep = m.consolidate("by_partition", groups=[[0, 2], [1, 3], [4, 5]])
+    assert rep.groups == [[0, 2], [1, 3], [4, 5]] and m.class_owner()[2] == 0
