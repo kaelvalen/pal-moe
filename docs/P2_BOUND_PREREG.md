@@ -187,3 +187,63 @@ reversibility      every write and consolidation passes the API guard: undo max|
                    <= 1e-10 and canary argmax identical; consolidations additionally
                    bitwise (the bank object is swapped back)
 ```
+
+## Amendment 2 (2026-09-26, after review, before any run)
+
+Review approved Part A as written and Part B conditional on this amendment. The
+questions, the arms and the existing outcome rows are unchanged.
+
+**What Part B measures.** A0 (`by_arrival`) can train each expert when its task arrives
+and discard the task's features afterwards. A1 (`by_confusion`) and A2
+(`by_superclass`) regroup at the end: they need **every task's features retained** and
+A1 uses a confusion matrix computed **after all 100 classes were seen** (hindsight). P3
+therefore measures a **hindsight, offline upper bound** of confusion-aligned
+consolidation - not a continual policy.
+
+**Added endpoint (per arm):**
+
+```text
+stored_feature_bytes   training features the policy must hold to consolidate:
+                       A0 = the largest single task's train split (one task at a time),
+                       A1 / A2 = every task's train split (all 20 at once);
+                       float32 features + int64 labels, computed from the cached tensors
+```
+
+**Added outcome row (takes precedence over the P3 >= +1 pp row's "default candidate"
+clause):**
+
+| result | reading |
+| :-- | :-- |
+| any P3 | Part B is the hindsight-offline upper bound of confusion-aligned consolidation at the stored-bytes cost reported. A positive P3 does **not** make `by_confusion` a default candidate: a continual variant, in which the grouping is decided as classes arrive and without retaining past features, must be tested first under its own pre-registration |
+
+**Added to section 9, "does not license":** any claim that confusion-aligned
+consolidation works under the continual constraint (no retained features, no hindsight).
+
+**Added veto:**
+
+```text
+A0 reproduction   in every (regime, seed) cell of Part B, A0 run through the v3 API
+                  reproduces the stored E-TID2 `ridge_routed` cell within 1e-6, so that
+                  A0 -> A1 / A2 differs only in the grouping
+```
+
+**Implementation facts fixed now (so the runner cannot choose them later):**
+
+```text
+A1 confusion     5-fold cross-fitted float64 ridge (lambda = 1.0) on the written train
+                 batches only; fold assignment by torch.randperm with seed = cell seed;
+                 rows = true class, columns = cross-fitted argmax
+A1 clustering    pal_moe.experts.policies.by_confusion, 20 groups, balanced (capacity
+                 5), KMeans random_state = cell seed
+A2 groups        the 20 CIFAR-100 superclasses (pal_moe.core.constructions.superclass_of)
+expert order     groups are trained in index order (A1: cluster index; A2: superclass
+                 index), one set_seed(seed) per consolidation
+accuracy         per-task mean over the construction's 20 test tasks, as in E-TID2
+```
+
+**Reviewer's expectation, written before the run (recorded, not tested).** In
+`dispersed`, A2 should raise `m` sharply because the ridge router's errors lie within
+superclasses; `rho` may fall because separating five similar classes of one superclass
+is a harder expert task (the owner oracle may move from ~97.3 toward the `coherent`
+~87.3). Then `m` rises, `rho` falls and the net is unclear - the "mass created but not
+converted" row.
